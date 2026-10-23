@@ -46,7 +46,9 @@ def run(args, timeout=30):
     result = subprocess.run(args, text=True, encoding='utf-8', capture_output=True,
                             timeout=timeout, env=java_environment(), **subprocess_options())
     if result.returncode:
-        raise RuntimeError('Companion helper command failed: ' + Path(args[0]).name)
+        name = Path(args[0]).name
+        detail = result.stderr.strip()[:1500] if name.lower() in ('java', 'java.exe', 'aapt', 'aapt.exe') else ''
+        raise RuntimeError('Companion helper command failed: ' + name + (': ' + detail if detail else ''))
     return result.stdout
 
 

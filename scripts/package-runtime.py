@@ -12,6 +12,30 @@ PYTHON_UNIX={
  'linux-x86_64':('x86_64-unknown-linux-gnu','f829adc9d888e76c8801b4799ed444188d35239fcae3a9808a99ec5cb0d8d92c'),
 }
 
+def enable_windows_utf8_launcher(executable):
+    # Java's native Windows launcher otherwise converts arguments using the
+    # machine ANSI code page, losing Chinese paths on non-Chinese installations.
+    # This is an application-local setting; the user's system locale is unchanged.
+    kits=Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'))/'Windows Kits/10/bin'
+    candidates=sorted(kits.glob('*/x64/mt.exe'),reverse=True)
+    if not candidates:raise RuntimeError('Windows SDK manifest tool is required when packaging Java')
+    with tempfile.TemporaryDirectory() as td:
+        manifest=Path(td)/'java.manifest'
+        subprocess.run([str(candidates[0]),'-nologo','-inputresource:'+str(executable)+';#1','-out:'+str(manifest)],check=True)
+        import xml.etree.ElementTree as ET
+        tree=ET.parse(manifest);root=tree.getroot()
+        namespace='urn:schemas-microsoft-com:asm.v3'
+        application=root.find('{'+namespace+'}application')
+        if application is None:application=ET.SubElement(root,'{'+namespace+'}application')
+        settings=application.find('{'+namespace+'}windowsSettings')
+        if settings is None:settings=ET.SubElement(application,'{'+namespace+'}windowsSettings')
+        tag='{http://schemas.microsoft.com/SMI/2019/WindowsSettings}activeCodePage'
+        codepage=settings.find(tag)
+        if codepage is None:codepage=ET.SubElement(settings,tag)
+        codepage.text='UTF-8'
+        tree.write(manifest,encoding='utf-8',xml_declaration=True)
+        subprocess.run([str(candidates[0]),'-nologo','-manifest',str(manifest),'-outputresource:'+str(executable)+';#1'],check=True)
+
 def build_runtime(root, windows):
     runtime=root/'runtime';runtime.mkdir(exist_ok=True)
     sdk=Path(os.environ.get('ANDROID_SDK_ROOT') or os.environ['ANDROID_HOME'])
@@ -34,6 +58,7 @@ def build_runtime(root, windows):
     subprocess.run([str(java/'bin'/('jlink.exe' if windows else 'jlink')),
         '--add-modules','java.base,java.logging,java.naming,java.xml,java.security.jgss,jdk.crypto.ec',
         '--strip-debug','--no-header-files','--no-man-pages','--output',str(runtime/'java')],check=True)
+    if windows:enable_windows_utf8_launcher(runtime/'java/bin/java.exe')
     if windows:
         with tempfile.TemporaryDirectory() as directory:
             archive=Path(directory)/'python.zip';urllib.request.urlretrieve(PYTHON_URL,archive)

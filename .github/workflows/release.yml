@@ -5,7 +5,7 @@ on:
       version:
         description: Release version (without v)
         required: true
-        default: '0.2.0'
+        default: '0.2.1'
 permissions:
   contents: read
 jobs:
@@ -30,12 +30,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'build-tools;36.0.0'
+      - name: Android verification tools
+        run: sdkmanager "build-tools;36.0.0"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop
       - name: Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config clang libclang-dev libssl-dev libfontconfig1-dev libfreetype-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libgl1-mesa-dev
+        run: sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y pkg-config clang libclang-dev libssl-dev libfontconfig1-dev libfreetype-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libgl1-mesa-dev
       - name: Windows libclang
         if: runner.os == 'Windows'
         shell: pwsh
@@ -69,4 +78,10 @@ jobs:
         run: |
           cp desktop/assets/stepx-companion.apk dist/StepX-companion.apk
           (cd dist && sha256sum StepX-companion.apk > StepX-companion.apk.sha256)
-          gh release create "v$RELEASE_VERSION" dist/* --target "$GITHUB_SHA" --draft --title "StepX Companion $RELEASE_VERSION · 首个公开预览版" --notes-file docs/RELEASE_NOTES.md
+          if gh release view "v$RELEASE_VERSION" --json isDraft > /tmp/stepx-release.json 2>/dev/null; then
+            test "$(jq -r .isDraft /tmp/stepx-release.json)" = true || { echo 'Refusing to replace a published release'; exit 1; }
+            gh release upload "v$RELEASE_VERSION" dist/* --clobber
+            gh release edit "v$RELEASE_VERSION" --target "$GITHUB_SHA" --notes-file docs/RELEASE_NOTES.md
+          else
+            gh release create "v$RELEASE_VERSION" dist/* --target "$GITHUB_SHA" --draft --title "StepX Companion $RELEASE_VERSION · 兼容性修复与 Studio 同步" --notes-file docs/RELEASE_NOTES.md
+          fi

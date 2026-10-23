@@ -489,11 +489,21 @@ mod tests {
                 let deadline = Instant::now() + Duration::from_secs(10);
                 while Instant::now() < deadline {
                     if let Ok((mut stream, _)) = listener.accept() {
+                        // Winsock inherits the listener's non-blocking mode.
+                        stream.set_nonblocking(false).unwrap();
                         stream
                             .set_read_timeout(Some(Duration::from_secs(3)))
                             .unwrap();
                         let mut buffer = [0; 4096];
-                        let _ = stream.read(&mut buffer);
+                        // Windows may deliver request headers in several packets.
+                        // Closing with unread request bytes can reset the socket
+                        // before the downloader receives the error response.
+                        let mut request = Vec::new();
+                        while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                            let size = stream.read(&mut buffer).unwrap();
+                            assert!(size > 0 && request.len() + size <= 16384);
+                            request.extend_from_slice(&buffer[..size]);
+                        }
                         stream.write_all(header.as_bytes()).unwrap();
                         stream.write_all(&body).unwrap();
                         return;

@@ -81,6 +81,12 @@ impl TypedActionView for Companion {
             ctx.notify();
             return;
         }
+        if let Action::Studio(action) = action {
+            self.handle_studio_action(action, ctx);
+            self.sync_ime(ctx);
+            ctx.notify();
+            return;
+        }
         if let Action::Work(action) = action {
             self.handle_work_action(action, ctx);
             self.sync_ime(ctx);
@@ -885,35 +891,6 @@ impl Companion {
                 self.amoo_recording = false;
                 self.status = "已取消语音录制".into();
             }
-            Action::StudioSelectApp(idx) => {
-                self.studio_app_idx = *idx;
-                let (name, url) = match *idx {
-                    0 => (
-                        "背屏像素画师",
-                        "https://studio.stepx.com/app/matrix-painter",
-                    ),
-                    1 => (
-                        "发票报销助手",
-                        "https://studio.stepx.com/app/invoice-helper",
-                    ),
-                    _ => (
-                        "晨间通勤播报",
-                        "https://studio.stepx.com/app/morning-commute",
-                    ),
-                };
-                self.fields[F_STUDIO_NAME].set(name);
-                self.fields[F_STUDIO_URL].set(url);
-                self.status = format!("已选择 Studio 应用模板：{name}");
-            }
-            Action::StudioToggleCreateIcon => {
-                self.studio_create_icon = !self.studio_create_icon;
-            }
-            Action::StudioToggleSyncSkill => {
-                self.studio_sync_skill = !self.studio_sync_skill;
-            }
-            Action::StudioToggleOpenNow => {
-                self.studio_open_now = !self.studio_open_now;
-            }
             Action::StudioOpenUrl(url) => {
                 let cmd = if cfg!(target_os = "macos") {
                     "open"
@@ -922,8 +899,13 @@ impl Companion {
                 } else {
                     "xdg-open"
                 };
-                let _ = std::process::Command::new(cmd).arg(url).spawn();
-                self.status = format!("已在浏览器打开 {url}");
+                match std::process::Command::new(cmd).arg(url).spawn() {
+                    Ok(mut child) => {
+                        std::thread::spawn(move || { let _ = child.wait(); });
+                        self.status = format!("已请求默认浏览器打开 {url}");
+                    }
+                    Err(error) => { self.status=format!("无法打开浏览器：{error}"); self.error=true; }
+                }
             }
             Action::PhoneFilterMissed(missed) => {
                 self.call_filter_missed = *missed;
@@ -1030,7 +1012,7 @@ impl Companion {
                 self.status = format!("图片预览缩放比例：{}%", self.amoo_lightbox_zoom);
             }
             Action::AmooSaveLightboxImage => {
-                let src = crate::resources::root().join("desktop/assets/amoo_tti_portrait.png");
+                let src = stepx_companion::resources::root().join("desktop/assets/amoo_tti_portrait.png");
                 let default_dest = std::env::temp_dir().join("StepX_Amoo_Portrait_HD.png");
                 if src.is_file() {
                     let _ = std::fs::copy(&src, &default_dest);
@@ -1238,7 +1220,7 @@ impl Companion {
                     self.handle_backscreen_action(&BackScreenAction::SaveMarquee, ctx);
                     return None;
                 }
-                Some(F_STUDIO_NAME) | Some(F_STUDIO_URL) => Action::StudioDeployApp,
+                Some(F_STUDIO_NAME) | Some(F_STUDIO_URL) => Action::Studio(StudioAction::Save),
                 Some(F_PHONE_DIAL) => Action::PhoneCall(self.fields[F_PHONE_DIAL].text.clone()),
                 _ => return None,
             },
@@ -1257,7 +1239,7 @@ impl Companion {
                     self.refresh_work();
                     return None;
                 }
-                Page::Studio => Action::StudioResetProxy,
+                Page::Studio => Action::Studio(StudioAction::Refresh),
                 Page::Sms => Action::ReadSms,
                 Page::Phone => Action::ReadPhone,
                 Page::Files => Action::Browse(self.directory.clone()),
@@ -1878,39 +1860,6 @@ impl Companion {
                     Ok(Outcome::Notice(d.open_amoo_voice_settings(adb)?))
                 });
             }
-            Action::StudioDeployApp => {
-                let name = self.fields[F_STUDIO_NAME].text.trim().to_string();
-                let url = self.fields[F_STUDIO_URL].text.trim().to_string();
-                let create_icon = self.studio_create_icon;
-                let sync_skill = self.studio_sync_skill;
-                let open_now = self.studio_open_now;
-                self.studio_deployed = true;
-                self.with_device(
-                    "正在打包 Studio 应用并一键发送到手机…",
-                    move |adb, d| {
-                        Ok(Outcome::StudioDeployed(d.deploy_studio_app(
-                            adb,
-                            &name,
-                            &url,
-                            create_icon,
-                            sync_skill,
-                            open_now,
-                        )?))
-                    },
-                );
-            }
-            Action::StudioResetProxy => {
-                self.with_device(
-                    "正在重置手机内置网关反向代理 (:18789 / :18791)…",
-                    |adb, d| {
-                        let status = d.setup_studio_proxy(adb)?;
-                        Ok(Outcome::StudioProxy(
-                            status,
-                            "已建立 adb forward tcp:18789 & tcp:18791 反向代理隧道".into(),
-                        ))
-                    },
-                );
-            }
             Action::ReadPhone => {
                 self.with_device("正在读取通话记录与通讯录…", |adb, d| {
                     let logs = read_result(d.call_logs(adb));
@@ -2337,7 +2286,7 @@ impl Companion {
                         let base = std::env::var_os("XDG_CACHE_HOME")
                             .map(PathBuf::from)
                             .or_else(|| {
-                                crate::resources::user_home().map(|h| PathBuf::from(h).join(".cache"))
+                                stepx_companion::resources::user_home().map(|h| PathBuf::from(h).join(".cache"))
                             })
                             .ok_or_else(|| anyhow::anyhow!("无法确定图片缓存目录"))?;
                         let directory = base.join("stepx-companion/backscreen/imports");

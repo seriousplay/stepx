@@ -19,6 +19,10 @@ if [ "$OS" = "Darwin" ]; then
         cp -a "$ROOT/.tools/bin" "$APP_DIR/Contents/Resources/tools/"
         [ -d "$ROOT/.tools/root" ] && cp -a "$ROOT/.tools/root" "$APP_DIR/Contents/Resources/tools/" || true
     fi
+    mkdir -p "$APP_DIR/Contents/Resources/desktop"
+    cp -a "$ROOT/scripts" "$ROOT/handoff" "$APP_DIR/Contents/Resources/"
+    cp -a "$ROOT/desktop/assets" "$APP_DIR/Contents/Resources/desktop/"
+    python3 "$ROOT/scripts/package-runtime.py" "$APP_DIR/Contents/Resources"
     STEPX_ICON_WORK="$(mktemp -d)"
     mkdir -p "$STEPX_ICON_WORK/StepXCompanion.iconset"
     for size in 16 32 128 256 512; do

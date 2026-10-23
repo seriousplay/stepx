@@ -23,6 +23,8 @@ def main():
             bundle=base/'StepX Companion.app'/'Contents';binary_dir=bundle/'MacOS';resource_dir=bundle/'Resources'
             binary_dir.mkdir(parents=True);resource_dir.mkdir()
             info={'CFBundleName':'StepX Companion','CFBundleDisplayName':'StepX Companion','CFBundleIdentifier':'io.github.xydzf520.stepx','CFBundleExecutable':'stepx-companion','CFBundlePackageType':'APPL','CFBundleShortVersionString':a.version,'CFBundleVersion':a.version,'NSHighResolutionCapable':True,'NSMicrophoneUsageDescription':'用于语音输入','NSCameraUsageDescription':'用于扫码连接'}
+            info['NSLocalNetworkUsageDescription']='用于在局域网发现并连接您授权的手机。'
+            info['NSBonjourServices']=['_adb-tls-pairing._tcp','_adb-tls-connect._tcp','_adb._tcp']
             iconset=stage/'StepX.iconset';iconset.mkdir()
             for size in [16,32,128,256,512]:
                 for scale in [1,2]:
@@ -51,10 +53,16 @@ def main():
             with tarfile.open(download) as t:t.extractall(unpack,filter='data')
         roots=list(unpack.iterdir());source=roots[0] if len(roots)==1 and roots[0].is_dir() else unpack
         tools_dir=resource_dir/'tools/bin';shutil.copytree(source,tools_dir)
+        subprocess.run([__import__('sys').executable,str(ROOT/'scripts/package-runtime.py'),str(resource_dir),*(['--windows'] if windows else [])],check=True)
         tool_env=os.environ.copy();tool_env['LD_LIBRARY_PATH']=str(tools_dir)+os.pathsep+tool_env.get('LD_LIBRARY_PATH','')
         for executable,arg in [(binary_dir/binary_name,'--version'),(tools_dir/('adb.exe' if windows else 'adb'),'version'),(tools_dir/('scrcpy.exe' if windows else 'scrcpy'),'--version')]:
             subprocess.run([str(executable),arg],check=True,env=tool_env,timeout=30)
-        if mac:subprocess.run(['codesign','--force','--deep','--sign','-',str(base/'StepX Companion.app')],check=True)
+        python=resource_dir/'runtime/python/python.exe' if windows else resource_dir/'runtime/python/bin/python3'
+        subprocess.run([str(python),'-X','utf8',str(ROOT/'scripts/verify-packaged-runtime.py'),str(resource_dir)],check=True,timeout=60)
+        if mac:
+            subprocess.run(['codesign','--force','--deep','--sign','-',str(base/'StepX Companion.app')],check=True)
+            subprocess.run([str(binary_dir/binary_name),'--check-runtime'],check=True,timeout=45)
+            subprocess.run(['codesign','--verify','--deep','--strict',str(base/'StepX Companion.app')],check=True)
         if a.platform.startswith('linux'):
             output=dist/(name+'.tar.gz')
             with tarfile.open(output,'w:gz') as t:t.add(base,arcname=name)

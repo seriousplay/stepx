@@ -79,7 +79,7 @@ public final class NativeMcpService extends Service {
         switch(method){
             case "initialize":c.initialized=true;result=new JSONObject().put("protocolVersion",q.optJSONObject("params")==null?"2024-11-05":q.getJSONObject("params").optString("protocolVersion","2024-11-05"))
                 .put("capabilities",new JSONObject().put("tools",new JSONObject().put("listChanged",false)))
-                .put("serverInfo",new JSONObject().put("name","StepX伴侣").put("version","0.1.8"));break;
+                .put("serverInfo",new JSONObject().put("name","StepX伴侣").put("version","0.1.10"));break;
             case "ping":result=new JSONObject();break;
             case "tools/list":result=new JSONObject().put("tools",tools());break;
             case "tools/call":

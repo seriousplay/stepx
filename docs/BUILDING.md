@@ -18,7 +18,7 @@ cargo build --release --locked --manifest-path desktop/Cargo.toml
 
 ## Windows
 
-安装 Rust MSVC 工具链、Visual Studio C++ Build Tools 和 LLVM / libclang，运行相同的 Cargo 命令。Python 可通过官方安装器安装并加入 PATH。
+安装 Rust MSVC 工具链、Visual Studio C++ Build Tools 和 LLVM / libclang，运行相同的 Cargo 命令。源代码构建时需要 Python、JDK 17 和 Android SDK build-tools 36.0.0；用户使用完整发布包时无需安装这些开发依赖。
 
 ## 验证
 
@@ -32,7 +32,7 @@ python3 -m unittest discover -s desktop/tests -p 'test_*.py'
 ## 发布包
 
 ```bash
-python3 scripts/package-release.py --platform linux-x86_64 --version 0.2.0
+python3 scripts/package-release.py --platform linux-x86_64 --version 0.2.1
 ```
 
 平台可选 `linux-x86_64`、`macos-arm64`、`macos-x86_64`、`windows-x86_64`。脚本验证官方 scrcpy 工具包的 SHA256，将可执行文件与运行资源封装到 `dist/`。通过 `.github/workflows/release.yml` 的手动运行构建全部平台；先生成草稿 Release，检查产物后再发布。
@@ -44,3 +44,7 @@ Android 源码位于 `desktop/companion-app`，以及 bridge、权限与后台�
 ## UI 截图
 
 `cargo build --features ui-capture --manifest-path desktop/Cargo.toml` 后可使用 `--demo --capture-ui /absolute/path.png --page overview`。演示数据仅用于截图构建；普通发布构建不启用演示模式，截图不代表连接真实设备的验收记录。
+
+发布打包还需要 JAVA_HOME 与 ANDROID_HOME（或 ANDROID_SDK_ROOT）。脚本用 jlink 生成最小 Java 运行时，编译 APK 身份校验助手并复制官方 apksig 校验库，并下载经固定 SHA256 校验的 Python。打包检查会清空 SDK/Python 环境，在中文、空格目录运行包内 ADB、Python、APK 签名校验和文件锁，不连接手机。macOS 仍未做 Apple Developer 公证。
+
+APK 包名通过 Android 官方 apksig 的解析器读取，签名仍用 apksigner 验证；发布包不依赖原生 aapt，也不要求 Apple Silicon 用户为该流程安装 Rosetta。

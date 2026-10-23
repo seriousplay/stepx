@@ -1,6 +1,6 @@
 [package]
 name = "stepx-companion"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -26,6 +26,7 @@ quick-xml = "0.37"
 libc = "0.2"
 base64 = "0.22"
 chrono = "0.4"
+url = "2"
 mdns-sd = "0.21.6"
 facloud_ui = { path = "../vendor/facloud_ui", optional = true }
 pathfinder_geometry = { version = "0.5.1", optional = true }

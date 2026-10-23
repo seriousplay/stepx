@@ -8,7 +8,6 @@ No boot hook or system/privileged package identity is installed.
 import argparse
 import base64
 from contextlib import contextmanager
-import fcntl
 import hashlib
 import json
 import os
@@ -24,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = Path(os.environ.get('STEPX_GOOGLE_HOME', ROOT / 'handoff/google-play-stepx')).resolve()
 sys.path.insert(0, str(WORKFLOW / 'tools'))
 from common import ADB, CONFIG, guard, root_json, shell
+from host_runtime import file_lock, sdk_tool, sdk_command, java_environment, subprocess_options
 
 PACKAGE = 'com.stepx.companion.app'
 PERMISSION = 'com.stepos.permission.MANAGE_BACK_SCREEN'
@@ -34,39 +34,37 @@ WAKE_OWNER = 'com.stepos.pushservice'
 WAKE_SCOPE = 'wake_permission_v1'
 AUTHORIZED_SERIAL = os.environ.get("STEPX_SERIAL", "")
 LOADER_SHA256 = '279305289749acada3f9951c816d7e9f00367dce4331d4396c04554e4685fbf8'
-WORKER_SHA256 = 'c6597e5c2d688670721cd1047e092555eb9021a4e1cbf3cbbf26686deed60595'
+WORKER_SHA256 = 'cb05bdcb08a86967b1e1f9cf7f807bba93f94616b49dc90f0c6a0d90d6fbea40'
 STATE = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'stepx-companion/permissions'
 
 
 def tool(name):
-    sdk = Path(os.environ.get('ANDROID_SDK_ROOT', str(Path.home() / 'Android/Sdk')))
-    return str(sdk / 'build-tools/36.0.0' / name)
+    return sdk_tool(name)
 
 
 def run(args, timeout=30):
-    env = os.environ.copy()
-    configured = env.get('STEPX_JDK') or env.get('JAVA_HOME')
-    candidates = [Path(configured)] if configured else []
-    if not configured and not shutil.which('java'):
-        candidates += [Path.home()/'.local/jdk-17', Path.home()/'.local/opt/android-studio/jbr',
-                       Path('/opt/android-studio/jbr'), Path('/Applications/Android Studio.app/Contents/jbr/Contents/Home')]
-    jdk = next((path for path in candidates if (path/'bin/java').is_file()), Path(''))
-    if (jdk / 'bin/java').is_file():
-        env['JAVA_HOME'] = str(jdk)
-        env['PATH'] = str(jdk / 'bin') + os.pathsep + env.get('PATH', '')
-    result = subprocess.run(args, text=True, capture_output=True, timeout=timeout, env=env)
+    result = subprocess.run(args, text=True, encoding='utf-8', capture_output=True,
+                            timeout=timeout, env=java_environment(), **subprocess_options())
     if result.returncode:
-        raise RuntimeError('Companion helper command failed: ' + Path(args[0]).name)
+        name = Path(args[0]).name
+        detail = result.stderr.strip()[:1500] if name.lower() in ('java', 'java.exe', 'aapt', 'aapt.exe') else ''
+        raise RuntimeError('Companion helper command failed: ' + name + (': ' + detail if detail else ''))
     return result.stdout
 
 
 def signer(apk):
     if not apk.is_file():
         raise RuntimeError('Companion APK is missing')
-    badging = run([tool('aapt'), 'dump', 'badging', str(apk)])
-    if not re.search(r"^package: name='" + re.escape(PACKAGE) + r"'", badging, re.M):
+    if (ROOT / 'runtime/android-build-tools/lib/apk-identity.jar').is_file():
+        package = run(sdk_command('apk-identity') + [str(apk)]).strip()
+    else:
+        # Source checkouts may use a developer SDK instead of the shipped runtime.
+        badging = run(sdk_command('aapt') + ['dump', 'badging', str(apk)])
+        match = re.search(r"^package: name='([^']+)'", badging, re.M)
+        package = match.group(1) if match else ''
+    if package != PACKAGE:
         raise RuntimeError('APK is not StepX伴侣')
-    result = run([tool('apksigner'), 'verify', '--print-certs', str(apk)])
+    result = run(sdk_command('apksigner') + ['verify', '--print-certs', str(apk)])
     matches = re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$', result, re.M)
     if len(matches) != 1:
         raise RuntimeError('Expected exactly one verified APK signer')
@@ -259,9 +257,7 @@ def runtime_status(uid):
 def runtime_lock():
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     STATE.chmod(0o700)
-    fd = os.open(STATE / 'runtime.lock', os.O_WRONLY | os.O_CREAT, 0o600)
-    with os.fdopen(fd, 'w') as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
+    with file_lock(STATE / 'runtime.lock'):
         yield
 
 

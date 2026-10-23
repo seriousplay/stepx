@@ -1418,7 +1418,7 @@ fn extract_pdf(path: &Path) -> Result<String> {
 fn python(code: &str, args: &[&Path], stdin: Option<Vec<u8>>) -> Result<Vec<u8>> {
     let binary = crate::resources::python();
     let mut command = Command::new(binary);
-    command.args(["-X", "utf8", "-I", "-c"]).arg(code);
+    command.args(["-B", "-X", "utf8", "-I", "-c"]).arg(code);
     for arg in args {
         command.arg(arg);
     }

@@ -160,12 +160,13 @@ pub fn run_process(
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
+    let program=command.get_program().to_owned();
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("无法启动本地工具，请检查工具路径和运行依赖")?;
+        .map_err(|e| anyhow::anyhow!("无法启动 {}：{}。请完整解压安装包，并检查安全软件是否隔离了组件。",Path::new(&program).file_name().unwrap_or(&program).to_string_lossy(),e))?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let out = thread::spawn(move || read_bounded(&mut stdout));
@@ -289,13 +290,7 @@ pub fn platform_tool_candidate(name: &str) -> Option<PathBuf> {
 }
 
 fn adb_missing_help() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "未找到 ADB。请运行 scripts/setup-desktop-tools.sh，或执行 brew install android-platform-tools scrcpy。"
-    } else if cfg!(windows) {
-        "未找到 ADB。请运行 scripts\\setup-desktop-tools.ps1，或安装 Android Platform-Tools 并设置 STEPX_ADB。"
-    } else {
-        "未找到 ADB。请运行 scripts/setup-desktop-tools.sh，或设置 STEPX_ADB。"
-    }
+    "缺少内置 ADB。请重新下载并完整解压 StepX Companion 安装包；不要只移动 EXE 或 .app 内的单个文件。无需安装 Android Studio。"
 }
 
 pub fn exe(name: &str) -> OsString {

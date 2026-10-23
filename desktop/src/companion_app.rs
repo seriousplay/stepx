@@ -621,6 +621,7 @@ pub fn install(
     apk.as_file().sync_all()?;
     let path = apk.path().to_str().context("安装包路径无效")?;
     progress("正在检查设备、应用签名与伴侣权限适配条件…");
+    run_adapter(adb, device, &script, apk.path(), "preflight")?;
     // Only this package's USB-install gate is temporarily opened. Restore it on
     // every normal error path, including a partially completed prepare step.
     let installation = (|| -> Result<()> {

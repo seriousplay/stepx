@@ -27,6 +27,8 @@ mod theme;
 mod update_state;
 mod widgets;
 mod work_state;
+mod studio_state;
+use studio_state::{StudioAction, StudioOutcome, StudioUiState};
 use backscreen_state::{BackScreenAction, BackScreenUiState};
 use update_state::{UpdateAction, UpdateState};
 use work_state::{WorkAction, WorkOutcome, WorkUiState};
@@ -55,7 +57,7 @@ use stepx_companion::{
     companion_app::{self, CompanionStatus},
     device::{
         default_express_parcels, default_system_services, parse_devices, BackScreenPattern,
-        CallRecord, ContactEntry, Device, ExpressParcelInfo, GoogleSuiteStatus, StudioStatus,
+        CallRecord, ContactEntry, Device, ExpressParcelInfo, GoogleSuiteStatus,
         SystemServiceInfo, Transport,
     },
     mirror::MirrorSession,
@@ -239,7 +241,7 @@ impl Page {
     fn needs_device(self) -> bool {
         !matches!(
             self,
-            Self::Connect | Self::Tools | Self::Work | Self::Account | Self::About
+            Self::Connect | Self::Tools | Self::Work | Self::Account | Self::About | Self::Studio
         )
     }
 
@@ -479,13 +481,7 @@ enum Action {
     AmooResetSession,
     ReadVisible,
     AppendVisibleLine(String),
-    // Studio & Reverse Proxy
-    StudioSelectApp(usize),
-    StudioToggleCreateIcon,
-    StudioToggleSyncSkill,
-    StudioToggleOpenNow,
-    StudioDeployApp,
-    StudioResetProxy,
+    Studio(StudioAction),
     StudioOpenUrl(String),
     // SMS
     ReadSms,
@@ -647,8 +643,7 @@ enum Outcome {
     Qr(Option<String>),
     Paired(String),
     BackScreenImportedImage(PathBuf),
-    StudioProxy(StudioStatus, String),
-    StudioDeployed(String),
+    Studio(StudioOutcome),
     PhoneData(ReadResult<CallRecord>, ReadResult<ContactEntry>),
     GoogleSuite(GoogleSuiteStatus, CompanionStatus, String),
     CompanionStatus(CompanionStatus, String),
@@ -1042,12 +1037,7 @@ struct Companion {
     amoo_safety_policy_idx: usize,
     amoo_guard_count: usize,
     // Studio & Reverse Proxy
-    studio_app_idx: usize,
-    studio_create_icon: bool,
-    studio_sync_skill: bool,
-    studio_open_now: bool,
-    studio_deployed: bool,
-    studio_status: StudioStatus,
+    studio: StudioUiState,
     // SMS
     sms: Vec<Message>,
     sms_loaded: bool,
@@ -1183,8 +1173,7 @@ impl Companion {
         let mut fields: Vec<Input> = (0..FIELD_COUNT).map(|_| Input::default()).collect();
         fields[F_BACK_PROMPT].set("让猫咪眨眼陪我工作，亮度 4 级，播放 30 秒");
         fields[F_BACK_MARQUEE].set("STEPX AI");
-        fields[F_STUDIO_NAME].set("背屏像素画师");
-        fields[F_STUDIO_URL].set("https://studio.stepx.com/app/matrix-painter");
+
 
         let demo_mode = cfg!(feature = "ui-capture") && std::env::args().any(|a| a == "--demo");
         let mut me = Self {
@@ -1310,18 +1299,7 @@ impl Companion {
             amoo_skill_manage: false,
             amoo_safety_policy_idx: 0,
             amoo_guard_count: if demo_mode { 12 } else { 0 },
-            studio_app_idx: 0,
-            studio_create_icon: true,
-            studio_sync_skill: true,
-            studio_open_now: true,
-            studio_deployed: demo_mode,
-            studio_status: StudioStatus {
-                android_id: String::new(),
-                token: String::new(),
-                gateway_port: 18789,
-                model_proxy_port: 18791,
-                lan_ip: String::new(),
-            },
+            studio: StudioUiState::default(),
             sms: Vec::new(),
             sms_loaded: false,
             phone_loaded: false,
@@ -1545,6 +1523,7 @@ impl Companion {
     }
 
     fn auto_load_for_page(&mut self) {
+        if self.page == Page::Studio && !self.studio.loaded && !self.busy { self.refresh_studio(); return; }
         if self.busy || self.selected.is_none() {
             return;
         }
@@ -1622,23 +1601,18 @@ impl Companion {
                     Ok(Outcome::PhoneData(logs, contacts))
                 });
             }
-            Page::Studio => {
-                self.with_device(
-                    "正在检测手机内置网关与反向代理…",
-                    |adb, d| {
-                        let status = d.setup_studio_proxy(adb)?;
-                        Ok(Outcome::StudioProxy(
-                            status,
-                            "OpenClaw :18789 与 StepOS :18791 反向代理已就绪".into(),
-                        ))
-                    },
-                );
-            }
+            Page::Studio => {},
             _ => {}
         }
     }
 
     fn clear_device_state(&mut self) {
+        self.studio.phone_note = None;
+        self.studio.cloud = None;
+        self.studio.cloud_selected = None;
+        self.studio.cloud_checked = None;
+        self.studio.cloud_error = None;
+        self.studio.connecting_until = None;
         let native_gui_unconfirmed = (self.amoo_ui.gui_running && !self.amoo_ui.gui_desktop)
             || self.amoo_ui.gui_unconfirmed;
         self.google_suite = GoogleSuiteStatus::default();
@@ -1815,6 +1789,10 @@ impl Companion {
             }
             ctx.notify();
         }
+        if self.page == Page::Studio && !self.studio.loaded && !self.busy {
+            self.refresh_studio();
+        }
+        self.tick_studio_cloud();
         if let Some(child) = &mut self.mirror {
             if let Ok(Some(status)) = child.try_wait() {
                 self.error = !status.success();
@@ -2377,14 +2355,7 @@ impl Companion {
                     }
                 }
             }
-            Outcome::StudioProxy(status, msg) => {
-                self.studio_status = status;
-                self.status = msg;
-            }
-            Outcome::StudioDeployed(msg) => {
-                self.studio_deployed = true;
-                self.status = msg;
-            }
+            Outcome::Studio(result) => self.apply_studio(result),
             Outcome::PhoneData(logs, contacts) => {
                 self.apply_phone_data(logs, contacts);
             }

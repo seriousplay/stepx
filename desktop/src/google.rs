@@ -26,6 +26,7 @@ pub fn run_script(device: &Device, adb: &Adb, script: &str, args: &[&str]) -> Re
         .args(args)
         .current_dir(&root)
         .env("STEPX_SERIAL", &device.transport)
+        .env("STEPX_DEVICE_SERIAL", &device.serial)
         .env("STEPX_ADB", &adb.path)
         .env_remove("PYTHONOPTIMIZE")
         .output()
@@ -56,6 +57,7 @@ fn run_compatibility_script(device: &Device, adb: &Adb, action: &str) -> Result<
         .arg(action)
         .current_dir(script.parent().context("兼容组件目录无效")?)
         .env("STEPX_SERIAL", &device.transport)
+        .env("STEPX_DEVICE_SERIAL", &device.serial)
         .env("STEPX_ADB", &adb.path)
         .env_remove("PYTHONOPTIMIZE")
         .output()
@@ -370,7 +372,7 @@ fn install_fresh(device: &Device, adb: &Adb, progress: impl Fn(&str)) -> Result<
     }
     progress("5 / 6 · 保存首次启动前的包状态");
     run_script(device, adb, "package_state.py", &[])?;
-    let state = workflow_root()?.join("state");
+    let state = crate::resources::user_state().join("google-play/state");
     let before = state.join("package-before-first-reboot.json");
     // Never overwrite evidence from a prior attempt.
     let mut target = std::fs::OpenOptions::new()

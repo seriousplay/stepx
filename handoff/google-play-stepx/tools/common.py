@@ -10,15 +10,21 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = json.loads((ROOT / 'target.json').read_text())
-STATE = ROOT / 'state'
 SERIAL = os.environ.get('STEPX_SERIAL', CONFIG['serial'])
 DEVICE_SERIAL = os.environ.get('STEPX_DEVICE_SERIAL', '')
 ADB = [os.environ.get('STEPX_ADB', shutil.which('adb') or 'adb'), '-s', SERIAL]
 
 
+sys.path.insert(0, str(ROOT.parents[1] / 'scripts'))
+from host_runtime import sdk_tool, sdk_command, subprocess_options, user_state_root, migrate_legacy_state
+
+STATE = user_state_root() / 'google-play/state'
+DOWNLOADS = user_state_root() / 'google-play/downloads'
+
+
 def run(args, **kwargs):
     return subprocess.run(args, text=True, capture_output=True, check=True,
-                          timeout=kwargs.pop('timeout', 40), **kwargs)
+                          timeout=kwargs.pop('timeout', 40), encoding='utf-8', **subprocess_options(), **kwargs)
 
 
 def shell(*args):
@@ -46,10 +52,12 @@ def guard(native=False):
     if native:
         for path, expected in CONFIG['native_hashes'].items():
             assert shell('sha256sum', path).split()[0] == expected, 'Native image mismatch: ' + path
+    init_state()
 
 
 def init_state():
-    STATE.mkdir(mode=0o700, exist_ok=True)
+    migrate_legacy_state(ROOT / 'state', STATE)
+    STATE.mkdir(parents=True, mode=0o700, exist_ok=True)
     STATE.chmod(0o700)
 
 
@@ -86,15 +94,3 @@ def root_json(code):
         return json.JSONDecoder().raw_decode(result.stdout.lstrip())[0]
     except ValueError:
         raise RuntimeError('No valid root-operation proof; inspect the bridge locally') from None
-
-
-def sdk_tool(name):
-    found = shutil.which(name)
-    if found:
-        return found
-    sdk = os.environ.get('ANDROID_SDK_ROOT') or os.environ.get('ANDROID_HOME')
-    if sdk:
-        path = Path(sdk) / 'build-tools/36.0.0' / name
-        if path.is_file():
-            return str(path)
-    raise RuntimeError('Put ' + name + ' from Android build-tools 36.0.0 on PATH')

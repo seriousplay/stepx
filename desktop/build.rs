@@ -1,6 +1,17 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
+    // The framework reads resource 0x101 for the Windows window/taskbar icon.
+    // Embedding it also gives the portable executable its own Explorer icon.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        embed_resource::compile_for(
+            "assets/stepx_companion.rc",
+            &["stepx-companion"],
+            embed_resource::NONE,
+        )
+        .manifest_required()
+        .expect("compile StepX Companion Windows icon");
+    }
     // Track application sources/assets so the timestamp changes with the binary,
     // while an unchanged build keeps its original timestamp. No host `date` tool
     // or host timezone is needed, including when cross-compiling.

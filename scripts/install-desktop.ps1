@@ -16,11 +16,13 @@ if (Test-Path $LocalTools) {
 }
 
 $StartMenu = [Environment]::GetFolderPath("Programs")
-$ShortcutPath = Join-Path $StartMenu "阶跃伴侣 (StepX Companion).lnk"
+$ShortcutPath = Join-Path $StartMenu "StepX Companion.lnk"
 $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
 $Shortcut.TargetPath = Join-Path $InstallDir "stepx-companion.exe"
 $Shortcut.WorkingDirectory = $InstallDir
+Copy-Item "assets\stepx_companion_icon.ico" (Join-Path $InstallDir "stepx-companion.ico") -Force
+$Shortcut.IconLocation = Join-Path $InstallDir "stepx-companion.ico"
 $Shortcut.Description = "连接 StepX，协同手机与电脑"
 $Shortcut.Save()
 

@@ -55,6 +55,14 @@ pub enum ClipBounds {
 
 impl Layer {
     fn record_hit_rect(&mut self, rect: RectF) {
+        // A malformed, unbounded layout must never enter the R-tree. Infinity
+        // produces NaN area comparisons during insertion and can stall the UI
+        // before the paint validation below has a chance to report the layout.
+        if ![rect.min_x(), rect.min_y(), rect.max_x(), rect.max_y()]
+            .iter().all(|v| v.is_finite()) || rect.width() <= 0. || rect.height() <= 0.
+        {
+            return;
+        }
         if let Some(intersected) = self
             .clip_bounds
             .map_or(Some(rect), |c| rect.intersection(c))

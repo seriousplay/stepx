@@ -1,9 +1,9 @@
 <div align="center">
-<img src="desktop/assets/amoo_desktop_icon.png" width="88" alt="StepX" />
+<img src="desktop/assets/stepx_companion_icon.png" width="88" alt="StepX Companion" />
 
-# StepX · STEPX Neo 手机的桌面伴侣
+# StepX Companion · STEPX Neo 手机的桌面伴侣
 
-**压缩并释放手机存储空间，在电脑上直接与 Amoo 对话，用手机的模型与 Token 权益完成工作。**
+**把 STEPX Neo 变成电脑上的工作伙伴：压缩手机空间、直接聊 Amoo、用手机 Token 做 Work、安装 Google Play；投屏控制、文件互传与应用管理，也在一个工作台完成。**
 
 面向阶跃星辰 STEPX Neo 手机 · 当前适配 PZ261A
 
@@ -13,9 +13,9 @@ Linux / macOS / Windows · Rust 原生客户端 · 配套 StepX伴侣 Android �
 
 </div>
 
-**这是给谁用的？** 已有 [STEPX Neo](https://www.stepx.com/) 手机，希望在电脑上使用 Amoo、处理工作资料、安装 Google Play，并管理手机空间的用户。本项目围绕 **PZ261A / Step AOS** 适配，是社区开发的第三方桌面客户端。
+**这是给谁用的？** 已有 [STEPX Neo](https://www.stepx.com/) 手机，希望在电脑上使用 Amoo、处理工作资料、安装 Google Play，并管理手机空间的用户。本项目围绕 **PZ261A / Step AOS** 适配，是社区开发的第三方桌面客户端，与 STEPX、Amoo、Google 无官方隶属关系。
 
-**核心特点**
+## 特色功能
 
 - **压缩与释放手机空间**：在手机本地压缩适合压缩的文档、清理缓存和重复文件，查看处理结果，并按需还原压缩文件。
 - **电脑直接聊 Amoo**：沿用手机已有的 Amoo 账号，继续手机会话，发送文字、文件和图片，查看定时任务。
@@ -26,9 +26,40 @@ Linux / macOS / Windows · Rust 原生客户端 · 配套 StepX伴侣 Android �
 
 Amoo / Work 的手机模型任务使用手机账号服务；独立 GUI Agent 可选外部模型，需要另行配置。Google 安装需准备匹配的安装包，公开发行版不分发 Google APK。
 
+## 常用能力
+
+| 能力 | 使用体验 |
+| --- | --- |
+| **投屏与控制** | USB / 无线查看手机画面，鼠标与键盘操作；跟随画面窗口的竖排侧栏，提供主页、返回、多任务、音量、截图和结束投屏；随窗口移动、缩放和最小化。 |
+| **文件互传** | 浏览手机目录，上传、下载、新建目录、重命名和删除；图片、音乐等目录有清晰的类型图标。 |
+| **应用管理** | 读取真实应用名称与图标，查看安装列表，安装、导出 APK 和卸载应用。 |
+| **短信与电话** | 读取真实短信、联系人及通话记录，从桌面发起手机拨号或短信操作；可用功能以设备授权为准。 |
+| **设备状态** | 首页查看电池、温度、存储与 Amoo 可获取的 Token 用量；USB 连接、无线配对及首次 ADB 引导集中管理。 |
+
+空闲时按需加载模块：离开背屏即暂停桌面预览，已开始的手机任务继续运行。[性能与响应性验证](docs/PERFORMANCE.md)
+
+### 投屏助手：控制就在画面旁
+
+<img src="docs/images/mirror-sidebar.png" width="76" align="right" alt="投屏窗口旁的竖排控制侧栏" />
+
+从「小工具 → 截图与投屏」开启后，在独立窗口查看并操作手机。**竖排侧栏贴着投屏画面显示**，主界面只保留投屏入口，桌面空间留给手机内容。
+
+- **主页、返回、多任务**：直接操作手机系统导航。
+- **音量增减**：快捷调整手机音量。
+- **截图**：截取手机当前画面，在客户端预览并另存。
+- **结束投屏**：底部关闭按钮结束本次投屏，画面与侧栏一起退出。
+- **跟随窗口**：拖动、缩放、最小化和恢复投屏窗口时，侧栏同步跟随；关闭画面窗口也会收起侧栏。
+
+投屏期间保持手机活跃，结束后恢复手机自动息屏行为。锁屏状态下，涉及手机界面的操作仍需本人解锁。
+
+*右图为应用实际渲染的控制侧栏；下面各页截图使用虚构演示数据。*
+
+<br clear="right" />
+
+
 ## 桌面首页：手机状态与账号用量
 
-![StepX 首页：设备状态、电池温度、存储与 Token 用量](docs/images/overview.png)
+![StepX Companion 首页：设备状态、电池温度、存储与 Token 用量](docs/images/overview.png)
 
 *界面截图由应用自身渲染，使用虚构演示数据；不包含真实账号或手机记录。*
 
@@ -105,17 +136,17 @@ Amoo 使用手机现有账号与官方服务。账号权限、模型路由、付
 
 | 系统 | 架构 | 包名 |
 | --- | --- | --- |
-| Linux | x86_64 | `StepX-<版本>-linux-x86_64.tar.gz` |
-| macOS | Apple Silicon | `StepX-<版本>-macos-arm64.zip` |
-| macOS | Intel | `StepX-<版本>-macos-x86_64.zip` |
-| Windows | x64 | `StepX-<版本>-windows-x86_64.zip` |
+| Linux | x86_64 | `StepX-Companion-<版本>-linux-x86_64.tar.gz` |
+| macOS | Apple Silicon | `StepX-Companion-<版本>-macos-arm64.zip` |
+| macOS | Intel | `StepX-Companion-<版本>-macos-x86_64.zip` |
+| Windows | x64 | `StepX-Companion-<版本>-windows-x86_64.zip` |
 
 发布包附带校验和、ADB 与 scrcpy。高级脚本和 Office 文件处理还需要 Python 3.10+。当前发行版未配置 Apple 公证或 Windows 商业代码签名；请从本仓库下载并核对 SHA256。构建通过不等于每个操作系统均完成真机功能验收，具体范围见发布说明。
 
 ## 上手只需几步
 
-1. 首次打开 StepX，按弹窗引导开启手机开发者选项和 USB 调试，再用数据线连接电脑。
-2. 在手机确认这台电脑的调试授权，打开 StepX 的「连接设备」。
+1. 首次打开 StepX Companion，按弹窗引导开启手机开发者选项和 USB 调试，再用数据线连接电脑。
+2. 在手机确认这台电脑的调试授权，打开 StepX Companion 的「连接设备」。
 3. 根据向导安装 **StepX伴侣**，在手机确认安装和所需权限。
 4. 需要无线使用时，将设备放在同一可信局域网，按向导扫码或配对。
 5. 从首页查看真实设备状态，进入 Amoo、文件、背屏或小工具。
@@ -146,4 +177,4 @@ UI 依赖已随源码放在 `vendor/`，无需另外的本地工程。系统依�
 
 **微信：164245026**
 
-如有内容涉及侵权，请联系我，我会及时核实并删除相关内容。客户端左下角「关于 StepX」提供版本信息、项目链接与微信号复制入口。
+如有内容涉及侵权，请联系我，我会及时核实并删除相关内容。客户端左下角「关于 StepX Companion」提供版本信息、项目链接与微信号复制入口。

@@ -6,6 +6,9 @@ license = "AGPL-3.0-only"
 
 [workspace]
 
+[build-dependencies]
+embed-resource = "3.0"
+
 [features]
 default = ["desktop-ui"]
 desktop-ui = ["dep:facloud_ui", "dep:pathfinder_geometry", "dep:native-dialog", "dep:markdown_parser"]
@@ -32,6 +35,9 @@ markdown_parser = { path = "../vendor/markdown_parser", optional = true }
 [profile.dev]
 debug = 1
 codegen-units = 8
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13.2"
 
 [patch.crates-io]
 core-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "0bcad1e103ead6bd71c4e5f85598ada9508e3a82" }

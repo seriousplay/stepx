@@ -6,6 +6,7 @@ use stepx_companion::bridge::{AmooTurn, SimSubscription};
 
 impl Companion {
     pub(super) fn load_demo(&mut self) {
+        self.overview_back_preview = std::env::args().any(|arg| arg == "--rear-preview");
         let now = chrono::Local::now().timestamp_millis();
         let min = 60_000;
         self.selected = if std::env::var_os("STEPX_EMPTY").is_some() {

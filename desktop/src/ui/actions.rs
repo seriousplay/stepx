@@ -175,6 +175,7 @@ impl Companion {
                     self.fields[i].preedit.clear();
                 }
                 self.page = *page;
+                self.back_screen.set_preview_visible(*page == Page::BackScreen);
                 if *page == Page::Tools {
                     self.tool_page = None;
                 }
@@ -554,6 +555,7 @@ impl Companion {
             }
             Action::OverviewBackPreview(back) => {
                 self.overview_back_preview = *back;
+                if *back && self.back_screen.frame.is_empty() { self.back_screen.refresh_frame(); }
                 self.status = if *back {
                     "已切换为背屏图案预览".into()
                 } else {

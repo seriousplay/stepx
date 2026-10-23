@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = json.loads((ROOT / 'target.json').read_text())
 STATE = ROOT / 'state'
 SERIAL = os.environ.get('STEPX_SERIAL', CONFIG['serial'])
+DEVICE_SERIAL = os.environ.get('STEPX_DEVICE_SERIAL', '')
 ADB = [os.environ.get('STEPX_ADB', shutil.which('adb') or 'adb'), '-s', SERIAL]
 
 
@@ -26,8 +27,18 @@ def shell(*args):
 
 
 def guard(native=False):
-    if not SERIAL or ':' in SERIAL:
-        raise RuntimeError('Use an explicitly authorized USB device serial')
+    # ADB transport names (USB, IP:port or mDNS) are not hardware identities.
+    # Wireless operations must carry the physical serial selected by the desktop.
+    if not SERIAL or SERIAL.startswith('-') or any(c.isspace() for c in SERIAL):
+        raise RuntimeError('请先选择已授权的手机连接')
+    wireless = ':' in SERIAL or '._adb-tls-connect._tcp' in SERIAL
+    expected = DEVICE_SERIAL or ('' if wireless else SERIAL)
+    if not expected:
+        raise RuntimeError('无线连接缺少设备身份，请重新选择手机后重试')
+    if run(ADB + ['get-state']).stdout.strip() != 'device':
+        raise RuntimeError('手机连接未授权或已离线，请重新连接')
+    if shell('getprop', 'ro.serialno') != expected:
+        raise RuntimeError('连接的手机与已选设备不一致，请重新选择设备')
     assert shell('getprop', 'ro.build.fingerprint') == CONFIG['fingerprint'], 'Unsupported firmware'
     assert shell('getprop', 'ro.build.version.sdk') == CONFIG['sdk'], 'Unsupported SDK'
     assert shell('getprop', 'ro.product.cpu.abilist') == CONFIG['abi'], 'Unsupported ABI'

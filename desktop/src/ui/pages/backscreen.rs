@@ -68,7 +68,13 @@ impl Companion {
                 p.text,
                 Weight::Semibold,
             ),
-            Align::new(self.phone_rear_housing(130., 225., preview_frame, 3.6, 0.95)).finish(),
+            Align::new(self.hstack(S4, vec![
+                self.phone_rear_housing(100., 210., preview_frame, 3.6, 0.95),
+                ConstrainedBox::new(self.vstack(S2, vec![self.line("点阵放大", MICRO, p.text3),
+                    Container::new(self.matrix_grid(preview_frame, 3.6, 0.95, false))
+                        .with_uniform_padding(S2).with_background_color(rgb(24,24,30))
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL))).finish()])).with_width(100.).finish(),
+            ])).finish(),
             self.mono("17 × 23 · 379 灯珠", MICRO, p.text2),
             self.bs_button(
                 "preview-toggle",
@@ -196,13 +202,13 @@ impl Companion {
     fn bs_preset_card(&self, preset: bs::Preset) -> El {
         let p = self.p();
         let selected = self.back_screen.selection() == Some(preset);
-        let config = bs::PlaybackConfig::default();
-        let frame = bs::frame(
-            &bs::Source::Preset(preset),
-            &config,
-            Duration::from_millis(700),
-            &bs::LiveData::default(),
-        );
+        // Fixed gallery thumbnails are generated once on first opening the gallery.
+        static THUMBNAILS: std::sync::OnceLock<Vec<(bs::Preset, Vec<u8>)>> = std::sync::OnceLock::new();
+        let thumbnails = THUMBNAILS.get_or_init(|| bs::Preset::ALL.into_iter().map(|preset| {
+            (preset, bs::frame(&bs::Source::Preset(preset), &bs::PlaybackConfig::default(),
+                Duration::from_millis(700), &bs::LiveData::default()))
+        }).collect());
+        let frame = &thumbnails.iter().find(|(key, _)| *key == preset).unwrap().1;
         let thumbnail = ConstrainedBox::new(
             Container::new(Align::new(self.matrix_grid(&frame, 1.1, 0.35, false)).finish())
                 .with_background_color(rgb(0x16, 0x16, 0x1B))

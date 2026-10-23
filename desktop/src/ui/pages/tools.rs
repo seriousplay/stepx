@@ -553,7 +553,7 @@ impl Companion {
         if self.busy {
             let progress = self
                 .google_progress
-                .lock()
+                .try_lock()
                 .ok()
                 .filter(|s| {
                     !s.is_empty()
@@ -641,6 +641,11 @@ impl Companion {
                 self.hstack(S2, vec![self.utility_button("tool-apk", "选择 APK…", Action::InstallApk, true), self.button("tool-app-list", "已安装应用", Action::Page(Page::Apps), Btn::Secondary)]),
             ])),
             Some(ToolPage::Screen) => {
+                parts.push(self.panel(vec![self.heading("实时投屏"), self.text("在独立窗口查看并操作手机，投屏期间保持手机屏幕活跃。", BODY, p.text2),
+                    self.text("投屏窗口侧边提供主页、返回、多任务、音量、截图和关闭按钮；侧栏随画面移动、缩放与收起。", CAPTION, p.text3),
+                    self.hstack(S2, vec![if self.mirror.is_some() {self.button("mirror-control-stop", "结束投屏", Action::StopMirror, Btn::Danger)}
+                        else {self.utility_button("mirror-control-start", "开启投屏", Action::Mirror, true)}]),
+                ]));
                 parts.push(self.panel(vec![self.heading("截图"), self.text("截取当前手机画面，预览后选择保存位置。", BODY, p.text2), self.hstack(S2, vec![
                     self.utility_button("tool-shot", "截取画面", Action::Screenshot, true),
                     if self.screenshot.is_some() { self.utility_button("tool-save-shot", "保存截图", Action::SaveScreenshot, false) } else { self.disabled_button("保存截图") },
@@ -648,10 +653,6 @@ impl Companion {
                 if let Some((_, path)) = &self.screenshot {
                     parts.push(ConstrainedBox::new(Image::new(facloud_ui::assets::asset_cache::AssetSource::LocalFile { path: path.to_string_lossy().into_owned() }, CacheOption::BySize).contain().finish()).with_height(300.).finish());
                 }
-                parts.push(self.panel(vec![self.heading("实时投屏"), self.text("在独立窗口查看并操作手机，投屏期间保持手机屏幕活跃。", BODY, p.text2),
-                    self.text("关闭投屏窗口或点击结束投屏后，手机恢复正常的自动息屏。", CAPTION, p.text3),
-                    self.utility_button("tool-mirror", if self.mirror.is_some() { "结束投屏" } else { "开启投屏" }, if self.mirror.is_some() { Action::StopMirror } else { Action::Mirror }, false),
-                ]));
             }
             Some(ToolPage::Services) => {
                 parts.push(self.panel(vec![self.text("仅列出已适配的服务。停用会影响对应功能，请逐项选择；当前输入法不允许停用。", BODY, p.text2),

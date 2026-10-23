@@ -18,6 +18,7 @@ pub struct MirrorSession {
     log: Log,
     exited: bool,
     frame_received: bool,
+    window: crate::mirror_window::Watcher,
 }
 
 impl MirrorSession {
@@ -37,11 +38,16 @@ impl MirrorSession {
             bail!("投屏组件版本不兼容，无法在投屏时保持手机亮屏。请更新 scrcpy（当前验证版本 5.0.1）或重新安装完整版 desktop。");
         }
         let mut command = Command::new(binary);
+        #[cfg(target_os = "linux")]
+        if std::env::var_os("DISPLAY").is_some() {
+            // XWayland permits the control rail to follow the SDL window.
+            command.env("SDL_VIDEODRIVER", "x11");
+        }
         command.env("ADB", &adb.path).args([
             "--serial",
             serial,
             "--window-title",
-            "阶跃伴侣 · 实时控制",
+            "StepX Companion · 手机投屏",
             "--max-size",
             "1600",
             "--no-audio",
@@ -104,8 +110,10 @@ impl MirrorSession {
         }
         let child = command.spawn().context("无法启动投屏窗口")?;
         drop(command);
+        let window = crate::mirror_window::Watcher::new(child.id());
         let mut session = Self {
             child,
+            window,
             log,
             exited: false,
             frame_received: false,
@@ -154,6 +162,10 @@ impl MirrorSession {
         }
     }
 
+    pub fn window_bounds(&self) -> Option<crate::mirror_window::MirrorWindow> {
+        self.window.latest()
+    }
+
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
         let status = self.child.try_wait()?;
         self.exited |= status.is_some();
@@ -171,6 +183,17 @@ impl MirrorSession {
             .lock()
             .map(|s| String::from_utf8_lossy(&s).into_owned())
             .unwrap_or_default()
+    }
+
+    /// Signal immediately, then reap off the UI thread so a slow scrcpy shutdown cannot freeze it.
+    pub fn stop_in_background(mut self) {
+        if !self.exited {
+            #[cfg(unix)]
+            unsafe { libc::kill(self.child.id() as i32, libc::SIGTERM); }
+            #[cfg(windows)]
+            { let _=self.child.kill(); }
+        }
+        thread::spawn(move || self.stop());
     }
 
     pub fn stop(&mut self) {
@@ -272,6 +295,19 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    }
+
+    #[test]
+    fn slow_shutdown_never_blocks_caller_and_still_reaps_process() {
+        let session = MirrorSession::spawn(command("trap '' TERM; echo 'INFO: Texture: 718x1600'; exec sleep 30"), Duration::from_secs(2)).unwrap();
+        let pid = session.child.id() as i32;
+        let start = Instant::now();
+        session.stop_in_background();
+        assert!(start.elapsed() < Duration::from_millis(200));
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            assert!(start.elapsed() < Duration::from_secs(4), "child was not reaped");
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]

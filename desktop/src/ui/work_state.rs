@@ -1454,7 +1454,8 @@ impl Companion {
     }
 
     pub(super) fn load_work_previews(&mut self) {
-        if self.work.preview_rx.is_some() || self.selected.is_none() {
+        if (!matches!(self.page, Page::Amoo | Page::Work) && !self.work.running)
+            || self.work.preview_rx.is_some() || self.selected.is_none() {
             return;
         }
         let attachments = self

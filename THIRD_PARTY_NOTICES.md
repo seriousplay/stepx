@@ -5,6 +5,6 @@
 - **GELab-Zero**：GUI Agent 提示词格式参考其 MIT 许可项目；版本、原版权与许可见 `desktop/companion-app/third_party/gelab-zero/`。
 - **ZXing**：扫码库遵循 Apache-2.0；许可与 JAR 位于 `desktop/companion-app/third_party/`。
 - **scrcpy / ADB**：发布时从 Genymobile 官方发行包下载，经固定 SHA256 核验后随包分发。scrcpy 为 Apache-2.0；ADB 及其依赖沿用官方压缩包内的 NOTICE/LICENSE。源代码与对应发行见 https://github.com/Genymobile/scrcpy/releases/tag/v5.0.1 和 https://android.googlesource.com/platform/packages/modules/adb/ 。
-- **图标与品牌素材**：StepX / Amoo 名称、Amoo 形象和手机原厂界面素材归各自权利人所有，仅用于识别所连接的产品；不授予商标或品牌形象的独立使用权。项目自有线性 SVG 图标随源码许可。
+- **图标与品牌素材**：StepX / Amoo 名称、Amoo 形象和手机原厂界面素材归各自权利人所有，仅用于识别所连接的产品；不授予商标或品牌形象的独立使用权。项目自有线性 SVG 图标随源码许可。StepX Companion 的应用图标为独立生成的手机与电脑连接图形，不使用 Amoo 星形角色作为产品标识；外观预览根据实机参考生成，用于设备识别。生成提示词见 `docs/ASSET_PROMPTS.json`。
 
 项目整体采用 AGPL-3.0-only，以满足包含的 AGPL 组件要求；这不会改变第三方文件已有的 MIT、Apache 或其他许可。Google Play / Google 服务 APK、厂商系统固件不包含在本仓库或发布包中。

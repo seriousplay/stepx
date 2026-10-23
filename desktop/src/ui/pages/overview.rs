@@ -350,9 +350,9 @@ impl Companion {
 
         let phone_illustration = if self.overview_back_preview {
             let frame = self.back_screen.frame.clone();
-            self.phone_rear_housing(154., 284., &frame, 4.3, 1.3)
+            self.phone_rear_housing(170., 357., &frame, 4.3, 1.3)
         } else {
-            self.phone_front_housing(154., 284.)
+            self.phone_front_housing(170., 357.)
         };
 
         let left_preview = Container::new(
@@ -369,7 +369,7 @@ impl Companion {
                                 if self.overview_back_preview {
                                     "背屏设计稿"
                                 } else {
-                                    "外观示意"
+                                    if self.screenshot.is_some() { "最近截图" } else { "外观示意" }
                                 },
                                 CAPTION,
                                 p.text2,

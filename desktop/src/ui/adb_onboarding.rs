@@ -20,7 +20,7 @@ impl Companion {
         }).collect();
         let mut body = vec![
             self.between(self.hstack(S2, vec![self.ui_icon(UiIcon::Smartphone, 22., p.text),
-                self.heading("欢迎使用 StepX")]),
+                self.heading("欢迎使用 StepX Companion")]),
                 self.button("adb-guide-close", "关闭", Action::AdbGuide(None), Btn::Ghost)),
             self.text("先开启 ADB，让电脑连接你的手机。只需完成一次设置。", BODY, p.text2),
             self.hstack(S2, steps),

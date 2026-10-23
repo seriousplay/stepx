@@ -1527,7 +1527,7 @@ impl EventLoop {
                 .read(|ctx| ctx.windows().platform_window(window_id))
             {
                 downcast_window(window.as_ref())
-                    .drop_renderer(Box::new(window_target.owned_display_handle()));
+                    .release_renderer();
             }
         }
 

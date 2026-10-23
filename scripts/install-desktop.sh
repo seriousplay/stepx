@@ -19,7 +19,15 @@ if [ "$OS" = "Darwin" ]; then
         cp -a "$ROOT/.tools/bin" "$APP_DIR/Contents/Resources/tools/"
         [ -d "$ROOT/.tools/root" ] && cp -a "$ROOT/.tools/root" "$APP_DIR/Contents/Resources/tools/" || true
     fi
-    install -m644 assets/stepx-companion.svg "$APP_DIR/Contents/Resources/stepx-companion.svg"
+    STEPX_ICON_WORK="$(mktemp -d)"
+    mkdir -p "$STEPX_ICON_WORK/StepXCompanion.iconset"
+    for size in 16 32 128 256 512; do
+        sips -z "$size" "$size" assets/stepx_companion_icon.png --out "$STEPX_ICON_WORK/StepXCompanion.iconset/icon_${size}x${size}.png" >/dev/null
+        double=$((size * 2))
+        sips -z "$double" "$double" assets/stepx_companion_icon.png --out "$STEPX_ICON_WORK/StepXCompanion.iconset/icon_${size}x${size}@2x.png" >/dev/null
+    done
+    iconutil -c icns "$STEPX_ICON_WORK/StepXCompanion.iconset" -o "$APP_DIR/Contents/Resources/StepXCompanion.icns"
+    rm -r "$STEPX_ICON_WORK"
     STEPX_APP_VERSION="$(cargo pkgid --offline -p stepx-companion)"
     STEPX_APP_VERSION="${STEPX_APP_VERSION##*@}"
     cat > "$APP_DIR/Contents/Info.plist" <<PLIST
@@ -28,9 +36,11 @@ if [ "$OS" = "Darwin" ]; then
 <plist version="1.0">
 <dict>
     <key>CFBundleDisplayName</key>
-    <string>阶跃伴侣</string>
+    <string>StepX Companion</string>
     <key>CFBundleName</key>
     <string>StepX Companion</string>
+    <key>CFBundleIconFile</key>
+    <string>StepXCompanion.icns</string>
     <key>CFBundleIdentifier</key>
     <string>com.stepx.companion</string>
     <key>CFBundleVersion</key>
@@ -58,16 +68,19 @@ mv "$STEPX_INSTALL_DIR/stepx-companion.new" "$STEPX_INSTALL_DIR/stepx-companion"
 if [ -d "$ROOT/.tools/bin" ]; then
     cp -a "$ROOT/.tools/bin" "$ROOT/.tools/root" "$STEPX_INSTALL_DIR/tools/"
 fi
-install -m644 assets/amoo_desktop_icon.png "$STEPX_DATA_DIR/icons/stepx-companion-amoo-v2.png"
 python3 - "$STEPX_INSTALL_DIR/stepx-companion" "$STEPX_DATA_DIR" <<'PY'
-import pathlib, sys
+import hashlib, pathlib, shutil, sys
 binary = sys.argv[1].replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%')
 data_dir = pathlib.Path(sys.argv[2]).resolve()
 entry = data_dir/'applications/stepx-companion.desktop'
-icon = str(data_dir/'icons/stepx-companion-amoo-v2.png').replace('\\', '\\\\')
+source = pathlib.Path('assets/stepx_companion_icon.png')
+digest = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
+icon_path = data_dir/'icons'/f'stepx-companion-{digest}.png'
+shutil.copy2(source, icon_path)
+icon = str(icon_path).replace('\\', '\\\\')
 entry.write_text(f'''[Desktop Entry]
 Type=Application
-Name=阶跃伴侣
+Name=StepX Companion
 Name[en]=StepX Companion
 Comment=连接 StepX，协同手机与电脑
 Exec="{binary}"

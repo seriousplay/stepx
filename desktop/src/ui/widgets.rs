@@ -802,376 +802,59 @@ impl Companion {
 
     /// Renders a 17×23 (391-pixel, 379 active LEDs) dot-matrix preview matching the white/silver LED hardware.
     pub fn matrix_grid(&self, frame: &[u8], dot_size: f32, gap: f32, dark_chassis: bool) -> El {
-        let lit_bright = ColorU {
-            r: 255,
-            g: 255,
-            b: 255,
-            a: 255,
-        };
-        let lit_mid = ColorU {
-            r: 161,
-            g: 161,
-            b: 170,
-            a: 255,
-        };
-        let off_color = ColorU {
-            r: 39,
-            g: 39,
-            b: 46,
-            a: 255,
-        };
-        let mut rows = Vec::with_capacity(23);
-        for y in 0..23usize {
-            let mut cols = Vec::with_capacity(17);
-            for x in 0..17usize {
-                let is_corner = stepx_companion::device::is_backscreen_corner(x, y);
-                let val = frame.get(y * 17 + x).copied().unwrap_or(0);
-                let color = if is_corner {
-                    ColorU::transparent_black()
-                } else if val > 190 {
-                    lit_bright
-                } else if val > 90 {
-                    lit_mid
-                } else {
-                    off_color
-                };
-                cols.push(
-                    ConstrainedBox::new(
-                        Rect::new()
-                            .with_background_color(color)
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
-                                (dot_size * 0.25).max(1.),
-                            )))
-                            .finish(),
-                    )
-                    .with_width(dot_size)
-                    .with_height(dot_size)
-                    .finish(),
-                );
-            }
-            rows.push(
-                Flex::row()
-                    .with_main_axis_size(MainAxisSize::Min)
-                    .with_spacing(gap)
-                    .with_children(cols)
-                    .finish(),
-            );
-        }
-        let grid = Flex::column()
-            .with_main_axis_size(MainAxisSize::Min)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(gap)
-            .with_children(rows)
-            .finish();
+        let grid = super::led_grid::LedGrid::new(frame, dot_size, gap).finish();
         if !dark_chassis {
             return grid;
         }
         self.phone_rear_housing(182., 312., frame, dot_size, gap)
     }
 
-    pub fn phone_rear_housing(
-        &self,
-        width: f32,
-        height: f32,
-        frame: &[u8],
-        dot_size: f32,
-        gap: f32,
-    ) -> El {
-        let right_label = if width > 165. { "379 LED" } else { "379 LED" };
-        let lens_sz = if width > 165. { 24. } else { 20. };
-        let cam_lens = || {
-            ConstrainedBox::new(
-                Container::new(
-                    Flex::row()
-                        .with_main_axis_size(MainAxisSize::Max)
-                        .with_main_axis_alignment(MainAxisAlignment::Center)
-                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                        .with_child(
-                            ConstrainedBox::new(
-                                Rect::new()
-                                    .with_background_color(ColorU {
-                                        r: 30,
-                                        g: 41,
-                                        b: 59,
-                                        a: 255,
-                                    })
-                                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
-                                    .finish(),
-                            )
-                            .with_width(6.)
-                            .with_height(6.)
-                            .finish(),
-                        )
-                        .finish(),
-                )
-                .with_background_color(ColorU {
-                    r: 9,
-                    g: 9,
-                    b: 11,
-                    a: 255,
-                })
-                .with_border(Border::all(1.5).with_border_color(ColorU {
-                    r: 63,
-                    g: 63,
-                    b: 70,
-                    a: 255,
-                }))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(lens_sz * 0.5)))
-                .finish(),
-            )
-            .with_width(lens_sz)
-            .with_height(lens_sz)
-            .finish()
-        };
-        let flash = ConstrainedBox::new(
-            Rect::new()
-                .with_background_color(ColorU {
-                    r: 253,
-                    g: 230,
-                    b: 138,
-                    a: 220,
-                })
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(5.)))
-                .finish(),
-        )
-        .with_width(8.)
-        .with_height(8.)
-        .finish();
-        let cam_bar =
-            Container::new(self.between(self.hstack(6., vec![cam_lens(), cam_lens()]), flash))
-                .with_horizontal_padding(4.)
-                .finish();
-        let matrix_window = Container::new(
-            Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_main_axis_alignment(MainAxisAlignment::Center)
-                .with_child(self.matrix_grid(frame, dot_size, gap, false))
-                .finish(),
-        )
-        .with_uniform_padding(6.)
-        .with_background_color(ColorU {
-            r: 9,
-            g: 9,
-            b: 12,
-            a: 255,
-        })
-        .with_border(Border::all(1.).with_border_color(ColorU {
-            r: 46,
-            g: 46,
-            b: 56,
-            a: 255,
-        }))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(16.)))
-        .finish();
-        let footer = Container::new(self.between(
-            self.mono(
-                "STEPX",
-                10.,
-                ColorU {
-                    r: 113,
-                    g: 113,
-                    b: 122,
-                    a: 255,
-                },
-            ),
-            self.mono(
-                right_label,
-                10.,
-                ColorU {
-                    r: 113,
-                    g: 113,
-                    b: 122,
-                    a: 255,
-                },
-            ),
-        ))
-        .with_horizontal_padding(4.)
-        .finish();
-        ConstrainedBox::new(
-            Container::new(
-                Flex::column()
-                    .with_main_axis_size(MainAxisSize::Max)
-                    .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                    .with_child(self.vstack(8., vec![cam_bar, matrix_window]))
-                    .with_child(footer)
-                    .finish(),
-            )
-            .with_uniform_padding(10.)
-            .with_background_color(ColorU {
-                r: 24,
-                g: 24,
-                b: 30,
-                a: 255,
-            })
-            .with_border(Border::all(3.).with_border_color(ColorU {
-                r: 39,
-                g: 39,
-                b: 42,
-                a: 255,
-            }))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(26.)))
-            .finish(),
-        )
-        .with_width(width)
-        .with_height(height)
-        .finish()
+    /// Orthographic device artwork. Screen/LED content is composited separately.
+    fn phone_art(&self, name: &'static str, width: f32, height: f32) -> El {
+        ConstrainedBox::new(Image::new(
+            facloud_ui::assets::asset_cache::AssetSource::Bundled { path: name },
+            CacheOption::BySize,
+        ).contain().finish()).with_width(width).with_height(height).finish()
+    }
+
+    pub fn phone_rear_housing(&self, width: f32, height: f32, frame: &[u8], _dot_size: f32, _gap: f32) -> El {
+        let scale = (width / 866.).min(height / 1817.);
+        let w = 866. * scale;
+        let h = 1817. * scale;
+        // The real Neo display sits to the right of the camera lenses.
+        Stack::new()
+            .with_child(self.phone_art("neo_rear_housing.png", w, h))
+            .with_positioned_child(
+                self.matrix_grid(frame, 7. * scale, 2.5 * scale, false),
+                OffsetPositioning::offset_from_parent(
+                    pathfinder_geometry::vector::vec2f(562. * scale, 180. * scale),
+                    ParentOffsetBounds::Unbounded, ParentAnchor::TopLeft, ChildAnchor::TopLeft,
+                ),
+            ).finish()
     }
 
     pub fn phone_front_housing(&self, width: f32, height: f32) -> El {
-        let img_path = if let Some((_, path)) = &self.screenshot {
-            path.to_string_lossy().to_string()
+        let scale = (width / 866.).min(height / 1817.);
+        let w = 866. * scale;
+        let h = 1817. * scale;
+        let source = if let Some((_, path)) = &self.screenshot {
+            facloud_ui::assets::asset_cache::AssetSource::LocalFile { path: path.to_string_lossy().into_owned() }
         } else {
-            const HOME_PNG: &[u8] = include_bytes!("../../assets/stepx_home_screen.png");
-            let fallback = "/tmp/stepx_home_screen_housing.png";
-            if !std::path::Path::new(fallback).exists() {
-                let _ = std::fs::write(fallback, HOME_PNG);
-            }
-            fallback.to_string()
+            facloud_ui::assets::asset_cache::AssetSource::Bundled { path: "stepx_home_screen.png" }
         };
-
-        let inner_w = (width - 14.).max(100.);
-        let inner_h = (height - 22.).max(180.);
-
-        let speaker = Align::new(
-            ConstrainedBox::new(
-                Rect::new()
-                    .with_background_color(ColorU {
-                        r: 72,
-                        g: 72,
-                        b: 82,
-                        a: 255,
-                    })
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
-                    .finish(),
-            )
-            .with_width(36.)
-            .with_height(3.5)
-            .finish(),
-        )
-        .finish();
-
-        let desktop_img = ConstrainedBox::new(
-            Image::new(
-                facloud_ui::assets::asset_cache::AssetSource::LocalFile { path: img_path },
-                CacheOption::BySize,
-            )
-            .contain()
-            .finish(),
-        )
-        .with_width(inner_w)
-        .with_height(inner_h)
-        .finish();
-
-        let screen = Container::new(desktop_img)
-            .with_background_color(ColorU {
-                r: 12,
-                g: 14,
-                b: 20,
-                a: 255,
-            })
-            .with_border(Border::all(1.).with_border_color(ColorU {
-                r: 45,
-                g: 48,
-                b: 58,
-                a: 255,
-            }))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(16.)))
-            .finish();
-
-        let body = ConstrainedBox::new(
-            Container::new(
-                Flex::column()
-                    .with_main_axis_size(MainAxisSize::Max)
-                    .with_spacing(4.)
-                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_child(speaker)
-                    .with_child(screen)
-                    .finish(),
-            )
-            .with_uniform_padding(5.)
-            .with_background_color(ColorU {
-                r: 20,
-                g: 21,
-                b: 26,
-                a: 255,
-            })
-            .with_border(Border::all(2.5).with_border_color(ColorU {
-                r: 68,
-                g: 72,
-                b: 84,
-                a: 255,
-            }))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(22.)))
-            .finish(),
-        )
-        .with_width(width)
-        .with_height(height)
-        .finish();
-
-        // Left physical green AI key (StepX PZ261A signature hardware key)
-        let ai_key = Container::new(
-            ConstrainedBox::new(
-                Rect::new()
-                    .with_background_color(ColorU {
-                        r: 16,
-                        g: 185,
-                        b: 129,
-                        a: 255,
-                    })
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(2.)))
-                    .finish(),
-            )
-            .with_width(3.)
-            .with_height(26.)
-            .finish(),
-        )
-        .with_padding_top(54.)
-        .finish();
-
-        // Right physical volume rocker + power key
-        let right_keys = Container::new(self.vstack(
-            8.,
-            vec![
-                ConstrainedBox::new(
-                    Rect::new()
-                        .with_background_color(ColorU {
-                            r: 82,
-                            g: 86,
-                            b: 98,
-                            a: 255,
-                        })
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(1.5)))
-                        .finish(),
-                )
-                .with_width(2.5)
-                .with_height(34.)
-                .finish(),
-                ConstrainedBox::new(
-                    Rect::new()
-                        .with_background_color(ColorU {
-                            r: 82,
-                            g: 86,
-                            b: 98,
-                            a: 255,
-                        })
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(1.5)))
-                        .finish(),
-                )
-                .with_width(2.5)
-                .with_height(18.)
-                .finish(),
-            ],
-        ))
-        .with_padding_top(46.)
-        .finish();
-
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Min)
-            .with_cross_axis_alignment(CrossAxisAlignment::Start)
-            .with_child(ai_key)
-            .with_child(body)
-            .with_child(right_keys)
-            .finish()
+        // Fit under the generated bezel, preserving screenshot aspect ratio.
+        let screen = ConstrainedBox::new(Image::new(source, CacheOption::BySize)
+            .cover().with_corner_radius(CornerRadius::with_all(Radius::Pixels(77. * scale)))
+            .finish()).with_width(738. * scale).with_height(1660. * scale).finish();
+        Stack::new()
+            .with_child(ConstrainedBox::new(Rect::new().finish()).with_width(w).with_height(h).finish())
+            .with_positioned_child(screen, OffsetPositioning::offset_from_parent(
+                pathfinder_geometry::vector::vec2f(64. * scale, 80. * scale),
+                ParentOffsetBounds::Unbounded, ParentAnchor::TopLeft, ChildAnchor::TopLeft,
+            ))
+            .with_positioned_child(self.phone_art("neo_front_frame.png", w, h), OffsetPositioning::offset_from_parent(
+                pathfinder_geometry::vector::vec2f(0., 0.),
+                ParentOffsetBounds::Unbounded, ParentAnchor::TopLeft, ChildAnchor::TopLeft,
+            )).finish()
     }
 }

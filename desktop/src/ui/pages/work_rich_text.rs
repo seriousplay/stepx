@@ -6,10 +6,41 @@ use markdown_parser::{
     TableAlignment,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum RichBlock {
     Markdown(FormattedText),
     Quote(FormattedText),
+}
+
+// Parsing does not depend on the theme. Reuse it during progress updates and
+// window resizing, with a strict bound so long conversations cannot grow it forever.
+#[derive(Default)]
+struct RichTextCache {
+    entries: std::collections::VecDeque<(String, Vec<RichBlock>)>,
+    bytes: usize,
+}
+impl RichTextCache {
+    fn get(&mut self, source: &str) -> Vec<RichBlock> {
+        if let Some(index) = self.entries.iter().position(|(text, _)| text == source) {
+            let entry = self.entries.remove(index).unwrap();
+            let result = entry.1.clone();
+            self.entries.push_back(entry);
+            return result;
+        }
+        let result = parse_blocks(source);
+        if source.len() <= 256 * 1024 {
+            while self.entries.len() >= 64 || self.bytes + source.len() > 2 * 1024 * 1024 {
+                let Some((text, _)) = self.entries.pop_front() else { break; };
+                self.bytes -= text.len();
+            }
+            self.bytes += source.len();
+            self.entries.push_back((source.to_owned(), result.clone()));
+        }
+        result
+    }
+}
+thread_local! {
+    static RICH_TEXT_CACHE: std::cell::RefCell<RichTextCache> = Default::default();
 }
 
 fn safe_link(url: &str) -> bool {
@@ -316,7 +347,7 @@ impl Companion {
         let p = self.p();
         self.vstack(
             S3,
-            parse_blocks(body)
+            RICH_TEXT_CACHE.with(|cache| cache.borrow_mut().get(body))
                 .into_iter()
                 .enumerate()
                 .map(|(index, block)| match block {
@@ -339,6 +370,21 @@ impl Companion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn parsed_text_cache_is_bounded_and_separates_edits() {
+        let mut cache = RichTextCache::default();
+        cache.get("**中文**");
+        cache.get("**中文**");
+        assert_eq!(cache.entries.len(), 1);
+        cache.get("**修改**");
+        assert_eq!(cache.entries.len(), 2);
+        for i in 0..100 { cache.get(&format!("记录 {i}")); }
+        assert_eq!(cache.entries.len(), 64);
+        assert!(cache.bytes <= 2 * 1024 * 1024);
+        cache.get(&"x".repeat(256 * 1024 + 1));
+        assert_eq!(cache.entries.len(), 64);
+    }
+
     #[test]
     fn markdown_keeps_chinese_bold_lists_code_and_tables() {
         let blocks = parse_blocks("## 分析结果\n\n**总计**：`42`\n\n1. 检查资料\n2. 输出报告\n\n| 指标 | 值 |\n| --- | ---: |\n| 合计 | **42** |\n\n```csv\n指标,值\n合计,42\n```\n");

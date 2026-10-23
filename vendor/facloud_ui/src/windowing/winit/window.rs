@@ -851,7 +851,7 @@ impl Window {
 
     /// Drops the window's renderer and all associated resources.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    pub fn drop_renderer(&self, display_handle: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) {
+    pub fn release_renderer(&self) {
         let mut inner = self.inner.borrow_mut();
         let Some(inner) = inner.as_mut() else {
             log::warn!("Tried to drop a window's renderer before it had been fully initialized");
@@ -860,6 +860,11 @@ impl Window {
 
         let _ = inner.rendering_resources.take();
 
+    }
+
+    /// Device recovery needs a fresh instance; permanently closing one window does not.
+    pub fn drop_renderer(&self, display_handle: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) {
+        self.release_renderer();
         // Forceably drop and recreate our cached `wgpu::Instance` after dropping the renderer.
         // Without this, certain NVIDIA drivers deadlock upon recreating the resources with the
         // existing `Instance`.
@@ -1235,9 +1240,16 @@ fn create_window(
     tiling_window_manager: bool,
 ) -> Result<winit::window::Window> {
     let decorations = !window_options.hide_title_bar;
+    // Pinned utility palettes (such as a vertical device-control rail) need
+    // their requested narrow width in production, not the main-window minimum.
+    let minimum = if window_options.style == WindowStyle::Pin {
+        LogicalSize::new(88., 160.)
+    } else {
+        MIN_WINDOW_SIZE
+    };
 
     let mut window_attributes = winit::window::WindowAttributes::default()
-        .with_min_inner_size(MIN_WINDOW_SIZE)
+        .with_min_inner_size(minimum)
         .with_decorations(decorations)
         .with_window_level(window_level_for_style(window_options.style))
         .with_transparent(true);

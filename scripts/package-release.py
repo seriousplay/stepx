@@ -16,18 +16,18 @@ def main():
     if not all(c.isalnum() or c in '.-_' for c in a.version):p.error('Invalid version')
     windows=a.platform.startswith('windows');mac=a.platform.startswith('macos')
     dist=ROOT/'dist';dist.mkdir(exist_ok=True)
-    name=f'StepX-{a.version}-{a.platform}'
+    name=f'StepX-Companion-{a.version}-{a.platform}'
     with tempfile.TemporaryDirectory(prefix='stepx-package-') as td:
         stage=Path(td);base=stage/name;base.mkdir()
         if mac:
-            bundle=base/'StepX.app'/'Contents';binary_dir=bundle/'MacOS';resource_dir=bundle/'Resources'
+            bundle=base/'StepX Companion.app'/'Contents';binary_dir=bundle/'MacOS';resource_dir=bundle/'Resources'
             binary_dir.mkdir(parents=True);resource_dir.mkdir()
-            info={'CFBundleName':'StepX','CFBundleDisplayName':'StepX','CFBundleIdentifier':'io.github.xydzf520.stepx','CFBundleExecutable':'stepx-companion','CFBundlePackageType':'APPL','CFBundleShortVersionString':a.version,'CFBundleVersion':a.version,'NSHighResolutionCapable':True,'NSMicrophoneUsageDescription':'用于语音输入','NSCameraUsageDescription':'用于扫码连接'}
+            info={'CFBundleName':'StepX Companion','CFBundleDisplayName':'StepX Companion','CFBundleIdentifier':'io.github.xydzf520.stepx','CFBundleExecutable':'stepx-companion','CFBundlePackageType':'APPL','CFBundleShortVersionString':a.version,'CFBundleVersion':a.version,'NSHighResolutionCapable':True,'NSMicrophoneUsageDescription':'用于语音输入','NSCameraUsageDescription':'用于扫码连接'}
             iconset=stage/'StepX.iconset';iconset.mkdir()
             for size in [16,32,128,256,512]:
                 for scale in [1,2]:
                     suffix='@2x' if scale==2 else ''
-                    subprocess.run(['sips','-z',str(size*scale),str(size*scale),str(ROOT/'desktop/assets/amoo_desktop_icon.png'),'--out',str(iconset/f'icon_{size}x{size}{suffix}.png')],check=True,stdout=subprocess.DEVNULL)
+                    subprocess.run(['sips','-z',str(size*scale),str(size*scale),str(ROOT/'desktop/assets/stepx_companion_icon.png'),'--out',str(iconset/f'icon_{size}x{size}{suffix}.png')],check=True,stdout=subprocess.DEVNULL)
             subprocess.run(['iconutil','-c','icns',str(iconset),'-o',str(resource_dir/'StepX.icns')],check=True)
             info['CFBundleIconFile']='StepX.icns'
             (bundle/'Info.plist').write_bytes(plistlib.dumps(info))
@@ -54,7 +54,7 @@ def main():
         tool_env=os.environ.copy();tool_env['LD_LIBRARY_PATH']=str(tools_dir)+os.pathsep+tool_env.get('LD_LIBRARY_PATH','')
         for executable,arg in [(binary_dir/binary_name,'--version'),(tools_dir/('adb.exe' if windows else 'adb'),'version'),(tools_dir/('scrcpy.exe' if windows else 'scrcpy'),'--version')]:
             subprocess.run([str(executable),arg],check=True,env=tool_env,timeout=30)
-        if mac:subprocess.run(['codesign','--force','--deep','--sign','-',str(base/'StepX.app')],check=True)
+        if mac:subprocess.run(['codesign','--force','--deep','--sign','-',str(base/'StepX Companion.app')],check=True)
         if a.platform.startswith('linux'):
             output=dist/(name+'.tar.gz')
             with tarfile.open(output,'w:gz') as t:t.add(base,arcname=name)

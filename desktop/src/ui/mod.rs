@@ -1,4 +1,4 @@
-//! Desktop shell for 阶跃伴侣. Layout and visual rules: `desktop/DESIGN.md`.
+//! Desktop shell for StepX Companion. Layout and visual rules: `desktop/DESIGN.md`.
 //!
 //! Module map:
 //! - `theme`   design tokens (spacing, type, colour, radius) and font loading
@@ -16,7 +16,11 @@ mod backscreen_state;
 #[cfg(feature = "ui-capture")]
 mod demo;
 mod icons;
+mod led_grid;
+mod mirror_controls;
 mod pages;
+#[cfg(feature = "ui-capture")]
+mod performance_check;
 mod preview_cache;
 mod shell;
 mod theme;
@@ -96,8 +100,12 @@ struct DesktopAssets;
 impl facloud_ui::assets::AssetProvider for DesktopAssets {
     fn get(&self, path: &str) -> Result<std::borrow::Cow<'_, [u8]>> {
         match path {
+            "stepx_companion_icon.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!("../../assets/stepx_companion_icon.png"))),
+            "neo_front_frame.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!("../../assets/neo_front_frame.png"))),
+            "neo_rear_housing.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!("../../assets/neo_rear_housing.png"))),
+            "stepx_home_screen.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!("../../assets/stepx_home_screen.png"))),
             "amoo_desktop_icon.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!(
-                "../../assets/amoo_desktop_icon.png"
+                "../../assets/stepx_companion_icon.png"
             ))),
             "amoo_icon.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!(
                 "../../assets/amoo_icon.png"
@@ -115,7 +123,11 @@ pub fn run() -> Result<()> {
         .and_then(|i| std::env::args().nth(i + 1))
         .map(PathBuf::from);
     let mut builder = platform::AppBuilder::new(
-        platform::AppCallbacks::default(),
+        platform::AppCallbacks {
+            // The framework only tears down closed windows when this callback is set.
+            on_window_will_close: Some(Box::new(|_, _| {})),
+            ..Default::default()
+        },
         Box::new(DesktopAssets),
         None,
     );
@@ -123,14 +135,16 @@ pub fn run() -> Result<()> {
     {
         use facloud_ui::platform::linux::AppBuilderExt;
         builder.set_window_class("stepx-companion".into());
+        // Share XWayland coordinates with scrcpy so its sidebar can follow it.
+        if std::env::var_os("DISPLAY").is_some() { builder.force_x11(true); }
         builder.set_window_icon_png(std::borrow::Cow::Borrowed(include_bytes!(
-            "../../assets/amoo_desktop_icon.png"
+            "../../assets/stepx_companion_icon.png"
         )));
     }
     builder.run(move |ctx| {
         ctx.add_window(
             facloud_ui::AddWindowOptions {
-                title: Some("阶跃伴侣".into()),
+                title: Some("StepX Companion".into()),
                 window_bounds: WindowBounds::ExactSize(if cfg!(feature = "ui-capture") && std::env::args().any(|a| a == "--press-capture") { vec2f(1440., 920.) } else { vec2f(1200., 760.) }),
                 ..Default::default()
             },
@@ -184,7 +198,7 @@ impl Page {
             Self::BackScreen => "背屏",
             Self::Amoo => "Amoo",
             Self::Account => "账号与用量",
-            Self::About => "关于 StepX",
+            Self::About => "关于 StepX Companion",
             Self::Work => "Amoo Work",
             Self::Studio => "Studio",
             Self::Sms => "短信",
@@ -973,6 +987,7 @@ struct Companion {
     tools_last_result: Option<String>,
     capabilities: Option<Capabilities>,
     mirror: Option<MirrorSession>,
+    mirror_controls: Option<mirror_controls::ControlWindow>,
     screenshot: Option<(tempfile::TempDir, PathBuf)>,
     overview_back_preview: bool,
     // BackScreen (23×17 Dot-Matrix)
@@ -1099,6 +1114,7 @@ struct Companion {
     hover_states: RefCell<HashMap<String, MouseStateHandle>>,
     capture: Option<PathBuf>,
     capture_at: Instant,
+    last_clock_second: u64,
 }
 
 fn is_stepx_model(model: &str) -> bool {
@@ -1185,7 +1201,7 @@ impl Companion {
             pairing_hosts: vec![],
             pair_tab: PairTab::Qr,
             show_secret: false,
-            qr: QrSession::new().ok().map(Arc::new),
+            qr: None,
             summary: String::new(),
             storage_report: None,
             tools_pending: None,
@@ -1204,6 +1220,7 @@ impl Companion {
             tools_last_result: None,
             capabilities: None,
             mirror: None,
+            mirror_controls: None,
             screenshot: None,
             overview_back_preview: std::env::var_os("STEPX_BACK_PREVIEW").is_some(),
             back_screen: BackScreenUiState::default(),
@@ -1384,7 +1401,9 @@ impl Companion {
             hover_states: RefCell::new(HashMap::new()),
             capture,
             capture_at: Instant::now(),
+            last_clock_second: 0,
         };
+        me.back_screen.set_preview_visible(me.page == Page::BackScreen);
         if me.page == Page::Amoo {
             Self::scroll_to_end(&me.scroll);
         } else if me.page == Page::Sms {
@@ -1425,7 +1444,7 @@ impl Companion {
                 }
             }
             ctx.focus_self();
-            Self::schedule_tick(ctx);
+            me.schedule_tick(ctx);
             return me;
         }
         if has_stepx_candidate {
@@ -1434,18 +1453,20 @@ impl Companion {
             me.refresh();
         }
         ctx.focus_self();
-        Self::schedule_tick(ctx);
+        me.schedule_tick(ctx);
         me
     }
 
-    fn schedule_tick(ctx: &mut ViewContext<Self>) {
+    fn schedule_tick(&self, ctx: &mut ViewContext<Self>) {
+        let interval = if self.mirror.is_some() || self.busy || self.work.running || self.amoo_ui.gui_running
+            || (self.page == Page::BackScreen && self.back_screen.preview_running) { 100 } else { 500 };
         ctx.spawn(
-            async {
-                facloud_ui::r#async::Timer::after(Duration::from_millis(100)).await;
+            async move {
+                facloud_ui::r#async::Timer::after(Duration::from_millis(interval)).await;
             },
             |me, _, ctx| {
                 me.tick(ctx);
-                Self::schedule_tick(ctx);
+                me.schedule_tick(ctx);
             },
         );
     }
@@ -1709,16 +1730,21 @@ impl Companion {
             self.phone_link_notice = Some((event.message, event.error));
             ctx.notify();
         }
-        if self.poll_backscreen() {
+        let mut preview_visible = self.page == Page::BackScreen;
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if let Some(window) = facloud_ui::windowing::winit::winit_window_for_id(ctx, ctx.window_id()) {
+            preview_visible &= !window.is_minimized().unwrap_or(false);
+        }
+        if self.poll_backscreen(preview_visible) && preview_visible {
             ctx.notify();
         }
-        if self.poll_updates() {
+        if self.poll_updates() && self.page == Page::Tools {
             ctx.notify();
         }
-        if self.poll_work() {
+        if self.poll_work() && matches!(self.page, Page::Work | Page::Amoo) {
             ctx.notify();
         }
-        if self.poll_amoo_gui() {
+        if self.poll_amoo_gui() && self.page == Page::Amoo {
             ctx.notify();
         }
         if !self.demo_mode && self.page == Page::Overview && self.selected.is_some()
@@ -1728,8 +1754,8 @@ impl Companion {
         }
         if self.poll_account_usage_sync() { ctx.notify(); }
         if self.busy {
-            self.loading_frame = (self.loading_frame + 1) % 4;
-            ctx.notify();
+            let frame = (self.capture_at.elapsed().as_millis() / 250 % 4) as usize;
+            if frame != self.loading_frame { self.loading_frame = frame; ctx.notify(); }
         }
         while let Ok(result) = self.receiver.try_recv() {
             let completed_page = self.job_page;
@@ -1790,11 +1816,19 @@ impl Companion {
                 ctx.notify();
             }
         }
-        if self.qr.is_some() && self.page == Page::Connect {
+        #[cfg(feature = "ui-capture")]
+        self.verify_ui_performance(ctx);
+        self.sync_mirror_controls(ctx);
+        #[cfg(feature = "ui-capture")]
+        self.verify_mirror_controls(ctx);
+        let clock_second = self.capture_at.elapsed().as_secs();
+        let clock_changed = clock_second != self.last_clock_second;
+        self.last_clock_second = clock_second;
+        if clock_changed && self.qr.is_some() && self.page == Page::Connect {
             // Countdown.
             ctx.notify();
         }
-        if self.amoo_recording && self.capture.is_none() {
+        if clock_changed && self.amoo_recording && self.capture.is_none() {
             self.amoo_record_secs = (self.amoo_record_secs + 1).min(59);
             ctx.notify();
         }
@@ -2669,8 +2703,8 @@ impl Companion {
     }
 
     fn stop_mirror(&mut self) {
-        if let Some(mut child) = self.mirror.take() {
-            child.stop();
+        if let Some(child) = self.mirror.take() {
+            child.stop_in_background();
         }
     }
 
@@ -2781,8 +2815,9 @@ impl View for Companion {
         "StepXCompanion"
     }
 
-    fn on_window_closed(&mut self, _: &mut ViewContext<Self>) {
+    fn on_window_closed(&mut self, ctx: &mut ViewContext<Self>) {
         self.stop_mirror();
+        self.close_mirror_controls(ctx);
         self.qr = None;
     }
 

@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -44,7 +45,12 @@ def tool(name):
 
 def run(args, timeout=30):
     env = os.environ.copy()
-    jdk = Path(env.get('STEPX_JDK', os.environ.get('JAVA_HOME', '')))
+    configured = env.get('STEPX_JDK') or env.get('JAVA_HOME')
+    candidates = [Path(configured)] if configured else []
+    if not configured and not shutil.which('java'):
+        candidates += [Path.home()/'.local/jdk-17', Path.home()/'.local/opt/android-studio/jbr',
+                       Path('/opt/android-studio/jbr'), Path('/Applications/Android Studio.app/Contents/jbr/Contents/Home')]
+    jdk = next((path for path in candidates if (path/'bin/java').is_file()), Path(''))
     if (jdk / 'bin/java').is_file():
         env['JAVA_HOME'] = str(jdk)
         env['PATH'] = str(jdk / 'bin') + os.pathsep + env.get('PATH', '')

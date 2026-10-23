@@ -78,6 +78,11 @@ pub(super) struct BackScreenUiState {
     pub origin: String,
     pub frame: Vec<u8>,
     pub preview_running: bool,
+    preview_visible: bool,
+    resume_preview: bool,
+    preview_initialized: bool,
+    gallery_loaded: bool,
+    gallery_rx: Option<mpsc::Receiver<Vec<PathBuf>>>,
     pub playing: bool,
     pub applied_title: String,
     pub applied_status: String,
@@ -116,7 +121,7 @@ impl Default for BackScreenUiState {
     fn default() -> Self {
         let source = bs::Source::Preset(bs::Preset::Astronaut);
         let config = bs::PlaybackConfig::default();
-        let frame = bs::frame(&source, &config, Duration::ZERO, &bs::LiveData::default());
+        let frame = Vec::new(); // No animation or disk scan until the module is opened.
         #[allow(unused_mut)] // Capture builds can select a local image during startup.
         let mut state = Self {
             tab: std::env::args()
@@ -142,7 +147,12 @@ impl Default for BackScreenUiState {
             description: bs::Preset::Astronaut.description().into(),
             origin: "内置动画".into(),
             frame,
-            preview_running: true,
+            preview_running: false,
+            preview_visible: false,
+            resume_preview: true,
+            preview_initialized: false,
+            gallery_loaded: false,
+            gallery_rx: None,
             playing: false,
             applied_title: String::new(),
             applied_status: "尚未应用图案".into(),
@@ -167,7 +177,7 @@ impl Default for BackScreenUiState {
             amoo_image: false,
             generating: false,
             generator_status: String::new(),
-            recent_images: recent_images(),
+            recent_images: Vec::new(),
             scroll: Default::default(),
             started: Instant::now(),
             playback: None,
@@ -200,6 +210,36 @@ impl Drop for BackScreenUiState {
 }
 
 impl BackScreenUiState {
+    pub(super) fn set_preview_visible(&mut self, visible: bool) {
+        if self.preview_visible == visible { return; }
+        if visible {
+            if !self.preview_initialized {
+                self.refresh_frame();
+                self.preview_initialized = true;
+            }
+            self.started = Instant::now() - Duration::from_millis(self.elapsed_ms);
+            self.preview_running = self.resume_preview;
+        } else {
+            self.resume_preview = self.preview_running;
+            self.preview_running = false;
+        }
+        self.preview_visible = visible;
+    }
+
+    pub(super) fn needs_poll(&self) -> bool {
+        self.preview_visible || self.playback.is_some() || self.generation.is_some()
+            || self.companion_rx.is_some() || self.native_rx.is_some()
+            || self.image_rx.is_some() || self.gallery_rx.is_some()
+    }
+
+    fn load_gallery(&mut self) {
+        if self.gallery_rx.is_some() { return; }
+        let (tx, rx) = mpsc::channel();
+        self.gallery_rx = Some(rx);
+        self.gallery_loaded = true;
+        std::thread::spawn(move || { let _ = tx.send(recent_images()); });
+    }
+
     pub fn has_unapplied_changes(&self) -> bool {
         self.applied_revision != Some(self.revision)
             || !self.applied_to_phone
@@ -220,10 +260,12 @@ impl BackScreenUiState {
     fn reset_preview(&mut self) {
         self.started = Instant::now();
         self.elapsed_ms = 0;
-        self.preview_running = true;
+        self.resume_preview = true;
+        self.preview_running = self.preview_visible;
+        self.preview_initialized = true;
         self.refresh_frame();
     }
-    fn refresh_frame(&mut self) {
+    pub(super) fn refresh_frame(&mut self) {
         self.frame = bs::frame(
             &self.source,
             &self.config,
@@ -398,7 +440,7 @@ impl Companion {
                 self.back_screen.reset_preview();
             }
             BackScreenAction::RefreshGallery => {
-                self.back_screen.recent_images = recent_images();
+                self.back_screen.load_gallery();
             }
             BackScreenAction::RecentImage(index) => {
                 let path = self
@@ -757,7 +799,12 @@ impl Companion {
         self.back_screen.generator_status = "设备连接已切换，原创作已取消".into();
         self.back_screen.status = "设备连接已切换；如已断开，停止后的硬件恢复结果无法读取".into();
     }
-    pub(super) fn poll_backscreen(&mut self) -> bool {
+    pub(super) fn poll_backscreen(&mut self, preview_visible: bool) -> bool {
+        self.back_screen.set_preview_visible(preview_visible && self.selected.is_some() && !self.initializing);
+        if !self.back_screen.needs_poll() { return false; }
+        if self.page == Page::BackScreen && self.back_screen.tab == 2 && !self.back_screen.gallery_loaded {
+            self.back_screen.load_gallery();
+        }
         if self
             .back_screen
             .active_device
@@ -770,6 +817,13 @@ impl Companion {
             return true;
         }
         let mut changed = false;
+        if let Some(result) = self.back_screen.gallery_rx.as_ref().map(|rx| rx.try_recv()) {
+            match result {
+                Ok(images) => { self.back_screen.recent_images = images; self.back_screen.gallery_rx = None; changed = true; }
+                Err(mpsc::TryRecvError::Disconnected) => self.back_screen.gallery_rx = None,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
         if self.selected.is_none() && self.back_screen.companion_checked_device.is_some() {
             self.back_screen.companion_checked_device = None;
             self.back_screen.companion_installed = None;
@@ -778,7 +832,7 @@ impl Companion {
             self.back_screen.applied_status = "手机连接已断开，运行状态待检测".into();
             changed = true;
         }
-        if self.page == Page::BackScreen
+        if !self.demo_mode && self.page == Page::BackScreen
             && !self.back_screen.companion_busy
             && !self.back_screen.playing
             && !self.back_screen.generating
@@ -897,6 +951,7 @@ impl Companion {
                 CompanionEvent::Failed(message) => {
                     self.back_screen.error = Some(message.clone());
                     self.back_screen.status = message.clone();
+                    self.back_screen.applied_status = "本次操作未完成，请检查连接后重试".into();
                     self.back_screen.companion_status = message;
                 }
                 CompanionEvent::Progress(_) => {}
@@ -1060,7 +1115,7 @@ impl Companion {
                     self.back_screen.config.fps = generated.fps;
                     self.back_screen.config.duration_secs = generated.duration_secs;
                     self.back_screen.native_feature = None;
-                    self.back_screen.recent_images = recent_images();
+                    self.back_screen.load_gallery();
                     let result = if let Some(path) = generated.image_path {
                         self.back_screen.apply_image(path, "Amoo 生成图片")
                     } else if let Some(feature) = generated
@@ -1137,8 +1192,9 @@ impl Companion {
             };
             self.back_screen.elapsed_ms =
                 self.back_screen.started.elapsed().as_millis() as u64 % duration;
+            let previous = self.back_screen.frame.clone();
             self.back_screen.refresh_frame();
-            changed = true;
+            changed |= self.back_screen.tab == 4 || previous != self.back_screen.frame;
         }
         changed
     }
@@ -1189,4 +1245,45 @@ fn recent_images() -> Vec<PathBuf> {
         .collect();
     images.sort_by(|a, b| b.0.cmp(&a.0));
     images.into_iter().take(24).map(|(_, path)| path).collect()
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    #[test]
+    fn unopened_module_does_no_preview_or_gallery_work() {
+        let state = BackScreenUiState::default();
+        assert!(state.frame.is_empty());
+        assert!(!state.preview_running);
+        assert!(!state.needs_poll());
+        assert!(state.recent_images.is_empty());
+        assert!(state.gallery_rx.is_none());
+    }
+    #[test]
+    fn leaving_freezes_preview_and_return_preserves_pause_choice() {
+        let mut state = BackScreenUiState::default();
+        state.set_preview_visible(true);
+        assert_eq!(state.frame.len(), bs::SLOTS);
+        assert!(state.preview_running);
+        state.elapsed_ms = 1200;
+        state.set_preview_visible(false);
+        assert!(!state.preview_running);
+        assert!(!state.needs_poll());
+        state.set_preview_visible(true);
+        assert!(state.preview_running);
+        assert!(state.started.elapsed().as_millis() >= 1200);
+        state.preview_running = false; // Explicit Pause button.
+        state.set_preview_visible(false);
+        state.set_preview_visible(true);
+        assert!(!state.preview_running);
+        assert_eq!(state.elapsed_ms, 1200);
+    }
+    #[test]
+    fn hidden_preview_keeps_explicit_device_job_results() {
+        let mut state = BackScreenUiState::default();
+        let (_tx, rx) = mpsc::channel();
+        state.native_rx = Some(rx);
+        assert!(state.needs_poll());
+        assert!(!state.preview_running);
+    }
 }

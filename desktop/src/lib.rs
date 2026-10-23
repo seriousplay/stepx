@@ -12,6 +12,7 @@ pub mod device;
 pub mod discovery;
 pub mod google;
 pub mod mirror;
+pub mod mirror_window;
 pub mod openclaw;
 pub mod pairing;
 pub mod phone;

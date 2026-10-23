@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if std::env::args().any(|arg| arg == "--help" || arg == "-h") {
-        println!("阶跃伴侣 · StepX Companion (macOS / Windows / Linux)\n\n运行：stepx-companion\n诊断连接：stepx-companion --doctor\n扫码配对：stepx-companion --pair-qr\n界面主题：--light | --dark（默认跟随系统主题，或设置 STEPX_THEME=light|dark）\n界面截图（需要 ui-capture feature）：--capture-ui /absolute/path.png\n指定初始页：--page overview|amoo|sms|files|apps|tools|connect\n工具详情：--page tools --tool updates|storage|google|apk|screen|services|device");
+        println!("StepX Companion · 手机与电脑的桌面伴侣 (macOS / Windows / Linux)\n\n运行：stepx-companion\n诊断连接：stepx-companion --doctor\n扫码配对：stepx-companion --pair-qr\n界面主题：--light | --dark（默认跟随系统主题，或设置 STEPX_THEME=light|dark）\n界面截图（需要 ui-capture feature）：--capture-ui /absolute/path.png\n指定初始页：--page overview|amoo|sms|files|apps|tools|connect\n工具详情：--page tools --tool updates|storage|google|apk|screen|services|device");
         return Ok(());
     }
     if !cfg!(feature = "ui-capture") && std::env::args().any(|arg| arg == "--capture-ui") {

@@ -195,7 +195,7 @@ impl Companion {
         if self.busy {
             let progress = self
                 .google_progress
-                .lock()
+                .try_lock()
                 .ok()
                 .filter(|s| !s.is_empty())
                 .map(|s| s.clone())

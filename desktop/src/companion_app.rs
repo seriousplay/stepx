@@ -237,6 +237,7 @@ fn apply_power_exemption(adb: &Adb, device: &Device, apk: &Path) -> Result<()> {
         .arg("--apk")
         .arg(apk)
         .env("STEPX_SERIAL", &device.transport)
+        .env("STEPX_DEVICE_SERIAL", &device.serial)
         .env("STEPX_ADB", &adb.path)
         .env_remove("PYTHONOPTIMIZE");
     let output = run_process(command, None, Duration::from_secs(120))?;
@@ -696,7 +697,8 @@ fn run_pairing_adapter(adb: &Adb, device: &Device, apk: &Path, operation: &str) 
     ensure!(script.is_file(), "缺少 StepX伴侣扫码系统服务组件");
     let mut command = crate::resources::python_command();
     command.arg(script).arg(operation).arg("--apk").arg(apk)
-        .env("STEPX_SERIAL", &device.transport).env("STEPX_ADB", &adb.path)
+        .env("STEPX_SERIAL", &device.transport)
+        .env("STEPX_DEVICE_SERIAL", &device.serial).env("STEPX_ADB", &adb.path)
         .env_remove("PYTHONOPTIMIZE");
     let output = run_process(command, None, Duration::from_secs(90))?;
     let result = serde_json::from_slice::<Value>(&output.stdout)
@@ -795,6 +797,7 @@ fn run_adapter(
         .arg("--apk")
         .arg(apk)
         .env("STEPX_SERIAL", &device.transport)
+        .env("STEPX_DEVICE_SERIAL", &device.serial)
         .env("STEPX_ADB", &adb.path)
         .env_remove("PYTHONOPTIMIZE");
     let output = run_process(command, None, Duration::from_secs(180))?;

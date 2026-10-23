@@ -467,7 +467,7 @@ impl Companion {
         let logo_box = ConstrainedBox::new(
             Image::new(
                 facloud_ui::assets::asset_cache::AssetSource::Bundled {
-                    path: "amoo_desktop_icon.png",
+                    path: "stepx_companion_icon.png",
                 },
                 CacheOption::BySize,
             )
@@ -478,33 +478,13 @@ impl Companion {
         .with_height(28.)
         .finish();
 
-        let brand_row = Container::new(
-            self.between(
-                self.hstack(
-                    10.,
-                    vec![
-                        logo_box,
-                        self.hstack(
-                            6.,
-                            vec![
-                                self.line_w("StepX", SUBHEAD, p.text, Weight::Semibold),
-                                self.mono(stepx_companion::build_info::VERSION, CAPTION, p.text2),
-                            ],
-                        ),
-                    ],
-                ),
-                Container::new(self.mono("桌面端", 11., p.text2))
-                    .with_horizontal_padding(6.)
-                    .with_vertical_padding(2.)
-                    .with_background_color(if p.dark {
-                        rgba(0xFF, 0xFF, 0xFF, 14)
-                    } else {
-                        rgba(0x00, 0x00, 0x00, 10)
-                    })
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
-                    .finish(),
-            ),
-        )
+        let brand_row = Container::new(self.hstack(10., vec![
+            logo_box,
+            self.vstack(2., vec![
+                self.line_w("StepX Companion", 15., p.text, Weight::Semibold),
+                self.mono(format!("桌面伴侣 · {}", stepx_companion::build_info::VERSION), 11., p.text3),
+            ]),
+        ]))
         .with_horizontal_padding(6.)
         .with_padding_top(2.)
         .finish();
@@ -630,7 +610,7 @@ impl Companion {
                     .with_child(self.vstack(
                         S2,
                         vec![
-                            self.button("sidebar-about", "关于 StepX", Action::Page(Page::About), if self.page == Page::About { Btn::Secondary } else { Btn::Ghost }),
+                            self.button("sidebar-about", "关于 StepX Companion", Action::Page(Page::About), if self.page == Page::About { Btn::Secondary } else { Btn::Ghost }),
                         ],
                     ))
                     .finish(),

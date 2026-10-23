@@ -5,12 +5,12 @@ impl Companion {
     pub(in super::super) fn about_page(&self) -> El {
         let p = self.p();
         let logo = ConstrainedBox::new(Image::new(
-            facloud_ui::assets::asset_cache::AssetSource::Bundled { path: "amoo_desktop_icon.png" },
+            facloud_ui::assets::asset_cache::AssetSource::Bundled { path: "stepx_companion_icon.png" },
             CacheOption::BySize,
         ).contain().finish()).with_width(48.).with_height(48.).finish();
         let card = self.panel(vec![
             self.hstack(S3, vec![logo, self.vstack(S1, vec![
-                self.line_w("StepX", 28., p.text, Weight::Bold),
+                self.line_w("StepX Companion", 26., p.text, Weight::Bold),
                 self.mono(format!("v{} · {}", stepx_companion::build_info::VERSION, stepx_companion::build_info::compiled_id()), CAPTION, p.text3),
             ])]),
             self.text("手机与电脑之间，更顺手的工作台。", BODY, p.text2),

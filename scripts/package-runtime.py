@@ -37,7 +37,8 @@ def build_runtime(root, windows):
         # Keep isolated search paths, adding only bundled application modules.
         (runtime/'python/python313._pth').write_text('python313.zip\n.\n../../scripts\n../../handoff/google-play-stepx/tools\nimport site\n',encoding='utf-8')
         # Every bundled helper and its descendants hide their own console.
-        (runtime/'python/sitecustomize.py').write_text('''import subprocess
+        (runtime/'python/sitecustomize.py').write_text('''import subprocess, sys
+sys.dont_write_bytecode = True
 _original = subprocess.Popen
 class QuietPopen(_original):
     def __init__(self, *args, **kwargs):

@@ -9,8 +9,15 @@ fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| matches!(a.as_str(), "--version"|"-V"|"--help"|"-h"|"--doctor"|"--check-runtime")) {
         // Attach only to an existing terminal. Double-click never creates one.
         #[link(name = "kernel32")]
-        unsafe extern "system" { fn AttachConsole(process_id: u32) -> i32; }
-        unsafe { AttachConsole(u32::MAX); }
+        unsafe extern "system" {
+            fn AttachConsole(process_id: u32) -> i32;
+            fn GetStdHandle(kind: u32) -> *mut std::ffi::c_void;
+            fn GetFileType(handle: *mut std::ffi::c_void) -> u32;
+        }
+        // Preserve inherited pipes when diagnostics are run by a launcher/CI.
+        unsafe {
+            if GetFileType(GetStdHandle(-11i32 as u32)) == 0 { AttachConsole(u32::MAX); }
+        }
     }
     if std::env::args().any(|arg| arg == "--version" || arg == "-V") {
         println!(

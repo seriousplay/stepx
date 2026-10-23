@@ -10,14 +10,16 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = json.loads((ROOT / 'target.json').read_text())
-STATE = ROOT / 'state'
 SERIAL = os.environ.get('STEPX_SERIAL', CONFIG['serial'])
 DEVICE_SERIAL = os.environ.get('STEPX_DEVICE_SERIAL', '')
 ADB = [os.environ.get('STEPX_ADB', shutil.which('adb') or 'adb'), '-s', SERIAL]
 
 
 sys.path.insert(0, str(ROOT.parents[1] / 'scripts'))
-from host_runtime import sdk_tool, sdk_command, subprocess_options
+from host_runtime import sdk_tool, sdk_command, subprocess_options, user_state_root, migrate_legacy_state
+
+STATE = user_state_root() / 'google-play/state'
+DOWNLOADS = user_state_root() / 'google-play/downloads'
 
 
 def run(args, **kwargs):
@@ -50,10 +52,12 @@ def guard(native=False):
     if native:
         for path, expected in CONFIG['native_hashes'].items():
             assert shell('sha256sum', path).split()[0] == expected, 'Native image mismatch: ' + path
+    init_state()
 
 
 def init_state():
-    STATE.mkdir(mode=0o700, exist_ok=True)
+    migrate_legacy_state(ROOT / 'state', STATE)
+    STATE.mkdir(parents=True, mode=0o700, exist_ok=True)
     STATE.chmod(0o700)
 
 

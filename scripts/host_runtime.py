@@ -4,9 +4,42 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def user_state_root():
+    """Mutable files must never live inside a signed/read-only application bundle."""
+    if os.environ.get('STEPX_STATE_DIR'):
+        return Path(os.environ['STEPX_STATE_DIR'])
+    if os.environ.get('XDG_STATE_HOME'):
+        return Path(os.environ['XDG_STATE_HOME']) / 'stepx-companion'
+    if os.name == 'nt':
+        return Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData/Local') / 'StepX Companion'
+    if sys.platform == 'darwin':
+        return Path.home() / 'Library/Application Support/StepX Companion'
+    return Path.home() / '.local/state/stepx-companion'
+
+
+def migrate_legacy_state(source, destination):
+    """Copy old recovery receipts atomically; never delete or replace either baseline."""
+    source, destination = Path(source), Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with file_lock(destination.parent / '.state-migration.lock'):
+        if destination.exists() or not source.exists():
+            return
+        if source.is_symlink() or not source.is_dir() or any(p.is_symlink() for p in source.rglob('*')):
+            raise RuntimeError('旧版恢复目录包含异常链接，请先检查原始备份')
+        with tempfile.TemporaryDirectory(prefix='.state-migrate-', dir=destination.parent) as temp:
+            staged = Path(temp) / 'state'
+            shutil.copytree(source, staged)
+            for path in staged.rglob('*'):
+                path.chmod(0o700 if path.is_dir() else 0o600)
+            staged.chmod(0o700)
+            staged.rename(destination)
 
 
 def subprocess_options():

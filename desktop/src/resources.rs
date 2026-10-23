@@ -28,10 +28,27 @@ pub fn user_home() -> Option<std::ffi::OsString> {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
 }
 
+/// Writable receipts and downloads stay outside the installed application.
+pub fn user_state() -> PathBuf {
+    if let Some(path) = std::env::var_os("STEPX_STATE_DIR") { return path.into(); }
+    if let Some(path) = std::env::var_os("XDG_STATE_HOME") { return PathBuf::from(path).join("stepx-companion"); }
+    let home = user_home().map(PathBuf::from).unwrap_or_default();
+    if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Local")).join("StepX Companion")
+    } else if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/StepX Companion")
+    } else {
+        home.join(".local/state/stepx-companion")
+    }
+}
+
 pub fn python_command() -> std::process::Command {
     let mut command = std::process::Command::new(python());
-    command.arg("-X").arg("utf8").env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+    command.arg("-B").arg("-X").arg("utf8").env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
     command.env("STEPX_RESOURCE_DIR",root());
+    command.env("STEPX_STATE_DIR",user_state());
+    command.env("PYTHONDONTWRITEBYTECODE", "1");
     quiet_command(&mut command);
     command
 }

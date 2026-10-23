@@ -10,7 +10,7 @@ import sys
 import time
 import urllib.request
 import zipfile
-from common import ADB, CONFIG, ROOT, STATE, guard, init_state, private_write, root_json, run, save_json, sdk_tool, sdk_command, sha256, shell
+from common import ADB, CONFIG, ROOT, STATE, DOWNLOADS, guard, init_state, private_write, root_json, run, save_json, sdk_tool, sdk_command, sha256, shell
 
 PACKAGES = ['com.google.android.gsf', 'com.google.android.gms', 'com.android.vending']
 
@@ -31,8 +31,8 @@ def preflight():
 
 
 def fetch(archive=None):
-    folder = ROOT / 'downloads'
-    folder.mkdir(exist_ok=True)
+    folder = DOWNLOADS
+    folder.mkdir(parents=True, exist_ok=True)
     meta = CONFIG['archive']
     if archive:
         path = __import__('pathlib').Path(archive).resolve()
@@ -54,7 +54,7 @@ def fetch(archive=None):
 
 def check_apks():
     for entry in CONFIG['apks']:
-        path = ROOT / 'downloads' / entry['filename']
+        path = DOWNLOADS / entry['filename']
         assert sha256(path) == entry['sha256'], 'APK digest mismatch: ' + entry['package']
         result = run(sdk_command('apksigner') + ['verify', '--print-certs', str(path)])
         assert 'Signer #1 certificate SHA-256 digest: ' + entry['signer_sha256'] in result.stdout
@@ -108,7 +108,7 @@ def install_apks():
     check_apks()
     for package in PACKAGES:
         meta = next(x for x in CONFIG['apks'] if x['package'] == package)
-        result = run(ADB + ['install', '--user', '0', str(ROOT / 'downloads' / meta['filename'])], timeout=180)
+        result = run(ADB + ['install', '--user', '0', str(DOWNLOADS / meta['filename'])], timeout=180)
         assert 'Success' in result.stdout, 'Installation not confirmed: ' + package
         print('Installed ' + package, flush=True)
     shell('settings', 'put', 'global', 'cn_gms_core', '1')

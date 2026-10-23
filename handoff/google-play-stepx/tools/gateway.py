@@ -11,7 +11,7 @@ try:
  assert route.startswith('/')
  req=urllib.request.Request('http://127.0.0.1:'+port+route,data=json.dumps(payload).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
  try:
-  with urllib.request.urlopen(req,timeout=40) as r:
+  with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=40) as r:
    data=r.read(2000000).decode();print(data.replace(token,'[REDACTED]'))
  except urllib.error.HTTPError as e: print('HTTP',e.code,e.read(3000).decode().replace(token,'[REDACTED]'))
 finally: subprocess.run(adb+['forward','--remove','tcp:'+port],check=True)

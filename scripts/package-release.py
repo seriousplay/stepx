@@ -57,7 +57,10 @@ def main():
             subprocess.run([str(executable),arg],check=True,env=tool_env,timeout=30)
         python=resource_dir/'runtime/python/python.exe' if windows else resource_dir/'runtime/python/bin/python3'
         subprocess.run([str(python),'-X','utf8',str(ROOT/'scripts/verify-packaged-runtime.py'),str(resource_dir)],check=True,timeout=60)
-        if mac:subprocess.run(['codesign','--force','--deep','--sign','-',str(base/'StepX Companion.app')],check=True)
+        if mac:
+            subprocess.run(['codesign','--force','--deep','--sign','-',str(base/'StepX Companion.app')],check=True)
+            subprocess.run([str(binary_dir/binary_name),'--check-runtime'],check=True,timeout=45)
+            subprocess.run(['codesign','--verify','--deep','--strict',str(base/'StepX Companion.app')],check=True)
         if a.platform.startswith('linux'):
             output=dist/(name+'.tar.gz')
             with tarfile.open(output,'w:gz') as t:t.add(base,arcname=name)

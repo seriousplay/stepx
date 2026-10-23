@@ -66,9 +66,9 @@ print('Packaged signer, Unicode paths, imports and file lock: PASS')
     shutil.copy2(binary_root/binary_name,copy/binary_name)
     run_checked([str(copy/binary_name),'--check-runtime'],env,45)
     adb=copy/'tools/bin'/('adb.exe' if os.name=='nt' else 'adb')
-    subprocess.run([str(adb),'version'],env=env,check=True,timeout=15)
-    subprocess.run([str(python),'-X','utf8','-c',code,str(copy)],env=env,check=True,timeout=45)
-    subprocess.run([str(python),'-B','-X','utf8',str(copy/'scripts/test-host-runtime.py')],env=env,check=True,timeout=30)
+    run_checked([str(adb),'version'],env,15)
+    run_checked([str(python),'-X','utf8','-c',code,str(copy)],env,45)
+    run_checked([str(python),'-B','-X','utf8',str(copy/'scripts/test-host-runtime.py')],env,30)
 if os.name=='nt':
     binary=(root/'stepx-companion.exe').read_bytes();pe=struct.unpack_from('<I',binary,0x3c)[0]
     assert struct.unpack_from('<H',binary,pe+24+68)[0]==2,'EXE must use Windows GUI subsystem'

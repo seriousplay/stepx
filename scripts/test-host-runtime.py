@@ -23,7 +23,8 @@ class HostRuntimeTests(unittest.TestCase):
             for home in [bundled,external]:
                 (home/'bin').mkdir(parents=True)
                 (home/'bin'/('java.exe' if os.name=='nt' else 'java')).touch()
-            with patch('host_runtime.ROOT', root), patch.dict(os.environ, {'JAVA_HOME':str(external)}, clear=True):
+            with patch('host_runtime.ROOT', root), patch('pathlib.Path.home', return_value=root/'user'), \
+                 patch.dict(os.environ, {'JAVA_HOME':str(external)}, clear=True):
                 self.assertEqual(java_environment()['JAVA_HOME'],str(bundled))
 
     def test_native_user_storage(self):

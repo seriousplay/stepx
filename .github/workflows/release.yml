@@ -68,5 +68,5 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           cp desktop/assets/stepx-companion.apk dist/StepX-companion.apk
-          sha256sum dist/StepX-companion.apk > dist/StepX-companion.apk.sha256
+          (cd dist && sha256sum StepX-companion.apk > StepX-companion.apk.sha256)
           gh release create "v$RELEASE_VERSION" dist/* --target "$GITHUB_SHA" --draft --title "StepX Companion $RELEASE_VERSION · 首个公开预览版" --notes-file docs/RELEASE_NOTES.md

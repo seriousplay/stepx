@@ -3,12 +3,15 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import os
+import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
-JAVA = Path('/path/to/user/.local/opt/android-studio/jbr/bin')
-ANDROID = Path('/path/to/user/Android/Sdk/platforms/android-36/android.jar')
+JAVA = Path(shutil.which('javac') or '/missing-jdk/javac').parent
+ANDROID = Path(os.environ.get('ANDROID_HOME', str(Path.home() / 'Android/Sdk'))) / 'platforms/android-36/android.jar'
 
 
+@unittest.skipUnless((JAVA / "javac").exists() and ANDROID.is_file(), "Requires Android SDK and JDK")
 class ModelDiagnosticsTest(unittest.TestCase):
     def test_original_results_errors_and_continuations_are_forwarded(self):
         with tempfile.TemporaryDirectory(prefix='stepx-model-observer-') as tmp:

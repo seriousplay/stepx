@@ -130,7 +130,7 @@ pub fn run() -> Result<()> {
         ctx.add_window(
             facloud_ui::AddWindowOptions {
                 title: Some("阶跃伴侣".into()),
-                window_bounds: WindowBounds::ExactSize(vec2f(1200., 760.)),
+                window_bounds: WindowBounds::ExactSize(if cfg!(feature = "ui-capture") && std::env::args().any(|a| a == "--press-capture") { vec2f(1440., 920.) } else { vec2f(1200., 760.) }),
                 ..Default::default()
             },
             move |ctx| Root {
@@ -1680,7 +1680,7 @@ impl Companion {
             .is_some_and(|(device, link)| {
                 device.serial == link.serial && device.transport == link.transport
             });
-        if !link_matches {
+        if !self.demo_mode && !link_matches {
             self.phone_link = None;
             if let Some(device) = self.selected.clone() {
                 if let Ok(adb) = Adb::discover() {

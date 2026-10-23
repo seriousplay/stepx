@@ -87,15 +87,19 @@ fn claim(id:&str)->bool {
  SEEN.get_or_init(Default::default).lock().unwrap().insert(id.into())
 }
 pub fn cloud_nonce(adb:&Adb,device:&Device)->Result<String> {
- use std::os::unix::fs::PermissionsExt;
+ #[cfg(unix)] use std::os::unix::fs::PermissionsExt;
  let scope=crate::amoo_usage::account_scope(adb,device)?.context("无法确认 Amoo 账号，未连接 GUI 对话")?;
- let base=std::path::PathBuf::from(std::env::var("HOME")?).join(".local/state/stepx-companion/gui-cloud");
- std::fs::create_dir_all(&base)?;std::fs::set_permissions(&base,std::fs::Permissions::from_mode(0o700))?;
+ let base=crate::resources::user_config().join("stepx-companion/gui-cloud");
+ std::fs::create_dir_all(&base)?;
+ #[cfg(unix)] std::fs::set_permissions(&base,std::fs::Permissions::from_mode(0o700))?;
  let file=base.join(crate::amoo_media::artifact_content_key(scope.as_bytes()));
  if file.exists(){let n=std::fs::read_to_string(file)?;ensure!(n.len()==32&&n.bytes().all(|b|b.is_ascii_hexdigit()),"GUI 对话配置无效");return Ok(n);}
  let n=format!("{:032x}",rand::random::<u128>());
- use std::io::Write;use std::os::unix::fs::OpenOptionsExt;
- std::fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(file)?.write_all(n.as_bytes())?;Ok(n)
+ use std::io::Write;
+ #[cfg(unix)] use std::os::unix::fs::OpenOptionsExt;
+ let mut options=std::fs::OpenOptions::new(); options.create_new(true).write(true);
+ #[cfg(unix)] options.mode(0o600);
+ options.open(file)?.write_all(n.as_bytes())?;Ok(n)
 }
 pub fn cloud_install_prompt(adb:&Adb,device:&Device)->Result<String>{
  let nonce=cloud_nonce(adb,device)?;

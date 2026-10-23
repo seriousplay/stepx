@@ -1721,6 +1721,12 @@ impl Companion {
         if self.poll_amoo_gui() {
             ctx.notify();
         }
+        if !self.demo_mode && self.page == Page::Overview && self.selected.is_some()
+            && !self.busy && !self.amoo_ui.usage_attempted {
+            self.start_account_usage_sync();
+            ctx.notify();
+        }
+        if self.poll_account_usage_sync() { ctx.notify(); }
         if self.busy {
             self.loading_frame = (self.loading_frame + 1) % 4;
             ctx.notify();
@@ -2794,7 +2800,7 @@ impl View for Companion {
 
         let body = if self.initializing && self.busy {
             self.loading_page()
-        } else if self.page.needs_device() && self.selected.is_none() {
+        } else if self.page.needs_device() && self.selected.is_none() && self.page != Page::Overview {
             self.no_device()
         } else if matches!(self.page, Page::Tools | Page::Connect) {
             self.scrollable(self.scroll.clone(), self.page_content())

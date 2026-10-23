@@ -108,7 +108,9 @@ impl Companion {
 
     pub(in super::super) fn overview_page(&self) -> El {
         let Some(device) = &self.selected else {
-            return self.no_device();
+            return self.pane_scroll(self.scroll.clone(), self.vstack(S4, vec![
+                self.overview_usage_card(), self.no_device(),
+            ]));
         };
         let p = self.p();
         let metrics = DeviceMetrics::from_summary(&self.summary);
@@ -691,6 +693,7 @@ impl Companion {
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_spacing(S4)
             .with_child(top_metrics)
+            .with_child(self.overview_usage_card())
             .with_child(lower)
             .finish();
         self.pane_scroll(self.scroll.clone(), content)

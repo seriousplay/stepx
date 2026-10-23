@@ -99,6 +99,10 @@ pub(super) struct AmooUiState {
     measured: HashMap<String, (String, u64)>,
     pub last_updated: Option<String>,
     pub account_scope: Option<String>,
+    pub usage_loading: bool,
+    pub usage_error: Option<String>,
+    pub usage_attempted: bool,
+    usage_rx: Option<mpsc::Receiver<std::result::Result<amoo_usage::AccountUsageSnapshot, String>>>,
     coverage_partial: bool,
     sessions_read: usize,
 }
@@ -396,19 +400,7 @@ impl Companion {
                     _ => {}
                 }
             }
-            AmooUiAction::RefreshUsage => {
-                if self.busy {
-                    return;
-                }
-                self.with_device(
-                    "正在同步当前账号的消息用量，最多需要一分钟…",
-                    move |adb, device| {
-                        Ok(Outcome::AmooUi(AmooUiOutcome::Usage(
-                            amoo_usage::fetch_account_usage(adb, &device)?,
-                        )))
-                    },
-                );
-            }
+            AmooUiAction::RefreshUsage => self.start_account_usage_sync(),
         }
     }
 
@@ -997,6 +989,93 @@ impl Companion {
         ])
     }
 
+    pub(super) fn start_account_usage_sync(&mut self) {
+        if self.amoo_ui.usage_loading || self.demo_mode { return; }
+        let Some(device) = self.selected.clone() else { return; };
+        let (tx, rx) = mpsc::channel();
+        self.amoo_ui.usage_rx = Some(rx);
+        self.amoo_ui.usage_loading = true;
+        self.amoo_ui.usage_attempted = true;
+        self.amoo_ui.usage_error = None;
+        // Keep slow account-history reads off the interactive device job queue.
+        // Changing devices drops the receiver with AmooUiState; stale results cannot apply.
+        std::thread::spawn(move || {
+            let result = Adb::discover().and_then(|adb| amoo_usage::fetch_account_usage(&adb, &device))
+                .map_err(|error| format!("{error:#}"));
+            let _ = tx.send(result);
+        });
+    }
+
+    pub(super) fn poll_account_usage_sync(&mut self) -> bool {
+        let result = match self.amoo_ui.usage_rx.as_ref().map(|rx| rx.try_recv()) {
+            Some(Ok(result)) => result,
+            Some(Err(mpsc::TryRecvError::Disconnected)) => Err("用量同步已中断，请重试".into()),
+            _ => return false,
+        };
+        self.amoo_ui.usage_rx = None;
+        self.amoo_ui.usage_loading = false;
+        match result {
+            Ok(snapshot) => {
+                let status = self.status.clone();
+                self.apply_amoo_ui(AmooUiOutcome::Usage(snapshot));
+                if self.busy { self.status = status; }
+            }
+            Err(error) => self.amoo_ui.usage_error = Some(error),
+        }
+        true
+    }
+
+    #[cfg(feature = "ui-capture")]
+    pub(super) fn seed_demo_usage(&mut self) {
+        // Fictional screenshot-only values; never read from or written to an account cache.
+        self.amoo_ui.account_scope = Some("demo-usage".into());
+        self.amoo_ui.messages.insert("demo:work".into(), BTreeMap::from([("demo:reply".into(), UsageMetrics {
+            input_tokens: Some(1_200_000), output_tokens: Some(80_000), total_tokens: Some(1_280_000),
+            ..UsageMetrics::default()
+        })]));
+        self.amoo_ui.last_updated = Some("15:30:00".into());
+    }
+
+    pub(super) fn overview_usage_card(&self) -> El {
+        let p = self.p();
+        let usage = amoo_usage::aggregate(self.amoo_ui.messages.values().flat_map(|m| m.values()));
+        let value = |n: Option<u64>| match n {
+            Some(n) if n >= 100_000_000 => format!("{:.2} 亿", n as f64 / 100_000_000.),
+            Some(n) if n >= 10_000 => format!("{:.2} 万", n as f64 / 10_000.),
+            Some(n) => n.to_string(),
+            None => "—".into(),
+        };
+        let mut columns = Flex::row().with_main_axis_size(MainAxisSize::Max).with_spacing(S4);
+        for (label, number) in [("已同步 Token", value(usage.total_tokens)),
+            ("输入 Token", value(usage.input_tokens)), ("输出 Token", value(usage.output_tokens)),
+            ("账号剩余额度", "未提供".into())] {
+            columns = columns.with_child(Expanded::new(1., self.vstack(S1, vec![
+                self.line(label, CAPTION, p.text2), self.line_w(number, 21., p.text, facloud_ui::fonts::Weight::Semibold),
+            ])).finish());
+        }
+        let hint = if self.selected.is_none() {
+            "连接手机后自动同步 Amoo 账号用量。".to_string()
+        } else if self.amoo_ui.usage_loading {
+            "正在读取手机账号用量，你可以继续使用其他功能…".into()
+        } else if let Some(error) = &self.amoo_ui.usage_error {
+            format!("同步未完成：{error}")
+        } else if let Some(time) = &self.amoo_ui.last_updated {
+            format!("同步于 {time} · {} 个会话 · 仅统计已读取历史，非账号全部消费。", self.amoo_ui.messages.len())
+        } else {
+            "仅统计已同步消息；手机接口未返回账号总额度与剩余额度。".into()
+        };
+        self.panel(vec![
+            self.between(self.heading("Amoo 账号与用量"), self.hstack(S2, vec![
+                if self.amoo_ui.usage_loading { self.disabled_button("同步中…") }
+                else if self.selected.is_some() { self.button("ov-usage-refresh", "刷新用量", Action::AmooUi(AmooUiAction::RefreshUsage), Btn::Ghost) }
+                else { self.disabled_button("等待连接") },
+                self.link_action("ov-usage-detail", "查看详情", Action::Page(Page::Account)),
+            ])),
+            columns.finish(),
+            self.text(hint, CAPTION, if self.amoo_ui.usage_error.is_some() { p.warning } else { p.text3 }),
+        ])
+    }
+
     pub(super) fn account_usage_page(&self) -> El {
         let p = self.p();
         let aggregate = amoo_usage::aggregate(
@@ -1019,6 +1098,11 @@ impl Companion {
             self.panel(vec![self.heading("账号额度与账单"), self.text("手机服务尚未提供可核实的账号总额度、剩余额度与计费周期。已同步消息累计仅覆盖读取过的历史，不代表账号全部消费。", BODY, p.text2)]),
             self.panel(vec![self.heading("速度与上下文"), self.text("平均输出速度按服务返回的输出 Token 和本次任务实际响应时间计算，包含工具执行及等待时间。历史没有可靠耗时时显示 —。上下文显示服务返回的输入 Token；未返回的模型上限显示 —。", BODY, p.text2)]),
         ];
+        if self.amoo_ui.usage_loading {
+            rows.push(self.text("正在后台同步账号用量…", CAPTION, p.text2));
+        } else if let Some(error) = &self.amoo_ui.usage_error {
+            rows.push(self.text(format!("同步未完成：{error}"), CAPTION, p.warning));
+        }
         if self.amoo_ui.coverage_partial {
             rows.push(self.text(
                 "当前统计包含部分历史；部分较早消息或未返回用量的回复未计入。",

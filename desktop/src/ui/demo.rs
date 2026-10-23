@@ -19,6 +19,7 @@ impl Companion {
                 product: "pandora".into(),
             })
         };
+        if self.selected.is_some() { self.seed_demo_usage(); }
         self.devices = vec![Transport {
             id: "DEMO-PZ261A".into(),
             state: "device".into(),

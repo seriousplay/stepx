@@ -118,6 +118,12 @@ impl facloud_ui::assets::AssetProvider for DesktopAssets {
 }
 
 pub fn run() -> Result<()> {
+    let instance_dir = stepx_companion::resources::user_config().join("stepx-companion/runtime");
+    let stepx_companion::single_instance::Claim::Primary(instance) =
+        stepx_companion::single_instance::Instance::claim(&instance_dir)? else {
+        return Ok(());
+    };
+    let activation = instance.activation_requests();
     let capture = std::env::args()
         .position(|arg| arg == "--capture-ui")
         .and_then(|i| std::env::args().nth(i + 1))
@@ -149,10 +155,11 @@ pub fn run() -> Result<()> {
                 ..Default::default()
             },
             move |ctx| Root {
-                child: ctx.add_typed_action_view(|ctx| Companion::new(ctx, capture)),
+                child: ctx.add_typed_action_view(|ctx| Companion::new(ctx, capture, activation)),
             },
         );
     })?;
+    drop(instance);
     Ok(())
 }
 
@@ -1115,6 +1122,7 @@ struct Companion {
     capture: Option<PathBuf>,
     capture_at: Instant,
     last_clock_second: u64,
+    activation_requests: Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn is_stepx_model(model: &str) -> bool {
@@ -1127,7 +1135,7 @@ fn is_wireless(transport: &str) -> bool {
 }
 
 impl Companion {
-    fn new(ctx: &mut ViewContext<Self>, capture: Option<PathBuf>) -> Self {
+    fn new(ctx: &mut ViewContext<Self>, capture: Option<PathBuf>, activation_requests: Arc<std::sync::atomic::AtomicBool>) -> Self {
         let (font, mono_font) =
             FontCache::handle(ctx).update(ctx, |cache, _| theme::load_fonts(cache));
         let (sender, jobs) = mpsc::channel::<Job>();
@@ -1402,6 +1410,7 @@ impl Companion {
             capture,
             capture_at: Instant::now(),
             last_clock_second: 0,
+            activation_requests,
         };
         me.back_screen.set_preview_visible(me.page == Page::BackScreen);
         if me.page == Page::Amoo {
@@ -1707,6 +1716,10 @@ impl Companion {
     }
 
     fn tick(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.activation_requests.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            let id = ctx.window_id();
+            ctx.windows().show_window_and_focus_app(id);
+        }
         let link_matches = self
             .selected
             .as_ref()

@@ -38,6 +38,8 @@ Amoo / Work 的手机模型任务使用手机账号服务；独立 GUI Agent 可
 
 空闲时按需加载模块：离开背屏即暂停桌面预览，已开始的手机任务继续运行。[性能与响应性验证](docs/PERFORMANCE.md)
 
+客户端只运行一个实例：再次打开会唤起已有窗口；最小化后可直接从启动器恢复。异常退出后可以正常重新启动。
+
 ### 投屏助手：控制就在画面旁
 
 <img src="docs/images/mirror-sidebar.png" width="76" align="right" alt="投屏窗口旁的竖排控制侧栏" />

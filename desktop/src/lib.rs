@@ -45,3 +45,4 @@ pub mod independent_gui;
 pub mod amoo_gui_chat;
 
 pub mod resources;
+pub mod single_instance;

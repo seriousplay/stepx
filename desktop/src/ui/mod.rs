@@ -8,6 +8,7 @@
 //! - `actions` input handling and background jobs
 
 mod actions;
+mod adb_onboarding;
 mod amoo_display;
 mod amoo_ui_state;
 use amoo_ui_state::{AmooUiAction, AmooUiOutcome, AmooUiState};
@@ -544,6 +545,8 @@ enum Action {
     CompanionSendFiles,
     CompanionReceiveFolder,
     ConnectGuide(Option<u8>),
+    AdbGuide(Option<u8>),
+    AdbGuideContinue,
     GrantDeepAmooPerms,
     GrantDeepBackScreenPerms,
     BackScreenToggleHwBreath,
@@ -951,6 +954,7 @@ struct Companion {
     pairing_hosts: Vec<std::net::IpAddr>,
     pair_tab: PairTab,
     connect_guide_step: Option<u8>,
+    adb_guide_step: Option<u8>,
     show_secret: bool,
     qr: Option<Arc<QrSession>>,
     // Device & Overview
@@ -1176,6 +1180,7 @@ impl Companion {
             } else {
                 Some(0)
             },
+            adb_guide_step: (!demo_mode && preferences.should_show_adb_guide()).then_some(0),
             preferences,
             pairing_hosts: vec![],
             pair_tab: PairTab::Qr,
@@ -1392,6 +1397,10 @@ impl Companion {
         #[cfg(feature = "ui-capture")]
         if std::env::args().any(|a| a == "--demo") {
             me.load_demo();
+            if let Some(index) = std::env::args().position(|a| a == "--adb-guide-preview") {
+                me.adb_guide_step = Some(std::env::args().nth(index + 1)
+                    .and_then(|s| s.parse::<u8>().ok()).unwrap_or(0).min(2));
+            }
             if std::env::args().any(|a| a == "--amoo-screen-view") {
                 me.amoo_ui.screen_mode = true;
                 me.amoo_ui.gui_desktop = true;
@@ -2833,6 +2842,12 @@ impl View for Companion {
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.)))
         .finish();
 
+        let tree = if let Some(step) = self.adb_guide_step {
+            Stack::new()
+                .with_child(adb_onboarding::Inert(tree).finish())
+                .with_child(self.adb_guide_modal(step))
+                .finish()
+        } else { tree };
         Keyboard {
             child: tree,
             active: self.focus.is_some(),

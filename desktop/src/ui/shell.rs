@@ -862,11 +862,8 @@ impl Companion {
                 else if self.selected.is_some() { p.success } else { p.text3 }),
             self.line(format!("{transport} · {detail}"), CAPTION, if self.error { p.danger } else { p.text2 }),
         );
-        let right = self.hstack(S3, vec![
-            self.link_action("status-theme", "外观", Action::CycleTheme),
-            self.mono(format!("v{} · {}", stepx_companion::build_info::VERSION,
-                stepx_companion::build_info::compiled_id()), CAPTION, p.text2),
-        ]);
+        let right = self.mono(format!("v{} · {}", stepx_companion::build_info::VERSION,
+            stepx_companion::build_info::compiled_id()), CAPTION, p.text3);
         ConstrainedBox::new(
             Container::new(self.between(left, right))
                 .with_horizontal_padding(S4)

@@ -8,6 +8,13 @@ impl TypedActionView for Companion {
     type Action = Action;
 
     fn handle_action(&mut self, action: &Action, ctx: &mut ViewContext<Self>) {
+        // The guide is modal: no background shortcuts or device operations leak through.
+        if self.adb_guide_step.is_some() && !matches!(action,
+            Action::AdbGuide(_) | Action::AdbGuideContinue | Action::Refresh |
+            Action::Escape | Action::MinimizeWindow | Action::MaximizeWindow |
+            Action::CloseWindow | Action::StudioOpenUrl(_)) {
+            return;
+        }
         if (self.back_screen.playing
             || self.back_screen.generating
             || self.back_screen.applying_native
@@ -241,6 +248,23 @@ impl Companion {
             Action::CycleTheme => {
                 self.theme_mode = self.theme_mode.next();
                 self.status = format!("外观：{}", self.theme_mode.label());
+            }
+            Action::AdbGuide(step) => {
+                self.adb_guide_step = step.map(|step| step.min(2));
+                self.focus = None;
+                if step.is_none() {
+                    self.preferences.adb_guide_seen = true;
+                    if let Err(error) = self.preferences.save() {
+                        self.status = format!("保存引导偏好失败：{error}");
+                        self.error = true;
+                    }
+                }
+            }
+            Action::AdbGuideContinue => {
+                if self.selected.is_some() {
+                    self.handle_ui_action(&Action::AdbGuide(None), ctx);
+                    self.handle_ui_action(&Action::ConnectGuide(Some(2)), ctx);
+                }
             }
             Action::ConnectGuide(step) => {
                 self.connect_guide_step = step.map(|step| step.min(5));
@@ -484,6 +508,10 @@ impl Companion {
                 }
             }
             Action::Escape => {
+                if self.adb_guide_step.is_some() {
+                    self.handle_ui_action(&Action::AdbGuide(None), ctx);
+                    return true;
+                }
                 self.tool_confirmation = None;
                 self.tools_pending = None;
                 if self.amoo_plus_open {

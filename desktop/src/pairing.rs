@@ -149,9 +149,15 @@ pub struct Preferences {
     pub selected_serial: Option<String>,
     #[serde(default)]
     pub first_connect_done: bool,
+    #[serde(default)]
+    pub adb_guide_seen: bool,
 }
 
 impl Preferences {
+    pub fn should_show_adb_guide(&self) -> bool {
+        !self.adb_guide_seen && !self.first_connect_done && self.devices.is_empty()
+    }
+
     pub fn path() -> PathBuf {
         if let Some(path) = std::env::var_os("STEPX_CONFIG_DIR") {
             return PathBuf::from(path).join("devices.json");

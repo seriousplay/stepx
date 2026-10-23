@@ -73,7 +73,7 @@ fn preferences_do_not_contain_pairing_secrets() {
     prefs.save_to(&path).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(value["devices"].as_array().unwrap().len(), 1);
-    assert_eq!(value.as_object().unwrap().len(), 3);
+    assert_eq!(value.as_object().unwrap().len(), 4);
     assert_eq!(value["first_connect_done"], true);
     #[cfg(unix)]
     {
@@ -462,4 +462,23 @@ esac
     assert!(!calls.contains("service call"));
     assert!(!calls.contains("content insert"));
     assert!(!calls.contains("appops set"));
+}
+
+#[test]
+fn adb_onboarding_is_only_automatic_for_new_users_and_remembers_skip() {
+    let mut prefs = Preferences::default();
+    assert!(prefs.should_show_adb_guide());
+    prefs.adb_guide_seen = true;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("devices.json");
+    prefs.save_to(&path).unwrap();
+    let restored: Preferences = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert!(!restored.should_show_adb_guide());
+    let legacy: Preferences = serde_json::from_str(r#"{"devices":[],"selected_serial":null,"first_connect_done":true}"#).unwrap();
+    assert!(!legacy.should_show_adb_guide());
+    let legacy_device: Preferences = serde_json::from_str(r#"{"devices":[{"serial":"example","model":"StepX"}],"selected_serial":"example"}"#).unwrap();
+    assert!(!legacy_device.should_show_adb_guide());
+    let mut connected = Preferences::default();
+    connected.remember("example".into(), "StepX".into());
+    assert!(!connected.should_show_adb_guide());
 }

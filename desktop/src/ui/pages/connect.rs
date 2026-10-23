@@ -28,6 +28,7 @@ impl Companion {
             Action::ConnectGuide(Some(0)),
             Btn::Secondary,
         )];
+        actions.push(self.button("conn-adb-help", "如何开启 ADB", Action::AdbGuide(Some(0)), Btn::Secondary));
         actions.push(if self.busy {
             self.disabled_button("检测中…")
         } else {
@@ -79,7 +80,7 @@ impl Companion {
         );
         match step {
             0 => {
-                body.push(self.text("在手机「设置 → 关于手机」连续点击版本号，按系统要求输入锁屏密码。返回「系统 → 开发者选项」，开启 USB 调试。", BODY, p.text));
+                body.push(self.text("在手机「设置 → 关于手机 → 版本信息」连续点击「版本号」7 次，按系统提示完成验证。返回设置，搜索「开发者选项」，开启「USB 调试」。不同系统的入口名称可能略有不同。", BODY, p.text));
                 body.push(self.text("首次安装伴侣需要已授权的 USB 连接。也可先用下方系统配对码建立无线连接使用现有功能，但安装与权限适配仍需 USB。未安装的伴侣无法直接扫码取得权限。", CAPTION, p.text2));
             }
             1 => {

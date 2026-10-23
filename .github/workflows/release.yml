@@ -35,6 +35,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'build-tools;36.0.0'
       - name: Android verification tools
         run: sdkmanager "build-tools;36.0.0"
       - uses: Swatinem/rust-cache@v2

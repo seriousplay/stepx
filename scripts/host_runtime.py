@@ -91,6 +91,12 @@ def sdk_tool(name):
 
 def sdk_command(name):
     # Avoid .bat/cmd quoting, Unicode and space-path failures on Windows.
+    if name == 'apk-identity':
+        directory = ROOT / 'runtime/android-build-tools/lib'
+        java = shutil.which('java', path=java_environment().get('PATH'))
+        if not java or not (directory / 'apk-identity.jar').is_file():
+            raise RuntimeError('缺少 APK 身份校验运行时，请重新解压完整安装包。')
+        return [java, '-cp', os.pathsep.join(str(directory / name) for name in ['apk-identity.jar', 'apksigner.jar']), 'ApkIdentity']
     if name == 'apksigner':
         for directory in build_tools():
             jar = directory / 'lib/apksigner.jar'

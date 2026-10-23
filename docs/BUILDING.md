@@ -45,4 +45,6 @@ Android 源码位于 `desktop/companion-app`，以及 bridge、权限与后台�
 
 `cargo build --features ui-capture --manifest-path desktop/Cargo.toml` 后可使用 `--demo --capture-ui /absolute/path.png --page overview`。演示数据仅用于截图构建；普通发布构建不启用演示模式，截图不代表连接真实设备的验收记录。
 
-发布打包还需要 JAVA_HOME 与 ANDROID_HOME（或 ANDROID_SDK_ROOT）。脚本用 jlink 生成最小 Java 运行时，复制 APK 校验工具，并下载经固定 SHA256 校验的 Python。打包检查会清空 SDK/Python 环境，在中文、空格目录运行包内 ADB、Python、APK 签名校验和文件锁，不连接手机。macOS 仍未做 Apple Developer 公证。
+发布打包还需要 JAVA_HOME 与 ANDROID_HOME（或 ANDROID_SDK_ROOT）。脚本用 jlink 生成最小 Java 运行时，编译 APK 身份校验助手并复制官方 apksig 校验库，并下载经固定 SHA256 校验的 Python。打包检查会清空 SDK/Python 环境，在中文、空格目录运行包内 ADB、Python、APK 签名校验和文件锁，不连接手机。macOS 仍未做 Apple Developer 公证。
+
+APK 包名通过 Android 官方 apksig 的解析器读取，签名仍用 apksigner 验证；发布包不依赖原生 aapt，也不要求 Apple Silicon 用户为该流程安装 Rosetta。

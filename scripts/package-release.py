@@ -23,6 +23,8 @@ def main():
             bundle=base/'StepX Companion.app'/'Contents';binary_dir=bundle/'MacOS';resource_dir=bundle/'Resources'
             binary_dir.mkdir(parents=True);resource_dir.mkdir()
             info={'CFBundleName':'StepX Companion','CFBundleDisplayName':'StepX Companion','CFBundleIdentifier':'io.github.xydzf520.stepx','CFBundleExecutable':'stepx-companion','CFBundlePackageType':'APPL','CFBundleShortVersionString':a.version,'CFBundleVersion':a.version,'NSHighResolutionCapable':True,'NSMicrophoneUsageDescription':'用于语音输入','NSCameraUsageDescription':'用于扫码连接'}
+            info['NSLocalNetworkUsageDescription']='用于在局域网发现并连接您授权的手机。'
+            info['NSBonjourServices']=['_adb-tls-pairing._tcp','_adb-tls-connect._tcp','_adb._tcp']
             iconset=stage/'StepX.iconset';iconset.mkdir()
             for size in [16,32,128,256,512]:
                 for scale in [1,2]:

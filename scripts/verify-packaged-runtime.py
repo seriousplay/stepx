@@ -40,6 +40,20 @@ spec=importlib.util.spec_from_file_location('verification',root/'scripts/compani
 try:m.signer(bad)
 except RuntimeError:pass
 else:raise AssertionError('Modified APK accepted')
+# A different package must fail identity validation before signature validation.
+wrong=root/'wrong-package.apk'
+with zipfile.ZipFile(apk) as source, zipfile.ZipFile(wrong,'w') as target:
+ for item in source.infolist():
+  content=source.read(item.filename)
+  if item.filename=='AndroidManifest.xml':
+   original=content
+   for encoding in ['utf-8','utf-16le']:
+    content=content.replace('com.stepx.companion.app'.encode(encoding),'com.stepx.companion.bad'.encode(encoding))
+   assert content!=original,'Manifest test fixture did not change'
+  target.writestr(item,content)
+try:m.signer(wrong)
+except RuntimeError as error:assert 'APK is not StepX' in str(error),str(error)
+else:raise AssertionError('Wrong APK package accepted')
 from host_runtime import file_lock
 with file_lock(root/'lock'):pass
 with file_lock(root/'lock'):pass

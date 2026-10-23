@@ -53,8 +53,14 @@ def run(args, timeout=30):
 def signer(apk):
     if not apk.is_file():
         raise RuntimeError('Companion APK is missing')
-    badging = run(sdk_command('aapt') + ['dump', 'badging', str(apk)])
-    if not re.search(r"^package: name='" + re.escape(PACKAGE) + r"'", badging, re.M):
+    if (ROOT / 'runtime/android-build-tools/lib/apk-identity.jar').is_file():
+        package = run(sdk_command('apk-identity') + [str(apk)]).strip()
+    else:
+        # Source checkouts may use a developer SDK instead of the shipped runtime.
+        badging = run(sdk_command('aapt') + ['dump', 'badging', str(apk)])
+        match = re.search(r"^package: name='([^']+)'", badging, re.M)
+        package = match.group(1) if match else ''
+    if package != PACKAGE:
         raise RuntimeError('APK is not StepX伴侣')
     result = run(sdk_command('apksigner') + ['verify', '--print-certs', str(apk)])
     matches = re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$', result, re.M)

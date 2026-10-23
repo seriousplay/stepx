@@ -17,15 +17,20 @@ def build_runtime(root, windows):
     sdk=Path(os.environ.get('ANDROID_SDK_ROOT') or os.environ['ANDROID_HOME'])
     source=sdk/'build-tools/36.0.0'
     target=runtime/'android-build-tools';target.mkdir()
-    executable='aapt.exe' if windows else 'aapt'
-    shutil.copy2(source/executable,target/executable)
     (target/'lib').mkdir();shutil.copy2(source/'lib/apksigner.jar',target/'lib/apksigner.jar')
-    for pattern in ['*.dll','lib64/*.dll','lib64/*.so*','lib64/*.dylib']:
-        for path in source.glob(pattern):
-            dest=target/path.relative_to(source);dest.parent.mkdir(exist_ok=True);shutil.copy2(path,dest)
     for name in ['NOTICE.txt','source.properties']:
         if (source/name).is_file():shutil.copy2(source/name,target/name)
     java=Path(os.environ['JAVA_HOME'])
+    # Native SDK aapt may require Rosetta on Apple Silicon and mishandle Windows
+    # Unicode paths. Use the same official apksig parser on the bundled JVM.
+    with tempfile.TemporaryDirectory() as directory:
+        classes=Path(directory)/'classes';classes.mkdir()
+        helper=Path(__file__).parent/'runtime/ApkIdentity.java'
+        subprocess.run([str(java/'bin'/('javac.exe' if windows else 'javac')),
+            '--release','11','-encoding','UTF-8','-cp',str(source/'lib/apksigner.jar'),
+            '-d',str(classes),str(helper)],check=True)
+        subprocess.run([str(java/'bin'/('jar.exe' if windows else 'jar')),
+            '--create','--file',str(target/'lib/apk-identity.jar'),'-C',str(classes),'.'],check=True)
     subprocess.run([str(java/'bin'/('jlink.exe' if windows else 'jlink')),
         '--add-modules','java.base,java.logging,java.naming,java.xml,java.security.jgss,jdk.crypto.ec',
         '--strip-debug','--no-header-files','--no-man-pages','--output',str(runtime/'java')],check=True)

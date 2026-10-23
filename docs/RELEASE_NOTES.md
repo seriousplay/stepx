@@ -5,6 +5,7 @@
 - 跨平台：Windows / macOS / Linux 优先读取包内 ADB 与脚本资源；支持中文、空格路径。macOS 区分 Apple Silicon / Intel，资源位于应用的 Contents/Resources。
 - 安装目录保护：Google 安装下载与恢复记录移入用户数据目录；保留旧版恢复记录，避免修改 macOS 应用包。
 - 连接稳定性：本机 ADB 转发不再受系统 HTTP 代理影响。
+- APK 校验：使用 Android 官方 Java 解析器读取包名，修复 Windows 中文路径下 aapt 失败，并去除 Apple Silicon 对 Intel 版 aapt 的依赖。
 - 错误提示：运行依赖检查在修改手机安装许可之前完成，避免把未开始的安装误报为恢复失败。
 - Studio：连接手机系统账号后，自动同步 Amoo「我的作品」中的应用、技能和智能体；支持打开手机作品、收藏与二维码分享。网页登录和未提交真机测试的官网草稿尚未自动同步。
 - 版本显示：v0.2.1，底部继续显示 12 位数字构建时间。

@@ -6,7 +6,6 @@ changes, no Google launcher changes. Installation and stop are explicit. Reboot
 persistence is intentionally reported false until separately implemented/tested.
 """
 import argparse
-import fcntl
 import hashlib
 import importlib.util
 import json
@@ -235,9 +234,7 @@ def main():
     parser.add_argument('--apk', type=Path, default=APK)
     args = parser.parse_args()
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700); STATE.chmod(0o700)
-    fd = os.open(STATE / 'operation.lock', os.O_CREAT | os.O_RDWR, 0o600)
-    with os.fdopen(fd, 'w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with permissions.file_lock(STATE / 'operation.lock'):
         result = {'preflight': preflight, 'status': status, 'start': start, 'stop': stop}[args.command](args.apk)
         print(json.dumps(result, ensure_ascii=False))
 

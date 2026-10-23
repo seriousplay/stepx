@@ -4,6 +4,10 @@
 
 *截图为虚构演示状态。*
 
+## 电脑端无需预装 ADB
+
+0.2.1 完整发布包自带 ADB、scrcpy 和安装运行时。Windows 请先完整解压 ZIP，再启动 EXE；macOS 请保留整个 StepX Companion.app，拖入 Applications 后启动。不要只复制 EXE，也不要从压缩包中直接运行。客户端优先使用包内工具，不依赖 Android Studio 或终端 PATH。
+
 ## 首次启动：开启 ADB
 
 新用户首次启动会看到三步连接弹窗。可点「稍后设置」关闭，之后从「连接设备 → 如何开启 ADB」重新打开；已连接过或已跳过的用户不会重复收到弹窗。

@@ -18,7 +18,10 @@ pub fn user_config() -> PathBuf {
 }
 
 pub fn python() -> std::ffi::OsString {
-    std::env::var_os("STEPX_PYTHON").unwrap_or_else(|| if cfg!(windows) { "python".into() } else { "python3".into() })
+    std::env::var_os("STEPX_PYTHON").or_else(|| {
+        let bundled=root().join("runtime/python").join(if cfg!(windows) {"python.exe"} else {"bin/python3"});
+        bundled.is_file().then(|| bundled.into_os_string())
+    }).unwrap_or_else(|| if cfg!(windows) { "python".into() } else { "python3".into() })
 }
 
 pub fn user_home() -> Option<std::ffi::OsString> {
@@ -27,6 +30,17 @@ pub fn user_home() -> Option<std::ffi::OsString> {
 
 pub fn python_command() -> std::process::Command {
     let mut command = std::process::Command::new(python());
-    command.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+    command.arg("-X").arg("utf8").env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+    command.env("STEPX_RESOURCE_DIR",root());
+    quiet_command(&mut command);
     command
+}
+
+/// Background utilities must not create console windows on Windows.
+pub fn quiet_command(command: &mut std::process::Command) {
+    #[cfg(windows)] {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    #[cfg(not(windows))] let _ = command;
 }

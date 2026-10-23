@@ -765,7 +765,9 @@ struct RestoreGuard {
 impl RestoreGuard {
     fn new(adb: &Adb, device: &Device, saved: &Saved) -> Result<Self> {
         let script=format!("if ! read -r finished; then service call display_ext 5 i32 -1 i32 0 >/dev/null; dumpsys display_ext back_screen brightness manual {} >/dev/null; dumpsys display_ext back_screen brightness auto {} >/dev/null; dumpsys display_ext back_screen basic type {} >/dev/null; dumpsys display_ext back_screen basic display_mode {} >/dev/null; fi",shell_quote(&saved.manual),if saved.automatic=="true"{"on"}else{"off"},shell_quote(&saved.kind),shell_quote(&saved.mode));
-        let mut child = Command::new(&adb.path)
+        let mut command = Command::new(&adb.path);
+        crate::resources::quiet_command(&mut command);
+        let mut child = command
             .args(["-s", &device.transport, "shell", &script])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

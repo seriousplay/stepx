@@ -16,9 +16,13 @@ DEVICE_SERIAL = os.environ.get('STEPX_DEVICE_SERIAL', '')
 ADB = [os.environ.get('STEPX_ADB', shutil.which('adb') or 'adb'), '-s', SERIAL]
 
 
+sys.path.insert(0, str(ROOT.parents[1] / 'scripts'))
+from host_runtime import sdk_tool, sdk_command, subprocess_options
+
+
 def run(args, **kwargs):
     return subprocess.run(args, text=True, capture_output=True, check=True,
-                          timeout=kwargs.pop('timeout', 40), **kwargs)
+                          timeout=kwargs.pop('timeout', 40), encoding='utf-8', **subprocess_options(), **kwargs)
 
 
 def shell(*args):
@@ -86,15 +90,3 @@ def root_json(code):
         return json.JSONDecoder().raw_decode(result.stdout.lstrip())[0]
     except ValueError:
         raise RuntimeError('No valid root-operation proof; inspect the bridge locally') from None
-
-
-def sdk_tool(name):
-    found = shutil.which(name)
-    if found:
-        return found
-    sdk = os.environ.get('ANDROID_SDK_ROOT') or os.environ.get('ANDROID_HOME')
-    if sdk:
-        path = Path(sdk) / 'build-tools/36.0.0' / name
-        if path.is_file():
-            return str(path)
-    raise RuntimeError('Put ' + name + ' from Android build-tools 36.0.0 on PATH')

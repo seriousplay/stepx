@@ -704,7 +704,7 @@ impl Companion {
             Page::Account => "手机账号 · 真实消息 Token 用量".into(),
             Page::About => String::new(),
             Page::Work => "手机任务同步 · 本地文件协作".into(),
-            Page::Studio => "studio.stepx.com 应用一键上机建图标 · OpenClaw 远端反向代理".into(),
+            Page::Studio => "电脑创作 · 手机体验 · 作品分享".into(),
             Page::Sms => {
                 if self.sms_error.is_some() {
                     "短信读取失败，请刷新重试".into()

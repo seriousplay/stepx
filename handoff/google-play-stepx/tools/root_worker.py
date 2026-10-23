@@ -10,7 +10,7 @@ guard(native=True)
 code=pathlib.Path(args.operation).read_text();output=pathlib.Path(args.output);tag=uuid.uuid4().hex[:10];wrapper='/tmp/stepx-gms-worker-'+tag+'.py';result='/data/system/stepx-gms-worker-'+tag+'.json'
 def sh(s):return subprocess.check_output(ADB+['shell',s],text=True).strip()
 def gw(c):
- p=subprocess.run(['python3',str(ROOT/'tools/gateway.py')],input=json.dumps({'command':['python3','-c',c],'timeoutMs':15000}),capture_output=True,text=True,timeout=45)
+ p=subprocess.run([sys.executable,str(ROOT/'tools/gateway.py')],input=json.dumps({'command':['python3','-c',c],'timeoutMs':15000}),capture_output=True,text=True,timeout=45)
  if p.returncode:raise RuntimeError(p.stderr[-500:])
  d=json.loads(p.stdout)
  if d.get('exitCode',0)!=0:raise RuntimeError(str(d)[:500])
@@ -52,7 +52,7 @@ finally:
 '''.replace('signal.alarm(25)', 'signal.alarm('+str(min(60,int(os.environ.get('STEPX_WORKER_TIMEOUT','25'))))+')').replace('CODE',repr(code)).replace('RESULT',repr(result))
 gw('import os,base64;p='+repr(wrapper)+';open(p,"wb").write(base64.b64decode('+repr(base64.b64encode(src.encode()).decode())+'));os.chmod(p,0o755)')
 def root(c):
- p=subprocess.run(['python3',str(ROOT/'tools/root_bridge.py')],input=c,capture_output=True,text=True,timeout=40);return p.stdout
+ p=subprocess.run([sys.executable,str(ROOT/'tools/root_bridge.py')],input=c,capture_output=True,text=True,timeout=40);return p.stdout
 parent=next(int(l.split()[0]) for l in sh('ps -A -o PID,PPID,NAME').splitlines() if l.split()[-1]=='openclaw_env' and l.split()[1]=='1')
 trigger="import socket,struct\np='/proc/"+str(parent)+"/root/dev/socket/property_service'\nfor name,value in [('persist.openclaw.zygote.path',"+repr(wrapper)+"),('sys.openclaw.env.start','1')]:\n s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect(p);n=name.encode();v=value.encode();s.sendall(struct.pack('<II',0x20001,len(n))+n+struct.pack('<I',len(v))+v);r=s.recv(4);s.close();assert len(r)==4 and struct.unpack('<I',r)[0]==0\n"
 root(trigger);print('Bounded worker dispatched.',flush=True)

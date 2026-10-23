@@ -10,7 +10,7 @@ import sys
 import time
 import urllib.request
 import zipfile
-from common import ADB, CONFIG, ROOT, STATE, guard, init_state, private_write, root_json, run, save_json, sdk_tool, sha256, shell
+from common import ADB, CONFIG, ROOT, STATE, guard, init_state, private_write, root_json, run, save_json, sdk_tool, sdk_command, sha256, shell
 
 PACKAGES = ['com.google.android.gsf', 'com.google.android.gms', 'com.android.vending']
 
@@ -56,7 +56,7 @@ def check_apks():
     for entry in CONFIG['apks']:
         path = ROOT / 'downloads' / entry['filename']
         assert sha256(path) == entry['sha256'], 'APK digest mismatch: ' + entry['package']
-        result = run([sdk_tool('apksigner'), 'verify', '--print-certs', str(path)])
+        result = run(sdk_command('apksigner') + ['verify', '--print-certs', str(path)])
         assert 'Signer #1 certificate SHA-256 digest: ' + entry['signer_sha256'] in result.stdout
         print(entry['package'] + ': APK digest and signer OK')
 

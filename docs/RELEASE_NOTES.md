@@ -1,3 +1,18 @@
+# StepX Companion 0.2.1
+
+- Windows：以图形应用启动，隐藏 ADB、投屏和安装脚本的后台命令行窗口。
+- 安装修复：移除开发机 SDK 固定路径，随包提供 Python、Android APK 校验工具与 Java 运行时；保留 APK 包名、签名、设备身份和固件校验。
+- 跨平台：Windows / macOS / Linux 优先读取包内 ADB 与脚本资源；支持中文、空格路径。macOS 区分 Apple Silicon / Intel，资源位于应用的 Contents/Resources。
+- 错误提示：运行依赖检查在修改手机安装许可之前完成，避免把未开始的安装误报为恢复失败。
+- Studio：连接手机系统账号后，自动同步 Amoo「我的作品」中的应用、技能和智能体；支持打开手机作品、收藏与二维码分享。网页登录和未提交真机测试的官网草稿尚未自动同步。
+- 版本显示：v0.2.1，底部继续显示 12 位数字构建时间。
+
+请完整解压发布包，保留 tools、runtime、scripts 等目录；Windows 不需要预装 Python、Java、ADB 或 Android Studio。手机仍需开启 USB 调试并授权电脑；Windows USB 驱动与 ADB 是不同组件，无法识别设备时仍需厂商驱动。
+
+---
+
+## 0.2.0
+
 StepX Companion 首个公开预览版：为 STEPX Neo 手机（当前适配 PZ261A）打造的桌面伴侣。电脑直接与 Amoo 对话，复用手机模型与账号 Token 权益完成 Work 任务，压缩与释放手机空间，并提供 Google Play 安装和背屏创作。
 
 ### 重点功能

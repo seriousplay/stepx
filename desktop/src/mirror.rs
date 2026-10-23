@@ -71,6 +71,7 @@ impl MirrorSession {
     }
 
     fn spawn(mut command: Command, timeout: Duration) -> Result<Self> {
+        crate::resources::quiet_command(&mut command);
         let log = Arc::new(Mutex::new(Vec::new()));
         command.stdin(Stdio::null());
         // scrcpy buffers stdout when redirected to a pipe/file. A terminal keeps

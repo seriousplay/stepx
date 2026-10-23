@@ -1,3 +1,4 @@
+import sys
 #!/usr/bin/env python3
 """Install only the reviewed, fixed-device GMS boot adapter, preserving stock."""
 import pathlib, subprocess, json, base64, uuid, hashlib, shutil
@@ -18,7 +19,7 @@ for name, data in files.items():
 manifest = {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
 stage = '/tmp/stepx-gms-stage-' + uuid.uuid4().hex[:10]
 remote = 'import os,base64,json;d=' + repr({n: base64.b64encode(b).decode() for n, b in files.items()}) + ';os.mkdir(' + repr(stage) + ',0o700)\nfor n,b in d.items():\n open(' + repr(stage) + '+"/"+n,"wb").write(base64.b64decode(b))\nprint("staged")'
-result = subprocess.run(['python3', str(ROOT / 'tools/gateway.py')], input=json.dumps({'command': ['python3', '-c', remote], 'timeoutMs': 15000}), capture_output=True, text=True, timeout=45)
+result = subprocess.run([sys.executable, str(ROOT / 'tools/gateway.py')], input=json.dumps({'command': ['python3', '-c', remote], 'timeoutMs': 15000}), capture_output=True, text=True, timeout=45)
 response = json.loads(result.stdout)
 assert response.get('exitCode') == 0, 'Staging failed'
 code = '''import os,stat,hashlib,json,shutil
@@ -48,7 +49,7 @@ for directory in [base,state,os.path.dirname(launcher)]:
 shutil.rmtree(stage)
 print(json.dumps({'installed':True,'original_sha256':hashlib.sha256(open(stock,'rb').read()).hexdigest(),'launcher_sha256':hashlib.sha256(open(launcher,'rb').read()).hexdigest(),'manifest':manifest}))
 '''.replace('STAGE', repr(stage)).replace('MANIFEST', repr(manifest)).replace('STOCK_SHA', repr(STOCK_SHA))
-result = subprocess.run(['python3', str(ROOT / 'tools/root_bridge.py')], input=code, capture_output=True, text=True, timeout=45)
+result = subprocess.run([sys.executable, str(ROOT / 'tools/root_bridge.py')], input=code, capture_output=True, text=True, timeout=45)
 proof = json.JSONDecoder().raw_decode(result.stdout.lstrip())[0]
 assert proof.get('installed') and proof['original_sha256'] == STOCK_SHA
 (BACKUP / 'boot-install.json').write_text(json.dumps(proof, indent=2))

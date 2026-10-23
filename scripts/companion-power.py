@@ -7,7 +7,6 @@ whitelist entry which this tool previously added and verified.
 """
 import argparse
 from contextlib import contextmanager
-import fcntl
 import hashlib
 import importlib.util
 import json
@@ -108,9 +107,7 @@ def locked():
     if STATE.is_symlink() or not STATE.is_dir():
         raise RuntimeError('Doze 恢复记录目录无效')
     STATE.chmod(0o700)
-    fd = os.open(STATE / 'power.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, 'w') as file:
-        fcntl.flock(file, fcntl.LOCK_EX)
+    with permissions.file_lock(STATE / 'power.lock'):
         yield
 
 

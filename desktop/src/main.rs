@@ -1,8 +1,17 @@
+#![cfg_attr(all(windows, feature = "desktop-ui"), windows_subsystem = "windows")]
+
 use stepx_companion::resources;
 #[cfg(feature = "desktop-ui")]
 mod ui;
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(all(windows, feature = "desktop-ui"))]
+    if std::env::args().any(|a| matches!(a.as_str(), "--version"|"-V"|"--help"|"-h"|"--doctor"|"--check-runtime")) {
+        // Attach only to an existing terminal. Double-click never creates one.
+        #[link(name = "kernel32")]
+        unsafe extern "system" { fn AttachConsole(process_id: u32) -> i32; }
+        unsafe { AttachConsole(u32::MAX); }
+    }
     if std::env::args().any(|arg| arg == "--version" || arg == "-V") {
         println!(
             "StepX Companion v{} · {}",
@@ -17,6 +26,17 @@ fn main() -> anyhow::Result<()> {
     }
     if !cfg!(feature = "ui-capture") && std::env::args().any(|arg| arg == "--capture-ui") {
         anyhow::bail!("截图构建需要 cargo run --features ui-capture -- --capture-ui <path>");
+    }
+    if std::env::args().any(|arg| arg == "--check-runtime") {
+        let adb = stepx_companion::adb::Adb::discover()?;
+        let version = adb.run(&["version"])?;
+        anyhow::ensure!(version.contains("Android Debug Bridge"), "ADB 运行校验失败");
+        let mut python = stepx_companion::resources::python_command();
+        python.arg("-c").arg("import sys,importlib.util;from pathlib import Path;r=Path(sys.argv[1]);sys.path.insert(0,str(r/'scripts'));s=importlib.util.spec_from_file_location('permissions',r/'scripts/companion-permissions.py');m=importlib.util.module_from_spec(s);s.loader.exec_module(m);assert len(m.signer(r/'desktop/assets/stepx-companion.apk'))==64;print('runtime OK')").arg(stepx_companion::resources::root());
+        let output=stepx_companion::adb::run_process(python,None,std::time::Duration::from_secs(30))?;
+        anyhow::ensure!(output.status.success(), "安装运行时校验失败：{}",String::from_utf8_lossy(&output.stderr));
+        println!("ADB OK; Python OK; APK signature verification OK");
+        return Ok(());
     }
     if std::env::args().any(|arg| arg == "--doctor") {
         let adb = stepx_companion::adb::Adb::discover()?;

@@ -51,9 +51,12 @@ def main():
             with tarfile.open(download) as t:t.extractall(unpack,filter='data')
         roots=list(unpack.iterdir());source=roots[0] if len(roots)==1 and roots[0].is_dir() else unpack
         tools_dir=resource_dir/'tools/bin';shutil.copytree(source,tools_dir)
+        subprocess.run([__import__('sys').executable,str(ROOT/'scripts/package-runtime.py'),str(resource_dir),*(['--windows'] if windows else [])],check=True)
         tool_env=os.environ.copy();tool_env['LD_LIBRARY_PATH']=str(tools_dir)+os.pathsep+tool_env.get('LD_LIBRARY_PATH','')
         for executable,arg in [(binary_dir/binary_name,'--version'),(tools_dir/('adb.exe' if windows else 'adb'),'version'),(tools_dir/('scrcpy.exe' if windows else 'scrcpy'),'--version')]:
             subprocess.run([str(executable),arg],check=True,env=tool_env,timeout=30)
+        python=resource_dir/'runtime/python/python.exe' if windows else resource_dir/'runtime/python/bin/python3'
+        subprocess.run([str(python),'-X','utf8',str(ROOT/'scripts/verify-packaged-runtime.py'),str(resource_dir)],check=True,timeout=60)
         if mac:subprocess.run(['codesign','--force','--deep','--sign','-',str(base/'StepX Companion.app')],check=True)
         if a.platform.startswith('linux'):
             output=dist/(name+'.tar.gz')

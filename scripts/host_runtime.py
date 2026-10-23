@@ -48,8 +48,10 @@ def subprocess_options():
 
 def java_environment():
     env = os.environ.copy()
-    candidates = [Path(env[k]) for k in ('STEPX_JDK', 'JAVA_HOME') if env.get(k)]
-    candidates += [ROOT / 'runtime/java', Path.home()/'.local/opt/android-studio/jbr',
+    candidates = [Path(env['STEPX_JDK'])] if env.get('STEPX_JDK') else []
+    candidates.append(ROOT / 'runtime/java')
+    if env.get('JAVA_HOME'): candidates.append(Path(env['JAVA_HOME']))
+    candidates += [Path.home()/'.local/opt/android-studio/jbr',
                    Path('/opt/android-studio/jbr'), Path('/Applications/Android Studio.app/Contents/jbr/Contents/Home')]
     executable = 'java.exe' if os.name == 'nt' else 'java'
     for directory in candidates:

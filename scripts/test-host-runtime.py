@@ -13,10 +13,19 @@ import types
 import unittest
 from unittest.mock import patch
 
-from host_runtime import migrate_legacy_state, user_state_root
+from host_runtime import java_environment, migrate_legacy_state, user_state_root
 
 
 class HostRuntimeTests(unittest.TestCase):
+    def test_bundled_java_takes_precedence_over_system_java_home(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);bundled=root/'runtime/java';external=root/'other-java'
+            for home in [bundled,external]:
+                (home/'bin').mkdir(parents=True)
+                (home/'bin'/('java.exe' if os.name=='nt' else 'java')).touch()
+            with patch('host_runtime.ROOT', root), patch.dict(os.environ, {'JAVA_HOME':str(external)}, clear=True):
+                self.assertEqual(java_environment()['JAVA_HOME'],str(bundled))
+
     def test_native_user_storage(self):
         with patch.dict(os.environ, {}, clear=True), patch('pathlib.Path.home', return_value=Path('/user')):
             with patch.object(sys, 'platform', 'darwin'):

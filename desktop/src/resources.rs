@@ -20,3 +20,13 @@ pub fn user_config() -> PathBuf {
 pub fn python() -> std::ffi::OsString {
     std::env::var_os("STEPX_PYTHON").unwrap_or_else(|| if cfg!(windows) { "python".into() } else { "python3".into() })
 }
+
+pub fn user_home() -> Option<std::ffi::OsString> {
+    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
+}
+
+pub fn python_command() -> std::process::Command {
+    let mut command = std::process::Command::new(python());
+    command.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+    command
+}

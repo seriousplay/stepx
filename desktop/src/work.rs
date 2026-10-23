@@ -1416,10 +1416,9 @@ fn extract_pdf(path: &Path) -> Result<String> {
     Ok(text)
 }
 fn python(code: &str, args: &[&Path], stdin: Option<Vec<u8>>) -> Result<Vec<u8>> {
-    let binary = adb::find_executable("python3")
-        .context("此电脑缺少 Python 3，暂不能读取或生成 Office 文件")?;
+    let binary = crate::resources::python();
     let mut command = Command::new(binary);
-    command.arg("-I").arg("-c").arg(code);
+    command.args(["-X", "utf8", "-I", "-c"]).arg(code);
     for arg in args {
         command.arg(arg);
     }

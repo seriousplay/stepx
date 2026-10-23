@@ -1134,7 +1134,7 @@ impl AmooUiState {
         if scope.len() != 64 || !scope.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
-        let home = std::env::var_os("HOME")?;
+        let home = crate::resources::user_home()?;
         Some(
             PathBuf::from(home)
                 .join(".local/state/stepx-companion/amoo-usage-v2")

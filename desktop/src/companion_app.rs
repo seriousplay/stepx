@@ -230,7 +230,7 @@ pub fn grant_runtime_permissions(adb: &Adb, device: &Device) -> Result<()> {
 fn apply_power_exemption(adb: &Adb, device: &Device, apk: &Path) -> Result<()> {
     let script = crate::resources::root().join("scripts/companion-power.py");
     ensure!(script.is_file(), "缺少 StepX伴侣电池优化适配组件");
-    let mut command = Command::new(crate::resources::python());
+    let mut command = crate::resources::python_command();
     command
         .arg(script)
         .arg("apply")
@@ -694,7 +694,7 @@ fn run_pairing_adapter(adb: &Adb, device: &Device, apk: &Path, operation: &str) 
     ensure!(["status", "start", "stop"].contains(&operation), "不支持的扫码服务操作");
     let script = crate::resources::root().join("scripts/companion-system.py");
     ensure!(script.is_file(), "缺少 StepX伴侣扫码系统服务组件");
-    let mut command = Command::new(crate::resources::python());
+    let mut command = crate::resources::python_command();
     command.arg(script).arg(operation).arg("--apk").arg(apk)
         .env("STEPX_SERIAL", &device.transport).env("STEPX_ADB", &adb.path)
         .env_remove("PYTHONOPTIMIZE");
@@ -788,7 +788,7 @@ fn run_adapter(
     apk: &Path,
     operation: &str,
 ) -> Result<()> {
-    let mut command = Command::new(crate::resources::python());
+    let mut command = crate::resources::python_command();
     command
         .arg(script)
         .arg(operation)

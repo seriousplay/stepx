@@ -70,7 +70,7 @@ impl Drop for Job {
 fn cache_dir() -> Result<PathBuf> {
     let home = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|v| PathBuf::from(v).join(".cache")))
+        .or_else(|| crate::resources::user_home().map(|v| PathBuf::from(v).join(".cache")))
         .context("无法定位固件缓存目录")?;
     Ok(home.join("stepx-companion/phone-ota"))
 }
@@ -125,7 +125,7 @@ fn spawn(mut req: Value, firmware: Firmware, serial: Option<String>) -> Result<J
     let cancel_path = work.path().join("cancel");
     req["cancel"] = json!(cancel_path);
     req["parent_pid"] = json!(std::process::id());
-    let mut command = Command::new(crate::resources::python());
+    let mut command = crate::resources::python_command();
     command
         .args(["-u", "-c", HELPER])
         .stdin(Stdio::piped())

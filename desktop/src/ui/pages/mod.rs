@@ -1,5 +1,6 @@
 //! One module per page. Each page exposes `<name>_page()` and `<name>_actions()`.
 
+mod about;
 mod amoo;
 mod apps;
 mod backscreen;
@@ -199,6 +200,7 @@ impl Companion {
             Page::BackScreen => self.backscreen_page(),
             Page::Amoo => self.amoo_page(),
             Page::Account => self.account_usage_page(),
+            Page::About => self.about_page(),
             Page::Work => self.work_page(),
             Page::Studio => self.studio_page(),
             Page::Sms => self.sms_page(),
@@ -213,6 +215,7 @@ impl Companion {
     /// Buttons on the right of the page header. At most one `Primary`.
     pub(super) fn page_actions(&self) -> Vec<El> {
         match self.page {
+            Page::About => Vec::new(),
             Page::Overview => self.overview_actions(),
             Page::BackScreen => self.backscreen_actions(),
             Page::Amoo => self.amoo_actions(),

@@ -182,7 +182,7 @@ kernel=open(root+'/sys/fs/f2fs/features/compression').read().strip()=='supported
 print(json.dumps({'kernel_support':kernel,'volume_support':'compression' in features.split(', '),'filesystem':mount[2],'features':features}))
 "#;
     let launcher = "import sys,subprocess,json; from common import guard; code=sys.stdin.read(); guard(native=True); p=subprocess.run([sys.executable,'root_bridge.py'],input=code,text=True,capture_output=True,timeout=40); d=json.JSONDecoder().raw_decode(p.stdout.lstrip())[0]; print(json.dumps(d))";
-    let mut command = Command::new(crate::resources::python());
+    let mut command = crate::resources::python_command();
     command
         .current_dir(tools)
         .arg("-c")

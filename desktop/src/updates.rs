@@ -164,7 +164,7 @@ fn check_with(
     })
 }
 fn fetch(url: &str) -> Result<Vec<u8>> {
-    let mut cmd = Command::new(crate::resources::python());
+    let mut cmd = crate::resources::python_command();
     cmd.args(["-c", include_str!("updates_fetch.py")]);
     let output = run_process(
         cmd,

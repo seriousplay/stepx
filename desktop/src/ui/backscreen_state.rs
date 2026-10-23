@@ -1165,7 +1165,7 @@ pub(super) fn native_description(feature: bs::NativeFeature) -> &'static str {
 fn recent_images() -> Vec<PathBuf> {
     let Some(base) = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .or_else(|| crate::resources::user_home().map(|home| PathBuf::from(home).join(".local/share")))
     else {
         return Vec::new();
     };

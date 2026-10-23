@@ -165,6 +165,7 @@ enum Page {
     BackScreen,
     Amoo,
     Account,
+    About,
     Work,
     Studio,
     Sms,
@@ -182,6 +183,7 @@ impl Page {
             Self::BackScreen => "背屏",
             Self::Amoo => "Amoo",
             Self::Account => "账号与用量",
+            Self::About => "关于 StepX",
             Self::Work => "Amoo Work",
             Self::Studio => "Studio",
             Self::Sms => "短信",
@@ -199,6 +201,7 @@ impl Page {
             Self::BackScreen => "❖",
             Self::Amoo => "✦",
             Self::Account => "◉",
+            Self::About => "◉",
             Self::Work => "💼",
             Self::Studio => "⚡",
             Self::Sms => "✉",
@@ -214,7 +217,7 @@ impl Page {
     fn needs_device(self) -> bool {
         !matches!(
             self,
-            Self::Connect | Self::Tools | Self::Work | Self::Account
+            Self::Connect | Self::Tools | Self::Work | Self::Account | Self::About
         )
     }
 
@@ -238,6 +241,7 @@ impl Page {
             "apps" => Self::Apps,
             "tools" | "toolbox" => Self::Tools,
             "account" => Self::Account,
+            "about" => Self::About,
             "pair" | "connect" => Self::Connect,
             _ => Self::Overview,
         }

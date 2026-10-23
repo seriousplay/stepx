@@ -55,7 +55,7 @@ fn valid_name(name: &str) -> bool {
         && !name.to_ascii_lowercase().ends_with(".json.tmp")
 }
 fn home() -> Result<PathBuf> {
-    std::env::var_os("HOME")
+    crate::resources::user_home()
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .context("找不到用户文件夹")
@@ -125,7 +125,7 @@ pub fn receive_directory() -> Result<PathBuf> {
     Ok(path)
 }
 fn digest(path: &Path) -> Result<String> {
-    let mut cmd = Command::new(crate::resources::python());
+    let mut cmd = crate::resources::python_command();
     cmd.arg("-c").arg("import hashlib,sys\nh=hashlib.sha256()\nwith open(sys.argv[1],'rb') as f:\n for b in iter(lambda:f.read(1048576),b''):h.update(b)\nprint(h.hexdigest())").arg(path);
     let result = run_process(cmd, None, Duration::from_secs(120))?;
     ensure!(result.status.success(), "无法校验文件");

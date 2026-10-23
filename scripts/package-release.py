@@ -23,6 +23,13 @@ def main():
             bundle=base/'StepX.app'/'Contents';binary_dir=bundle/'MacOS';resource_dir=bundle/'Resources'
             binary_dir.mkdir(parents=True);resource_dir.mkdir()
             info={'CFBundleName':'StepX','CFBundleDisplayName':'StepX','CFBundleIdentifier':'io.github.xydzf520.stepx','CFBundleExecutable':'stepx-companion','CFBundlePackageType':'APPL','CFBundleShortVersionString':a.version,'CFBundleVersion':a.version,'NSHighResolutionCapable':True,'NSMicrophoneUsageDescription':'用于语音输入','NSCameraUsageDescription':'用于扫码连接'}
+            iconset=stage/'StepX.iconset';iconset.mkdir()
+            for size in [16,32,128,256,512]:
+                for scale in [1,2]:
+                    suffix='@2x' if scale==2 else ''
+                    subprocess.run(['sips','-z',str(size*scale),str(size*scale),str(ROOT/'desktop/assets/amoo_desktop_icon.png'),'--out',str(iconset/f'icon_{size}x{size}{suffix}.png')],check=True,stdout=subprocess.DEVNULL)
+            subprocess.run(['iconutil','-c','icns',str(iconset),'-o',str(resource_dir/'StepX.icns')],check=True)
+            info['CFBundleIconFile']='StepX.icns'
             (bundle/'Info.plist').write_bytes(plistlib.dumps(info))
         else:binary_dir=resource_dir=base
         binary_name='stepx-companion'+('.exe' if windows else '')

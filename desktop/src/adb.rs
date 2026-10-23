@@ -255,7 +255,7 @@ pub fn bundled_tool(name: &str) -> Option<PathBuf> {
 
 pub fn platform_tool_candidate(name: &str) -> Option<PathBuf> {
     let binary = exe(name);
-    let home = std::env::var_os("HOME")
+    let home = crate::resources::user_home()
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
     let local_appdata = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);

@@ -670,6 +670,7 @@ impl Companion {
                                 Action::Page(Page::Account),
                                 Btn::Ghost,
                             ),
+                            self.button("sidebar-about", "关于 StepX", Action::Page(Page::About), if self.page == Page::About { Btn::Secondary } else { Btn::Ghost }),
                             footer,
                         ],
                     ))
@@ -762,6 +763,7 @@ impl Companion {
             Page::BackScreen => "17 列 × 23 行 · 379 颗单色灯珠 · 创作与手机联动".into(),
             Page::Amoo => "后台连接 · 会话与文字对话".into(),
             Page::Account => "手机账号 · 真实消息 Token 用量".into(),
+            Page::About => "版本信息 · 联系与开源说明".into(),
             Page::Work => "手机任务同步 · 本地文件协作".into(),
             Page::Studio => "studio.stepx.com 应用一键上机建图标 · OpenClaw 远端反向代理".into(),
             Page::Sms => {

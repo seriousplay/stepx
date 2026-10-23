@@ -738,7 +738,7 @@ impl Device {
         if !script.is_file() {
             bail!("未找到 Google Play 特权工程脚本：{}", script.display());
         }
-        let out = Command::new(crate::resources::python())
+        let out = crate::resources::python_command()
             .arg(&script)
             .arg(subcmd)
             .env("STEPX_SERIAL", &self.transport)
@@ -757,7 +757,7 @@ impl Device {
         if !script.is_file() {
             bail!("未找到 root_bridge.py：{}", script.display());
         }
-        let out = Command::new(crate::resources::python())
+        let out = crate::resources::python_command()
             .arg(&script)
             .arg("-c")
             .arg(py_code)

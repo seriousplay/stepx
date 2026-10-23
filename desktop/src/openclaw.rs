@@ -715,7 +715,7 @@ fn extract_json_objects_containing(haystack: &str, needle: &str) -> Vec<Value> {
 }
 
 pub fn load_openclaw_credentials() -> Option<OpenClawCredentials> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let home = crate::resources::user_home().map(PathBuf::from)?;
     let cache_path = home.join(".config/stepx/openclaw_auth.json");
     if let Ok(text) = fs::read_to_string(&cache_path) {
         if let Ok(creds) = serde_json::from_str::<OpenClawCredentials>(&text) {

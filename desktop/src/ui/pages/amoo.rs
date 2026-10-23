@@ -95,6 +95,7 @@ fn reply_reports_lock_block(body: &str) -> bool {
 }
 
 impl Companion {
+    fn legacy_demo(&self) -> bool { self.demo_mode && !std::env::args().any(|a| a == "--press-capture") }
     fn amoo_action_icon(
         &self,
         id: impl Into<String>,
@@ -255,10 +256,10 @@ impl Companion {
             Action::AmooToggleSchedules,
             Btn::Secondary,
         )];
-        if self.demo_mode {
+        if self.legacy_demo() {
             actions.push(self.button(
                 "amoo-express-quick",
-                if self.demo_mode {
+                if self.legacy_demo() {
                     "📦 查快递 (2)"
                 } else {
                     "查快递"
@@ -267,7 +268,7 @@ impl Companion {
                 Btn::Secondary,
             ));
         }
-        if !self.demo_mode {
+        if !self.legacy_demo() {
             actions.push(self.button(
                 "amoo-sync-real",
                 "↻ 后台同步",
@@ -275,7 +276,7 @@ impl Companion {
                 Btn::Secondary,
             ));
         }
-        if self.demo_mode {
+        if self.legacy_demo() {
             actions.push(self.button(
                 "amoo-read",
                 "⊕ 圈选感知",
@@ -415,7 +416,7 @@ impl Companion {
                     self.between(
                         self.heading("协同智能体"),
                         Container::new(self.line_w(
-                            if self.demo_mode || self.amoo_gateway_online {
+                            if self.legacy_demo() || self.amoo_gateway_online {
                                 "在线"
                             } else {
                                 "未连接"
@@ -450,7 +451,7 @@ impl Companion {
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_PANEL)))
         .finish();
 
-        let agent_selector = if self.demo_mode {
+        let agent_selector = if self.legacy_demo() {
             agent_selector
         } else {
             Container::new(self.vstack(
@@ -510,7 +511,7 @@ impl Companion {
             .iter()
             .filter(|s| s.status == "执行中" || s.status == "进行中" || s.status == "请求中")
             .count();
-        let running_label = if self.demo_mode {
+        let running_label = if self.legacy_demo() {
             let c = self
                 .amoo_sessions
                 .iter()
@@ -540,9 +541,9 @@ impl Companion {
         .finish();
 
         let mut session_cards: Vec<El> = Vec::new();
-        let max_cards = if self.demo_mode { 6 } else { 50 };
+        let max_cards = if self.legacy_demo() { 6 } else { 50 };
         for (idx, sess) in filtered_sessions.into_iter().take(max_cards) {
-            let waiting_unlock = !self.demo_mode && session_waits_for_unlock(&sess.items);
+            let waiting_unlock = !self.legacy_demo() && session_waits_for_unlock(&sess.items);
             session_cards.push(self.session_card(
                 idx,
                 session_title(&sess.title),
@@ -571,7 +572,7 @@ impl Companion {
                             } else {
                                 "⊞ 技能市场"
                             },
-                            if self.demo_mode {
+                            if self.legacy_demo() {
                                 Action::AmooToggleSkillManage
                             } else {
                                 Action::Work(super::super::WorkAction::Tab(2))
@@ -591,7 +592,7 @@ impl Companion {
                         self.button(
                             "amoo-npu-models",
                             "◈ 模型目录",
-                            if self.demo_mode {
+                            if self.legacy_demo() {
                                 Action::AmooOpenModels
                             } else {
                                 Action::Work(super::super::WorkAction::Tab(1))
@@ -608,7 +609,7 @@ impl Companion {
         .with_border(Border::top(1.).with_border_color(p.border))
         .finish();
 
-        let left_col = if self.demo_mode {
+        let left_col = if self.legacy_demo() {
             let mut session_els = vec![sessions_header];
             session_els.extend(session_cards);
             let sessions_block = self.vstack(6., session_els);
@@ -746,7 +747,7 @@ impl Companion {
                     ),
                 ],
             ),
-            if self.demo_mode {
+            if self.legacy_demo() {
                 tts_toggle
             } else {
                 self.line("手机后台同步", 11., p.text3)
@@ -785,7 +786,7 @@ impl Companion {
                 ),
             ],
         );
-        let mut top_rows = vec![self.between(mode_row, if !phone_mode && !self.demo_mode {
+        let mut top_rows = vec![self.between(mode_row, if !phone_mode && !self.legacy_demo() {
             self.hstack(4., [("pause", "暂停手机"), ("resume", "继续"), ("stop", "停止")].into_iter().map(|(op, label)|
                 self.button(format!("amoo-native-task-{op}"), label, Action::AmooUi(AmooUiAction::GuiPhoneControl(op.into())), Btn::Ghost)
             ).collect())
@@ -796,10 +797,10 @@ impl Companion {
             top_rows.push(model_selector_row);
             top_rows.push(self.between(
                 self.wrap(scene_pills),
-                if self.demo_mode {
+                if self.legacy_demo() {
                     self.link_action(
                         "amoo-top-express",
-                        if self.demo_mode {
+                        if self.legacy_demo() {
                             "📦 快递取件码 (4-2-1086)"
                         } else {
                             "后台文字对话"
@@ -1071,7 +1072,7 @@ impl Companion {
 
             let mic_btn = self.amoo_action_icon(
                 "amoo-speech-input",
-                if self.demo_mode {
+                if self.legacy_demo() {
                     "语音输入（演示）"
                 } else {
                     "语音输入（暂未接入语音转文字）"
@@ -1104,7 +1105,7 @@ impl Companion {
                     )
                     .finish(),
                 )
-                .with_child(if self.demo_mode && !phone_mode {
+                .with_child(if self.legacy_demo() && !phone_mode {
                     mic_btn
                 } else {
                     Empty::new().finish()
@@ -1375,14 +1376,14 @@ impl Companion {
         };
 
         let mem_count_state = self.mouse_state("amoo-mem-badge");
-        let mem_total = if self.demo_mode {
+        let mem_total = if self.legacy_demo() {
             26 + self.amoo_memories.len()
         } else {
             self.amoo_bm25_entries.max(self.amoo_memories.len())
         };
         let mem_badge = Hoverable::new(mem_count_state, move |_| {
             Container::new(self.line_w(
-                if self.demo_mode || mem_total > 0 {
+                if self.legacy_demo() || mem_total > 0 {
                     format!("{mem_total} 条")
                 } else {
                     "未同步".into()
@@ -1440,7 +1441,7 @@ impl Companion {
                         clickable_pref_row(
                             "amoo-pref-mem",
                             "跨会话记忆",
-                            if !self.demo_mode {
+                            if !self.legacy_demo() {
                                 "未同步"
                             } else if self.amoo_memory_enabled {
                                 "已开启"
@@ -1457,14 +1458,14 @@ impl Companion {
                         clickable_pref_row(
                             "amoo-pref-style",
                             "交流风格",
-                            if self.demo_mode { style_label } else { "未同步" },
+                            if self.legacy_demo() { style_label } else { "未同步" },
                             p.text,
                             Action::AmooCycleStyle,
                         ),
                         clickable_pref_row(
                             "amoo-pref-commute",
                             "通勤偏好",
-                            if self.demo_mode { commute_label } else { "未同步" },
+                            if self.legacy_demo() { commute_label } else { "未同步" },
                             p.text,
                             Action::AmooCycleCommute,
                         ),
@@ -1520,14 +1521,14 @@ impl Companion {
             .finish()
         };
 
-        let enabled_skills_count = if self.demo_mode {
+        let enabled_skills_count = if self.legacy_demo() {
             2 + self.amoo_skills.iter().filter(|s| s.enabled).count()
         } else {
             self.amoo_skills.iter().filter(|s| s.enabled).count()
         };
 
         let mut skill_rows: Vec<El> = vec![self.between(
-            self.heading(if self.demo_mode || !self.amoo_skills.is_empty() {
+            self.heading(if self.legacy_demo() || !self.amoo_skills.is_empty() {
                 format!("已启用技能 ({enabled_skills_count})")
             } else {
                 "技能尚未同步".into()
@@ -1632,7 +1633,7 @@ impl Companion {
 
         let engine_title = match self.amoo_agent_idx {
             0 => {
-                if self.demo_mode {
+                if self.legacy_demo() {
                     "端侧 Agent 引擎"
                 } else {
                     "Amoo 后台连接"
@@ -1642,7 +1643,7 @@ impl Companion {
             2 => "飞书 / 企微网关",
             _ => "Claude / OpenClaw",
         };
-        let engine_ver_label = if self.demo_mode {
+        let engine_ver_label = if self.legacy_demo() {
             "v1.0.7 就绪".to_string()
         } else {
             let short_ver = self
@@ -1794,7 +1795,7 @@ impl Companion {
         .with_background_color(if p.dark { p.sidebar } else { p.surface })
         .finish();
 
-        let right_col = if self.demo_mode {
+        let right_col = if self.legacy_demo() {
             right_col
         } else {
             let current = self.amoo_sessions.get(self.amoo_session_idx);
@@ -1879,7 +1880,7 @@ impl Companion {
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(ConstrainedBox::new(left_col).with_width(260.).finish())
             .with_child(Expanded::new(1., center_col).finish());
-        if self.demo_mode || self.amoo_show_details {
+        if self.legacy_demo() || self.amoo_show_details {
             layout = layout.with_child(ConstrainedBox::new(right_col).with_width(286.).finish());
         }
         layout.finish()
@@ -2582,7 +2583,7 @@ impl Companion {
                 } => {
                     let think_state = self.mouse_state(format!("amoo-think-btn:{idx}"));
                     let expanded = self.amoo_thinking_expanded;
-                    let think_label = if self.demo_mode {
+                    let think_label = if self.legacy_demo() {
                         format!("已深度思考 {thinking_time}")
                     } else if !thinking_steps.is_empty() {
                         "思考过程".into()
@@ -2639,7 +2640,7 @@ impl Companion {
                             vec![
                                 think_chip,
                                 self.line_w(
-                                    if self.demo_mode {
+                                    if self.legacy_demo() {
                                         format!("✓ 已调用 {} 项工具", thinking_steps.len())
                                     } else {
                                         String::new()
@@ -2680,7 +2681,7 @@ impl Companion {
                         .and_then(|body| stepx_companion::work_protocol::display_text(body, false))
                     {
                         let marker = "🖼 [AI 生成图片卡片 · 手机端已渲染高清写真]";
-                        if self.demo_mode && body_txt.contains(marker) {
+                        if self.legacy_demo() && body_txt.contains(marker) {
                             let parts: Vec<&str> = body_txt.splitn(2, marker).collect();
                             let before = parts.first().copied().unwrap_or("").trim();
                             let after = parts.get(1).copied().unwrap_or("").trim();
@@ -3089,7 +3090,7 @@ impl Companion {
                         UiIcon::Copy,
                         Action::CopyText(copy_payload, "已复制 Amoo 回复内容".into()),
                     )];
-                    if self.demo_mode {
+                    if self.legacy_demo() {
                         reply_actions.push(self.amoo_action_icon(
                             format!("amoo-reply-tts:{idx}"),
                             if self.amoo_tts_on {

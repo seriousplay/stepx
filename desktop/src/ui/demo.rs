@@ -154,6 +154,7 @@ impl Companion {
         self.preferences.selected_serial = Some("PZ261A0001".into());
         self.status = "界面演示 · 数据为虚构示例".into();
         self.connect_guide_step = None;
+        self.amoo_gateway_online = true;
         if self.page == Page::Work {
             self.amoo_sessions = vec![AmooSessionItem {
                 session_key: "demo:work".into(), title: "整理项目资料与下周计划".into(),
@@ -169,6 +170,14 @@ impl Companion {
             }];
             self.work.status = "示例任务 · 已整理工作成果".into();
             self.work.events = vec!["阅读项目周报".into(), "整理要点与行动".into(), "生成可编辑文档".into()];
+            let demo_path = PathBuf::from("docs/examples/项目摘要.md");
+            self.work.workspace = Some(PathBuf::from("docs/examples"));
+            self.work.artifacts = vec![super::work_state::WorkArtifactItem { path: demo_path.clone(), name: "项目摘要.md".into(), kind: "Markdown 文档".into() }];
+            self.work.local_preview = Some(super::work_state::WorkLocalPreview {
+                path: demo_path, name: "项目摘要.md".into(), bytes: 436, image: false,
+                text: Some(include_str!("../../../docs/examples/项目摘要.md").into()), markdown: true,
+                note: "可编辑文档 · 演示资料".into()
+            });
             self.work.panel = 2;
             self.amoo_session_idx = 0;
         }

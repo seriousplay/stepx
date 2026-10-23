@@ -163,7 +163,7 @@ impl Preferences {
             return PathBuf::from(appdata).join("stepx-companion/devices.json");
         }
         let home = PathBuf::from(
-            std::env::var_os("HOME")
+            crate::resources::user_home()
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .unwrap_or_default(),
         );

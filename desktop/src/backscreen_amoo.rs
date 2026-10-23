@@ -234,7 +234,7 @@ fn wait_reply(
 fn generation_directory() -> Result<PathBuf> {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/share")))
+        .or_else(|| crate::resources::user_home().map(|p| PathBuf::from(p).join(".local/share")))
         .context("无法确定图片保存目录")?;
     let dir = base.join("stepx-companion/backscreen/generated");
     std::fs::create_dir_all(&dir)?;

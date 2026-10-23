@@ -24,7 +24,7 @@ pub(super) fn root() -> Option<PathBuf> {
     std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .or_else(|| crate::resources::user_home().map(|h| PathBuf::from(h).join(".cache")))
         .map(|p| p.join("stepx-companion/amoo-previews-v2"))
 }
 

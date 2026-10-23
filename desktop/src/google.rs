@@ -21,7 +21,7 @@ pub fn workflow_root() -> Result<PathBuf> {
 
 pub fn run_script(device: &Device, adb: &Adb, script: &str, args: &[&str]) -> Result<String> {
     let root = workflow_root()?;
-    let output = Command::new(crate::resources::python())
+    let output = crate::resources::python_command()
         .arg(root.join("tools").join(script))
         .args(args)
         .current_dir(&root)
@@ -51,7 +51,7 @@ fn run_compatibility_script(device: &Device, adb: &Adb, action: &str) -> Result<
     if !script.is_file() {
         bail!("当前桌面安装缺少 Google Play 兼容组件，请更新 desktop 后重试");
     }
-    let output = Command::new(crate::resources::python())
+    let output = crate::resources::python_command()
         .arg(&script)
         .arg(action)
         .current_dir(script.parent().context("兼容组件目录无效")?)

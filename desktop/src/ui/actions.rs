@@ -444,7 +444,7 @@ impl Companion {
                     Page::BackScreen => Some(F_BACK_PROMPT),
                     Page::Studio => Some(F_STUDIO_NAME),
                     Page::Overview => Some(F_OV_TEXT),
-                    Page::Connect | Page::Tools | Page::Account => None,
+                    Page::Connect | Page::Tools | Page::Account | Page::About => None,
                 };
                 if let Some(i) = target {
                     self.focus_field(i, ctx);
@@ -472,7 +472,7 @@ impl Companion {
                     Page::Files if self.file_modal.is_some() => &[F_FILE_NAME, F_FILE_SEARCH],
                     Page::Files => &[F_FILE_SEARCH],
                     Page::Apps => &[F_APP_SEARCH],
-                    Page::Tools | Page::Account => &[],
+                    Page::Tools | Page::Account | Page::About => &[],
                 };
                 if !order.is_empty() {
                     let next = match self.focus.and_then(|f| order.iter().position(|x| *x == f)) {
@@ -1213,6 +1213,7 @@ impl Companion {
                 _ => return None,
             },
             Action::ContextRefresh => match self.page {
+                Page::About => return None,
                 Page::Overview if self.selected.is_some() => Action::Summary,
                 Page::Overview | Page::Connect => Action::Refresh,
                 Page::BackScreen => {
@@ -2306,7 +2307,7 @@ impl Companion {
                         let base = std::env::var_os("XDG_CACHE_HOME")
                             .map(PathBuf::from)
                             .or_else(|| {
-                                std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache"))
+                                crate::resources::user_home().map(|h| PathBuf::from(h).join(".cache"))
                             })
                             .ok_or_else(|| anyhow::anyhow!("无法确定图片缓存目录"))?;
                         let directory = base.join("stepx-companion/backscreen/imports");

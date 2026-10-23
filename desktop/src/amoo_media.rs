@@ -183,7 +183,7 @@ pub fn download_artifact(
     let download = (|| -> Result<DownloadedArtifact> {
         let temp = tempfile::NamedTempFile::new_in(parent)?;
         let payload = json!({"url":url,"output":temp.path(),"image":attachment.kind=="image"||attachment.mime.starts_with("image/")});
-        let mut command = Command::new(crate::resources::python());
+        let mut command = crate::resources::python_command();
         command.args(["-c", include_str!("amoo_download.py")]);
         let result = crate::adb::run_process(
             command,
@@ -308,7 +308,7 @@ pub fn upload_attachments(
             let mut snapshot = tempfile::NamedTempFile::new()?;
             snapshot.write_all(&data)?;
             snapshot.as_file().sync_all()?;
-            let mut digest = Command::new(crate::resources::python());
+            let mut digest = crate::resources::python_command();
             digest.args(["-c","import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())"]).arg(snapshot.path());
             let hash = crate::adb::run_process(digest, None, Duration::from_secs(10))?;
             if !hash.status.success() {
@@ -505,7 +505,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let output = dir.path().join("artifact.png");
             let payload = json!({"url":format!("http://127.0.0.1:{port}/blob/{}","a".repeat(64)),"output":output,"image":true});
-            let mut command = std::process::Command::new(crate::resources::python());
+            let mut command = crate::resources::python_command();
             command.args(["-c", include_str!("amoo_download.py")]);
             command.env("NO_PROXY", "127.0.0.1");
             command.env("no_proxy", "127.0.0.1");

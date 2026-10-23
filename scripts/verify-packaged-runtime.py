@@ -19,6 +19,18 @@ for name in ['companion-permissions','companion-power','companion-system']:
  spec=importlib.util.spec_from_file_location(name,root/'scripts'/(name+'.py'));m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
  if name=='companion-permissions':
   signer=m.signer(root/'desktop/assets/stepx-companion.apk');assert len(signer)==64
+# Verify that signature checking rejects modified APK bytes, not just a known filename.
+import zipfile
+apk=root/'desktop/assets/stepx-companion.apk';bad=root/'tampered.apk';data=bytearray(apk.read_bytes())
+with zipfile.ZipFile(apk) as archive:
+ item=archive.getinfo('classes.dex');offset=item.header_offset
+ name=int.from_bytes(data[offset+26:offset+28],'little');extra=int.from_bytes(data[offset+28:offset+30],'little')
+ data[offset+30+name+extra+10]^=1
+bad.write_bytes(data)
+spec=importlib.util.spec_from_file_location('verification',root/'scripts/companion-permissions.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+try:m.signer(bad)
+except RuntimeError:pass
+else:raise AssertionError('Modified APK accepted')
 from host_runtime import file_lock
 with file_lock(root/'lock'):pass
 with file_lock(root/'lock'):pass

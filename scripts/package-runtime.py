@@ -12,7 +12,7 @@ PYTHON_UNIX={
  'linux-x86_64':('x86_64-unknown-linux-gnu','f829adc9d888e76c8801b4799ed444188d35239fcae3a9808a99ec5cb0d8d92c'),
 }
 
-def bundle(root, windows):
+def build_runtime(root, windows):
     runtime=root/'runtime';runtime.mkdir(exist_ok=True)
     sdk=Path(os.environ.get('ANDROID_SDK_ROOT') or os.environ['ANDROID_HOME'])
     source=sdk/'build-tools/36.0.0'
@@ -54,6 +54,19 @@ subprocess.Popen = QuietPopen
             if hashlib.sha256(archive.read_bytes()).hexdigest()!=digest:raise RuntimeError('Python digest mismatch')
             with tarfile.open(archive) as t:t.extractall(runtime,filter='data')
     return runtime
+
+def bundle(root, windows):
+    # A failed dependency download must leave the previously installed runtime intact.
+    root.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.runtime-build-',dir=root) as td:
+        work=Path(td);built=build_runtime(work,windows)
+        destination=root/'runtime';previous=work/'previous'
+        if destination.exists():destination.rename(previous)
+        try:built.rename(destination)
+        except BaseException:
+            if previous.exists():previous.rename(destination)
+            raise
+    return root/'runtime'
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('root',type=Path);p.add_argument('--windows',action='store_true');a=p.parse_args();bundle(a.root,a.windows)

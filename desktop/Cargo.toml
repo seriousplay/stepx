@@ -1,0 +1,43 @@
+[package]
+name = "stepx-companion"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[workspace]
+
+[features]
+default = ["desktop-ui"]
+desktop-ui = ["dep:facloud_ui", "dep:pathfinder_geometry", "dep:native-dialog", "dep:markdown_parser"]
+ui-capture = ["desktop-ui", "facloud_ui/integration_tests"]
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+qrcode = { version = "0.14", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+tempfile = "3"
+quick-xml = "0.37"
+libc = "0.2"
+base64 = "0.22"
+chrono = "0.4"
+mdns-sd = "0.21.6"
+facloud_ui = { path = "../vendor/facloud_ui", optional = true }
+pathfinder_geometry = { version = "0.5.1", optional = true }
+native-dialog = { version = "0.7", optional = true }
+markdown_parser = { path = "../vendor/markdown_parser", optional = true }
+
+[profile.dev]
+debug = 1
+codegen-units = 8
+
+[patch.crates-io]
+core-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "0bcad1e103ead6bd71c4e5f85598ada9508e3a82" }
+core-foundation-sys = { git = "https://github.com/servo/core-foundation-rs", rev = "0bcad1e103ead6bd71c4e5f85598ada9508e3a82" }
+core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "0bcad1e103ead6bd71c4e5f85598ada9508e3a82" }
+core-text = { git = "https://github.com/servo/core-foundation-rs", rev = "0bcad1e103ead6bd71c4e5f85598ada9508e3a82" }
+objc = { git = "https://github.com/warpdotdev/rust-objc.git", rev = "5b656827fa9f863ef0eb22e444a3fedac009e78a" }
+pathfinder_simd = { git = "https://github.com/warpdotdev/pathfinder.git", rev = "34128a129ca6aee168fbc5060a4f21b4f7e486a9" }
+yaml-rust = { git = "https://github.com/warpdotdev/yaml-rust.git", rev = "51684719d0102ca85ff4b21cec39877a0c669e19" }

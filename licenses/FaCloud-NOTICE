@@ -1,0 +1,21 @@
+FaCloud
+Copyright (C) 2026 the respective FaCloud contributors.
+
+This distribution contains software derived from Warp:
+Copyright (C) 2020-2026 Denver Technologies, Inc.
+
+FaCloud preserves the upstream licensing boundary:
+
+1. desktop/crates/facloud_ui_core and desktop/crates/facloud_ui are licensed
+   under the MIT License in LICENSE-MIT.
+2. The remainder of the FaCloud repository is licensed under the GNU Affero
+   General Public License version 3 only in LICENSE-AGPL, except where a file or
+   bundled third-party component states different terms.
+
+Copyright notices and license files shipped with third-party source, fonts,
+assets, models, libraries, and bundled tools remain in force and must be kept
+with redistributed copies.
+
+FaCloud is an independent project. Warp and related marks are the property of
+their respective owners. No affiliation with or endorsement by Denver
+Technologies, Inc. is implied.

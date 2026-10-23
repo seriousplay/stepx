@@ -1,0 +1,2 @@
+use anyhow::{Result,Context};use stepx_companion::{adb::Adb,device::Device,openclaw::GatewayWs};use serde_json::json;
+fn main()->Result<()> {let adb=Adb::discover()?;let d=Device::inspect(&adb,"STEPX_DEVICE_SERIAL")?;let mut w=GatewayWs::connect(&adb,&d)?;let script=std::fs::read_to_string(std::env::args().nth(1).context("script path")?)?;let r=w.call("stepclaw.system.run",json!({"command":["python3","-c",script],"timeoutMs":15000}))?;println!("{}",r["stdout"].as_str().unwrap_or(""));anyhow::ensure!(r["exitCode"]==0,"edge execution failed");Ok(())}

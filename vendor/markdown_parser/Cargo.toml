@@ -1,0 +1,31 @@
+[package]
+name = "markdown_parser"
+authors = [ "FaCloud Team <dev@facloud.local>",]
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "AGPL-3.0-only"
+
+[dependencies]
+markup5ever_rcdom = "0.35.0"
+
+[dependencies.anyhow]
+version = "1.0"
+
+[dependencies.enum-iterator]
+version = "1.1.3"
+
+[dependencies.itertools]
+version = "0.14.0"
+
+[dependencies.nom]
+version = "7.1.1"
+
+[dependencies.html5ever]
+version = "0.35.0"
+
+[dependencies.serde_yaml]
+version = "0.8"
+
+[dependencies.thiserror]
+version = "2.0.17"

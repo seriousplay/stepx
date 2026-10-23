@@ -1,0 +1,109 @@
+[
+  {
+    "name": "stepx_gui_agent",
+    "description": "把手机界面任务委派给 StepX伴侣的完整 GELab-Zero GUI Agent。独立 Step Plan 视觉模型自动看屏、规划、点击、滑动、输入、重试并核验。start(goal)返回task，随后约5秒查询status；支持pause/resume/stop。完整执行器在手机本地运行，不需要desktop或USB连接；需要手机联网、解锁并已配置Step Plan。仅phase=completed且result.verified=true且result.phoneStopped=true表示完成。不用Amoo自己截图或逐步点击，不用exec或image。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "start",
+            "status",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "goal": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "stepx_gui_control",
+    "description": "StepX伴侣真实手机看屏操作。start(goal)仅建立任务取得task，不会自动执行目标，必须由调用者规划每一步；可先用原厂open_app_by_name打开目标应用。observe(task)返回截图、界面节点、epoch和treeHash；action携带最新epoch/treeHash及动作。动作坐标为 0 到 1000 归一化坐标，节点 bounds 为原始屏幕像素，需按 width/height 换算。每步操作后重新observe，最后截图验证目标；stop结束。支持pause/resume。锁屏需用户解锁，不代替登录验证码支付授权。失败不得宣称完成。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "status",
+            "start",
+            "observe",
+            "action",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "goal": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "epoch": {
+          "type": "integer"
+        },
+        "treeHash": {
+          "type": "string"
+        },
+        "action": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "click",
+                "long_press",
+                "swipe",
+                "input",
+                "back",
+                "home"
+              ]
+            },
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "x1": {
+              "type": "number"
+            },
+            "y1": {
+              "type": "number"
+            },
+            "x2": {
+              "type": "number"
+            },
+            "y2": {
+              "type": "number"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

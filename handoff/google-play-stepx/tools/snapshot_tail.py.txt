@@ -1,0 +1,16 @@
+assert out.get('java_result','').count('SNAPSHOT_OK ')==3, 'Application snapshot failed'
+lib.setfsuid(1000)
+backup='/data/system_ce/0/stepx-gms-backup-SNAPSHOT_ID'
+os.mkdir(backup,0o700)
+out['account_database_snapshots']=[]
+for source in ['/data/system_ce/0/accounts_ce.db','/data/system_de/0/accounts_de.db']:
+ assert os.path.isfile(source)
+ target=backup+'/'+os.path.basename(source)
+ original=sqlite3.connect('file:'+source+'?mode=ro',uri=True)
+ copied=sqlite3.connect(target)
+ try:
+  original.backup(copied)
+  assert copied.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
+ finally:copied.close();original.close()
+ os.chmod(target,0o600)
+ out['account_database_snapshots'].append({'path':target,'bytes':os.stat(target).st_size,'sha256':hashlib.sha256(open(target,'rb').read()).hexdigest()})

@@ -1,0 +1,297 @@
+[package]
+name = "facloud_ui"
+version = "0.0.0"
+edition = "2021"
+authors = [ "FaCloud Team",]
+publish = false
+license = "MIT"
+
+[features]
+enable-metal-frame-capture = []
+fontkit-rasterizer = []
+traces = [ "facloud_ui_core/traces",]
+integration_tests = [ "facloud_ui_core/integration_tests",]
+log_named_telemetry_events = [ "facloud_ui_core/log_named_telemetry_events",]
+schema_gen = [ "facloud_ui_core/schema_gen",]
+settings_value = [ "facloud_ui_core/settings_value",]
+test-util = [ "facloud_ui_core/test-util",]
+experimental-wgpu-renderer = [ "dep:wgpu", "dep:bytemuck", "dep:version-compare",]
+
+[dependencies]
+takecell = "0.1.1"
+
+[build-dependencies]
+bindgen = "0.70.1"
+
+[dependencies.async-task]
+version = "4.2.0"
+
+[dependencies.anyhow]
+version = "1.0"
+
+[dependencies.bytemuck]
+version = "1.13.1"
+features = [ "derive",]
+optional = true
+
+[dependencies.cfg-if]
+version = "1.0.0"
+
+[dependencies.dashmap]
+version = "6.1.0"
+
+[dependencies.derive_more]
+version = "0.99.17"
+
+[dependencies.futures]
+version = "0.3"
+features = [ "executor", "thread-pool",]
+
+[dependencies.futures-util]
+version = "0.3"
+default-features = false
+
+[dependencies.instant]
+version = "0.1.12"
+features = [ "wasm-bindgen",]
+
+[dependencies.itertools]
+version = "0.14.0"
+
+[dependencies.lazy_static]
+version = "1.4.0"
+
+[dependencies.log]
+version = "0.4"
+features = [ "serde", "std",]
+
+[dependencies.markdown_parser]
+path = "../markdown_parser"
+
+[dependencies.num-traits]
+version = "0.2"
+
+[dependencies.ordered-float]
+version = "3.0.0"
+features = [ "serde",]
+
+[dependencies.parking_lot]
+version = "0.12.1"
+
+[dependencies.pathfinder_color]
+version = "0.5"
+
+[dependencies.pathfinder_geometry]
+version = "0.5.1"
+
+[dependencies.sum_tree]
+path = "../sum_tree"
+
+[dependencies.thiserror]
+version = "2.0.17"
+
+[dependencies.vec1]
+version = "1.8.0"
+features = [ "serde",]
+
+[dependencies.version-compare]
+version = "0.1"
+optional = true
+
+[dependencies.facloud_ui_core]
+path = "../facloud_ui_core"
+
+[dependencies.wgpu]
+version = "29.0.1"
+default-features = false
+features = [ "dx12", "gles", "metal", "parking_lot", "std", "vulkan", "wgsl",]
+optional = true
+
+[build-dependencies.cc]
+version = "1.0"
+features = [ "parallel",]
+
+[build-dependencies.cfg_aliases]
+version = "0.2.1"
+
+[target."cfg(target_os = \"macos\")".dependencies]
+core-graphics = "0.25.0"
+core-text = "21.0.0"
+dispatch = "0.2.0"
+foreign-types = "0.5.0"
+metal = "0.33.0"
+
+[target."cfg(not(target_os = \"macos\"))".dependencies]
+bimap = "0.6.2"
+fontdb = "0.23.0"
+memmap2 = "0.9.3"
+owned_ttf_parser = "0.25.0"
+
+[target."cfg(not(any(target_os = \"macos\", target_family = \"wasm\")))".dependencies]
+global-hotkey = "0.7.0"
+
+[target."cfg(target_family = \"wasm\")".dependencies]
+js-sys = "0.3.69"
+
+[target."cfg(any(target_os = \"linux\", target_os = \"windows\"))".dependencies]
+native-dialog = "0.7.0"
+open = "5.0.0"
+
+[target."cfg(target_os = \"linux\")".dependencies]
+notify-rust = "4.10.0"
+open = "5.0.0"
+tini = "1.3.0"
+urlencoding = "2.1.3"
+x11-dl = "2.21.0"
+
+[target."cfg(target_os = \"windows\")".dependencies]
+windows-version = "0.1.2"
+tauri-winrt-notification = "0.7.0"
+
+[target."cfg(target_os = \"macos\")".dependencies.block]
+version = "0.1.6"
+
+[target."cfg(target_os = \"macos\")".dependencies.chrono]
+version = "0.4.38"
+features = [ "serde",]
+
+[target."cfg(target_os = \"macos\")".dependencies.cocoa]
+version = "=0.26.0"
+
+[target."cfg(target_os = \"macos\")".dependencies.core-foundation]
+version = "0.10.1"
+
+[target."cfg(target_os = \"macos\")".dependencies.font-kit]
+git = "https://github.com/warpdotdev/font-kit"
+rev = "a04b225ecb639bb850f21d05212cfdc7465000f3"
+default-features = false
+features = [ "source",]
+
+[target."cfg(target_os = \"macos\")".dependencies.libc]
+version = "0.2.81"
+
+[target."cfg(target_os = \"macos\")".dependencies.objc]
+version = "0.2"
+
+[target."cfg(not(target_family = \"wasm\"))".dependencies.async-io]
+version = "2.4.0"
+
+[target."cfg(not(target_family = \"wasm\"))".dependencies.ctrlc]
+version = "3.4.7"
+
+[target."cfg(not(target_family = \"wasm\"))".dependencies.font-kit]
+git = "https://github.com/warpdotdev/font-kit"
+rev = "a04b225ecb639bb850f21d05212cfdc7465000f3"
+default-features = false
+features = [ "source",]
+
+[target."cfg(not(target_os = \"macos\"))".dependencies.bytemuck]
+version = "1.13.1"
+
+[target."cfg(not(target_os = \"macos\"))".dependencies.command]
+path = "../command"
+
+[target."cfg(not(target_os = \"macos\"))".dependencies.cosmic-text]
+git = "https://github.com/warpdotdev/cosmic-text.git"
+rev = "15198beba692162201c0ea8b15222cf5643ea068"
+
+[target."cfg(not(target_os = \"macos\"))".dependencies.derivative]
+version = "2.2.0"
+
+[target."cfg(not(target_os = \"macos\"))".dependencies.resvg]
+version = "0.47.0"
+
+[target."cfg(not(target_os = \"macos\"))".dependencies.serde]
+version = "1.0"
+features = [ "derive", "rc",]
+
+[target."cfg(not(target_os = \"macos\"))".dependencies.version-compare]
+version = "0.1"
+
+[target."cfg(not(target_os = \"macos\"))".dependencies.winit]
+git = "https://github.com/warpdotdev/winit.git"
+rev = "7ef01853ae3fe952e6014080a88dc4352662dfb1"
+
+[target."cfg(not(target_os = \"macos\"))".dependencies.wgpu]
+version = "29.0.1"
+default-features = false
+features = [ "dx12", "gles", "metal", "parking_lot", "std", "vulkan", "wgsl",]
+
+[target."cfg(target_family = \"wasm\")".dependencies.gloo]
+version = "0.11.0"
+default-features = false
+features = [ "events", "futures", "utils",]
+
+[target."cfg(target_family = \"wasm\")".dependencies.wasm-bindgen]
+version = "0.2.89"
+
+[target."cfg(target_family = \"wasm\")".dependencies.wasm-bindgen-futures]
+version = "0.4.42"
+
+[target."cfg(target_family = \"wasm\")".dependencies.web-sys]
+version = "0.3.69"
+features = [ "Blob", "Clipboard", "ClipboardEvent", "ClipboardItem", "CompositionEvent", "Document", "DataTransfer", "Event", "HtmlCanvasElement", "HtmlInputElement", "InputEvent", "Navigator", "MediaQueryList", "Window", "Notification", "NotificationPermission",]
+
+[target."cfg(all(target_family = \"wasm\"))".dependencies.wgpu]
+version = "29.0.1"
+default-features = false
+features = [ "fragile-send-sync-non-atomic-wasm", "webgl",]
+
+[target."cfg(any(target_os = \"linux\", target_os = \"windows\"))".dependencies.arboard]
+version = "3.6.1"
+default-features = false
+features = [ "wayland-data-control", "image-data",]
+
+[target."cfg(target_os = \"linux\")".dependencies.blocking]
+version = "1.6.2"
+
+[target."cfg(target_os = \"linux\")".dependencies.dirs]
+version = "6.0.0"
+
+[target."cfg(target_os = \"linux\")".dependencies.fontconfig]
+version = "0.8.0"
+features = [ "dlopen",]
+
+[target."cfg(target_os = \"linux\")".dependencies.font-kit]
+git = "https://github.com/warpdotdev/font-kit"
+rev = "a04b225ecb639bb850f21d05212cfdc7465000f3"
+default-features = false
+features = [ "source-fontconfig-dlopen",]
+
+[target."cfg(target_os = \"linux\")".dependencies.futures-lite]
+version = "1.13.0"
+
+[target."cfg(target_os = \"linux\")".dependencies.nix]
+version = "0.26.4"
+default-features = false
+features = [ "user",]
+
+[target."cfg(target_os = \"linux\")".dependencies.tokio]
+version = "1.47.1"
+features = [ "rt", "time",]
+
+[target."cfg(target_os = \"linux\")".dependencies.x11rb]
+version = "0.13.0"
+
+[target."cfg(target_os = \"linux\")".dependencies.zbus]
+version = "5.9.0"
+
+[target."cfg(target_os = \"linux\")".dependencies.image]
+version = "0.25.9"
+default-features = false
+features = [ "png",]
+
+[target."cfg(target_os = \"windows\")".dependencies.dwrote]
+git = "https://github.com/warpdotdev/dwrote-rs"
+rev = "a71ce6c0136f7d0954a9a8b181b5b2d8ace5eb9c"
+default-features = false
+
+[target."cfg(target_os = \"windows\")".dependencies.winreg]
+version = "0.55.0"
+
+[target."cfg(target_os = \"windows\")".dependencies.windows]
+version = "0.62.2"
+features = [ "Win32_Graphics_Dwm", "Win32_Graphics_DirectWrite", "Win32_UI_Shell", "Win32_Networking", "Win32_System_Com", "Win32_Networking_NetworkListManager", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Registry",]
+
+[target."cfg(target_os = \"windows\")".dependencies.windows-core]
+version = "0.62.2"

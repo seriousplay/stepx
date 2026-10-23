@@ -1,0 +1,19 @@
+[package]
+name = "settings_value_derive"
+edition = "2024"
+authors = [ "FaCloud Team",]
+publish = false
+license = "AGPL-3.0-only"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+convert_case = "0.7"
+proc-macro2 = "1"
+quote = "1"
+
+[dependencies.syn]
+version = "2"
+default-features = false
+features = [ "derive", "parsing", "proc-macro", "printing", "extra-traits",]

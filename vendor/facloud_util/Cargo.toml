@@ -1,0 +1,63 @@
+[package]
+name = "facloud_util"
+authors = [ "FaCloud Team <dev@facloud.local>",]
+version = "0.1.0"
+edition = "2021"
+description = "General utilities and helpers used across FaCloud crates"
+publish = false
+license = "AGPL-3.0-only"
+
+[dependencies]
+content_inspector = "0.2.4"
+pathdiff = "0.2.1"
+
+[dependencies.rand]
+version = "0.8.2"
+
+[dependencies.dirs]
+version = "6.0.0"
+
+[dependencies.hex]
+version = "0.4.3"
+
+[dependencies.lazy_static]
+version = "1.4.0"
+
+[dependencies.mime_guess]
+version = "2.0"
+
+[dependencies.regex]
+version = "1.11.1"
+
+[dependencies.thiserror]
+version = "2.0.17"
+
+[dependencies.typed-path]
+version = "0.10.0"
+
+[dependencies.dunce]
+version = "1.0.1"
+
+[dependencies.serde]
+version = "1.0"
+features = [ "derive", "rc",]
+
+[dependencies.serde_json]
+version = "1.0"
+features = [ "raw_value",]
+
+[dependencies.pin-project]
+version = "1.0.10"
+
+[dependencies.futures-util]
+version = "0.3"
+default-features = false
+
+[target."cfg(windows)".dependencies.windows]
+version = "0.62.2"
+features = [ "Win32", "Win32_System", "Win32_System_Kernel", "Win32_System_Threading", "Win32_System_LibraryLoader", "Wdk_System", "Wdk_System_SystemServices", "Win32_System_Com", "Win32_System_SecurityCenter", "Win32_System_SystemInformation", "Win32_System_Console", "Win32_UI", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_UI_Accessibility", "Win32_UI_TextServices", "Win32_Graphics_Gdi", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Diagnostics_Debug", "Win32_System_Environment", "Win32_System_IO", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_WindowsProgramming", "Win32_Storage", "Win32_Security", "Win32_Storage_FileSystem", "Win32_Foundation", "Wdk_Foundation", "Wdk_Storage_FileSystem",]
+
+[target."cfg(target_family = \"wasm\")".dependencies.gloo]
+version = "0.11.0"
+default-features = false
+features = [ "events", "futures", "utils",]

@@ -1,0 +1,1335 @@
+//! Amoo's own AgentBus channel, over an explicitly selected ADB transport.
+//! Screen automation is limited to the native gui_agent capability, with its own
+//! lock-screen checks in amoo_gui; no shell/input fallback is provided here.
+use crate::{
+    adb::Adb,
+    device::Device,
+    openclaw::{RealAmooData, RealAttachment, RealChatMessage, RealCronInfo, RealSessionInfo},
+};
+use anyhow::{bail, Context, Result};
+use serde_json::{json, Value};
+use std::{
+    collections::HashSet,
+    io::{ErrorKind, Read, Write},
+    net::TcpStream,
+    sync::atomic::{AtomicBool, Ordering},
+    time::{Duration, Instant},
+};
+
+const MAX_FRAME: usize = 16 * 1024 * 1024;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+
+pub(crate) enum LocalInvokeEnd {
+    Reply(Value),
+    WaitCancelled,
+    TimedOut,
+    Disconnected,
+}
+pub(crate) struct LocalInvokeResult {
+    pub id: String,
+    pub end: LocalInvokeEnd,
+}
+
+fn local_gui_frame(id: &str, app_name: &str, task: &str) -> Result<Value> {
+    crate::amoo_gui::validate_request(app_name, task)?;
+    Ok(
+        json!({"type":"event","event":"node.invoke.request","payload":{
+            "id":id,"command":"ability.call","idempotencyKey":id,"timeoutMs":600000,
+            "_meta":{"dataClass":"private"},
+            "params":{"method":"gui_agent","timeoutMs":600000,
+                "invokeParamsJson":serde_json::to_string(&json!({"method":"gui_agent",
+                    "params":{"app_name":app_name.trim(),"task":task.trim()}}))?}
+        }}),
+    )
+}
+
+/// Unlike restarting read_frame every poll, this retains a partially received
+/// header/body while checking cancellation and the original absolute deadline.
+fn read_local_frame(
+    stream: &mut TcpStream,
+    deadline: Instant,
+    cancel: &AtomicBool,
+) -> LocalInvokeEnd {
+    fn exact(
+        stream: &mut TcpStream,
+        mut bytes: &mut [u8],
+        deadline: Instant,
+        cancel: &AtomicBool,
+    ) -> Result<(), LocalInvokeEnd> {
+        while !bytes.is_empty() {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(LocalInvokeEnd::WaitCancelled);
+            }
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                return Err(LocalInvokeEnd::TimedOut);
+            };
+            if stream
+                .set_read_timeout(Some(
+                    remaining
+                        .min(Duration::from_millis(500))
+                        .max(Duration::from_millis(1)),
+                ))
+                .is_err()
+            {
+                return Err(LocalInvokeEnd::Disconnected);
+            }
+            match stream.read(bytes) {
+                Ok(0) => return Err(LocalInvokeEnd::Disconnected),
+                Ok(count) => bytes = &mut bytes[count..],
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                    ) => {}
+                Err(_) => return Err(LocalInvokeEnd::Disconnected),
+            }
+        }
+        Ok(())
+    }
+    let mut header = [0; 4];
+    if let Err(end) = exact(stream, &mut header, deadline, cancel) {
+        return end;
+    }
+    let size = u32::from_be_bytes(header) as usize;
+    if size == 0 || size > MAX_FRAME {
+        return LocalInvokeEnd::Disconnected;
+    }
+    let mut body = vec![0; size];
+    if let Err(end) = exact(stream, &mut body, deadline, cancel) {
+        return end;
+    }
+    match serde_json::from_slice(&body) {
+        Ok(value) => LocalInvokeEnd::Reply(value),
+        Err(_) => LocalInvokeEnd::Disconnected,
+    }
+}
+
+pub struct AgentBus {
+    _lease: Option<crate::amoo_background::Lease>,
+    stream: TcpStream,
+    _forward: Forward,
+    device: Device,
+    pub version: String,
+}
+
+struct Forward {
+    adb: Adb,
+    serial: String,
+    port: String,
+}
+impl Drop for Forward {
+    fn drop(&mut self) {
+        let _ = self.adb.run_timeout(
+            &["-s", &self.serial, "forward", "--remove", &self.port],
+            Duration::from_secs(3),
+        );
+    }
+}
+
+fn read_frame(stream: &mut TcpStream, deadline: Instant) -> Result<Value> {
+    fn exact(stream: &mut TcpStream, mut bytes: &mut [u8], deadline: Instant) -> Result<()> {
+        while !bytes.is_empty() {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .context("Amoo 后台响应超时")?;
+            stream.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))?;
+            let count = stream.read(bytes).context("Amoo 云连接已中断或超时；请检查手机网络及小工具中的伴侣后台协作状态，未确认发送的草稿与附件已保留")?;
+            if count == 0 {
+                bail!("Amoo 后台连接已关闭");
+            }
+            bytes = &mut bytes[count..];
+        }
+        Ok(())
+    }
+    let mut header = [0; 4];
+    exact(stream, &mut header, deadline)?;
+    let size = u32::from_be_bytes(header) as usize;
+    if size == 0 || size > MAX_FRAME {
+        bail!("Amoo 后台返回了无效的数据帧长度");
+    }
+    let mut body = vec![0; size];
+    exact(stream, &mut body, deadline)?;
+    serde_json::from_slice(&body).context("Amoo 后台返回了无效的 JSON 数据")
+}
+
+fn local_image_upload_frame(id: &str, paths: &[String]) -> Result<Value> {
+    if paths.is_empty() || paths.len() > 8 {
+        bail!("每次图片上传需要 1 至 8 张图片");
+    }
+    let mut unique = HashSet::new();
+    for path in paths {
+        let relative = path
+            .strip_prefix("/sdcard/Download/Amoo Work/")
+            .context("图片必须位于本次 StepX 附件目录")?;
+        let (directory, name) = relative.split_once('/').context("图片路径无效")?;
+        if directory.len() != 32
+            || !directory.bytes().all(|b| b.is_ascii_hexdigit())
+            || name.is_empty()
+            || name == "."
+            || name == ".."
+            || name.contains('/')
+            || path.chars().any(char::is_control)
+            || !crate::amoo_media::mime_type(std::path::Path::new(name)).starts_with("image/")
+            || !unique.insert(path)
+        {
+            bail!("图片路径不在已选择的 StepX 附件范围内");
+        }
+    }
+    let method = "batch_file_upload_return_all";
+    // Matches the phone's r4.a ability adapter: params travel in invokeParamsJson.
+    // The local registry normally owns routing. Private data classification is
+    // enforced by the native GatewaySelector too: no CLOUD fallback if the local
+    // capability disappears or a static route takes precedence.
+    Ok(
+        json!({"type":"event","event":"node.invoke.request","payload":{
+            "id":id,"command":"ability.call","idempotencyKey":id,"timeoutMs":110000,
+            "_meta":{"dataClass":"private"},
+            "params":{"method":method,"timeoutMs":110000,
+                "invokeParamsJson":serde_json::to_string(&json!({"method":method,
+                    "params":{"files":serde_json::to_string(paths)?}}))?}
+        }}),
+    )
+}
+
+impl AgentBus {
+    pub fn connect(adb: &Adb, device: &Device) -> Result<Self> {
+        Self::connect_mode(adb, device, true)
+    }
+
+    /// Background observation must not wake or extend the phone's task window.
+    pub fn observe(adb: &Adb, device: &Device) -> Result<Self> {
+        Self::connect_mode(adb, device, false)
+    }
+
+    fn connect_mode(adb: &Adb, device: &Device, task: bool) -> Result<Self> {
+        device.verify(adb)?;
+        let lease = if task {
+            crate::amoo_background::Lease::acquire(adb, device)?
+        } else {
+            None
+        };
+        let port: u16 = adb
+            .run(&[
+                "-s",
+                &device.transport,
+                "forward",
+                "tcp:0",
+                "localabstract:agentbus",
+            ])?
+            .trim()
+            .parse()
+            .context("无法建立 Amoo 后台连接")?;
+        let forward = Forward {
+            adb: adb.clone(),
+            serial: device.transport.clone(),
+            port: format!("tcp:{port}"),
+        };
+        let stream =
+            TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(3))
+                .context("无法连接 Amoo 后台服务，请检查手机连接")?;
+        stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        let mut bus = Self {
+            _lease: lease,
+            stream,
+            _forward: forward,
+            device: device.clone(),
+            version: String::new(),
+        };
+        let hello = bus
+            .call_with_timeout(
+                "connect",
+                json!({"minProtocol":3,"maxProtocol":3,"role":"channel",
+            "client":{"id":format!("stepx-desktop-{:016x}",rand::random::<u64>()),
+                "displayName":"StepX Desktop","version":"1.0.0","platform":"linux"}}),
+                if task {
+                    REQUEST_TIMEOUT
+                } else {
+                    Duration::from_secs(3)
+                },
+            )
+            .with_context(|| crate::amoo_background::connection_failure_message(adb, device))?;
+        if hello["protocol"] != 3 {
+            bail!("当前 Amoo 后台协议不受支持");
+        }
+        bus.version = hello["server"]["version"].as_str().unwrap_or("").into();
+        if let Some(lease) = bus._lease.as_ref() {
+            // This acknowledges only the real protocol handshake. Task completion
+            // continues to require its matching native reply and final run state.
+            let _ = lease.mark_connected();
+        }
+        Ok(bus)
+    }
+
+    pub fn call(&mut self, method: &str, params: Value) -> Result<Value> {
+        self.call_with_timeout(method, params, REQUEST_TIMEOUT)
+    }
+
+    /// The native bus routes this event to its own registered ability node.
+    /// Keep the API limited to selected images already staged by StepX; it is not
+    /// a general command transport or a cloud-account node selector.
+    pub fn upload_local_images(&mut self, paths: &[String]) -> Result<Value> {
+        let id = format!("stepx-upload-{:032x}", rand::random::<u128>());
+        let body = serde_json::to_vec(&local_image_upload_frame(&id, paths)?)?;
+        if body.len() > MAX_FRAME {
+            bail!("图片上传请求过大");
+        }
+        self.stream.write_all(&(body.len() as u32).to_be_bytes())?;
+        self.stream.write_all(&body)?;
+        let deadline = Instant::now() + Duration::from_secs(115);
+        loop {
+            let response = read_frame(&mut self.stream, deadline)
+                .context("手机本机图片上传未确认完成；附件已保留，请勿重复提交")?;
+            if response["type"] != "req"
+                || response["method"] != "node.invoke.result"
+                || response["params"]["id"].as_str() != Some(&id)
+            {
+                continue;
+            }
+            let result = response
+                .get("params")
+                .filter(|value| value.is_object())
+                .context("手机图片上传结果格式无效")?;
+            if result["ok"] != true {
+                let code = result["error"]["code"]
+                    .as_str()
+                    .filter(|code| {
+                        code.len() <= 80
+                            && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    })
+                    .unwrap_or("UNKNOWN");
+                bail!("手机本机图片上传失败（{code}），图片尚未交给 Amoo");
+            }
+            return Ok(result.clone());
+        }
+    }
+
+    /// Read-only discovery uses the same native registry as local image upload.
+    /// This does not expose a general-purpose ability call to the desktop UI.
+    pub(crate) fn local_gui_catalog(&mut self) -> Result<Value> {
+        let id = format!("stepx-gui-probe-{:032x}", rand::random::<u128>());
+        let frame = json!({"type":"event","event":"node.invoke.request","payload":{
+            "id":id,"command":"ability.list","idempotencyKey":id,"timeoutMs":8000,
+            "_meta":{"dataClass":"private"},"params":{}
+        }});
+        let response =
+            self.local_gui_exchange(id, frame, Duration::from_secs(8), &AtomicBool::new(false))?;
+        match response.end {
+            LocalInvokeEnd::Reply(value) => Ok(value),
+            _ => bail!("手机屏幕操作能力暂未返回，尚未执行任何操作"),
+        }
+    }
+
+    pub(crate) fn invoke_local_gui(
+        &mut self,
+        app_name: &str,
+        task: &str,
+        cancel: &AtomicBool,
+    ) -> Result<LocalInvokeResult> {
+        let id = format!("stepx-gui-{:032x}", rand::random::<u128>());
+        let frame = local_gui_frame(&id, app_name, task)?;
+        self.local_gui_exchange(id, frame, Duration::from_secs(600), cancel)
+    }
+
+    fn local_gui_exchange(
+        &mut self,
+        id: String,
+        frame: Value,
+        timeout: Duration,
+        cancel: &AtomicBool,
+    ) -> Result<LocalInvokeResult> {
+        let body = serde_json::to_vec(&frame)?;
+        if body.len() > MAX_FRAME {
+            bail!("手机屏幕操作请求过大");
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(LocalInvokeResult {
+                id,
+                end: LocalInvokeEnd::WaitCancelled,
+            });
+        }
+        let deadline = Instant::now() + timeout;
+        // A partial write is ambiguous: never classify it as safe to resubmit.
+        if self
+            .stream
+            .write_all(&(body.len() as u32).to_be_bytes())
+            .is_err()
+            || self.stream.write_all(&body).is_err()
+        {
+            return Ok(LocalInvokeResult {
+                id,
+                end: LocalInvokeEnd::Disconnected,
+            });
+        }
+        loop {
+            match read_local_frame(&mut self.stream, deadline, cancel) {
+                LocalInvokeEnd::Reply(response) => {
+                    if response["type"] == "req"
+                        && response["method"] == "node.invoke.result"
+                        && response["params"]["id"].as_str() == Some(&id)
+                    {
+                        return Ok(LocalInvokeResult {
+                            id,
+                            end: LocalInvokeEnd::Reply(response["params"].clone()),
+                        });
+                    }
+                }
+                end => return Ok(LocalInvokeResult { id, end }),
+            }
+        }
+    }
+
+    /// Capability probes use a short absolute deadline even when events arrive.
+    pub fn call_with_timeout(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value> {
+        // AgentBus multiplexes clients upstream; IDs must remain unique across reconnects.
+        let id = format!("stepx-{:032x}", rand::random::<u128>());
+        let body =
+            serde_json::to_vec(&json!({"type":"req","id":id,"method":method,"params":params}))?;
+        if body.len() > MAX_FRAME {
+            bail!("Amoo 请求过大");
+        }
+        self.stream.write_all(&(body.len() as u32).to_be_bytes())?;
+        self.stream.write_all(&body)?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            let response = read_frame(&mut self.stream, deadline)?;
+            if response["id"].as_str() != Some(&id) {
+                continue;
+            }
+            if response["ok"].as_bool() != Some(true) {
+                let code = response["error"]["code"].as_str().unwrap_or("UNKNOWN");
+                let message = response["error"]["message"]
+                    .as_str()
+                    .unwrap_or("请求未被接受");
+                bail!("Amoo 后台请求失败（{code}）：{message}");
+            }
+            if response["payload"]["ok"].as_bool() == Some(false) {
+                bail!("Amoo 后台未完成请求");
+            }
+            return response
+                .get("payload")
+                .cloned()
+                .context("Amoo 后台响应缺少 payload");
+        }
+    }
+
+    pub fn snapshot(&mut self, selected: Option<&str>) -> Result<RealAmooData> {
+        self.snapshot_with_pending(selected, &[])
+    }
+
+    pub fn snapshot_with_pending(
+        &mut self,
+        selected: Option<&str>,
+        pending: &[String],
+    ) -> Result<RealAmooData> {
+        let scope_before = crate::amoo_usage::account_scope(&self._forward.adb, &self.device)
+            .ok()
+            .flatten();
+        let payload = self.call("sessions.list", json!({"limit":100}))?;
+        let rows = payload["sessions"]
+            .as_array()
+            .context("Amoo 未返回会话列表")?;
+        let mut data = parse_sessions(rows)?;
+        data.account_scope = scope_before;
+        data.gateway_version = self.version.clone();
+        data.gateway_online = true;
+        let index = match selected {
+            Some(key) => data.sessions.iter().position(|s| s.key == key),
+            None => {
+                if data.sessions.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                }
+            }
+        };
+        data.selected_session = selected
+            .map(str::to_string)
+            .or_else(|| index.map(|i| data.sessions[i].key.clone()));
+        for (i, session) in data.sessions.iter_mut().enumerate() {
+            if Some(i) != index && !pending.contains(&session.key) {
+                continue;
+            }
+            let history =
+                self.call("chat.history", json!({"sessionId":session.key,"limit":100}))?;
+            session.messages = parse_messages(
+                history["messages"]
+                    .as_array()
+                    .context("Amoo 未返回会话历史")?,
+            )?;
+            for message in &mut session.messages {
+                message.usage_session_key = session.key.clone();
+            }
+            let rows = history["messages"]
+                .as_array()
+                .context("Amoo 未返回会话历史")?;
+            let mut seen = HashSet::from([session.key.clone()]);
+            let mut budget = 12usize;
+            self.merge_child_tasks(
+                rows,
+                None,
+                &mut session.messages,
+                &mut seen,
+                &mut budget,
+                0,
+                Instant::now() + Duration::from_secs(12),
+            );
+            session.messages.sort_by_key(|message| message.timestamp_ms);
+            let more = history["page"]["hasMore"].as_bool().unwrap_or(false);
+            session.meta = format!(
+                "后台同步 · {} 条消息{}",
+                session.messages.len(),
+                if more { " · 部分历史" } else { "" }
+            );
+            session.history_loaded = true;
+        }
+        let scope_after = crate::amoo_usage::account_scope(&self._forward.adb, &self.device)
+            .ok()
+            .flatten();
+        if data.account_scope != scope_after {
+            bail!("同步期间手机 Amoo 账号已改变，请重新同步；未合并不同账号的记录");
+        }
+        Ok(data)
+    }
+
+    /// A task-create acknowledgement is not a completed deliverable. Follow the
+    /// exact child keys returned by this conversation, never unrelated sessions.
+    fn merge_child_tasks(
+        &mut self,
+        rows: &[Value],
+        parent_run: Option<&str>,
+        messages: &mut Vec<RealChatMessage>,
+        seen: &mut HashSet<String>,
+        budget: &mut usize,
+        depth: usize,
+        deadline: Instant,
+    ) {
+        for task in child_tasks(rows) {
+            let run = parent_run.unwrap_or(&task.run_id).to_string();
+            if seen.contains(&task.key) {
+                continue;
+            }
+            if depth >= 3 || *budget == 0 || Instant::now() >= deadline {
+                messages.push(RealChatMessage {
+                    message_id: format!("child-limited:{}",task.key), run_id:run,
+                    role:"assistant".into(), stop_reason:"tracking_limit".into(), is_error:true,
+                    error_message:Some("部分手机子任务尚未确认结果：本次后台同步已达到跟踪上限。已返回的文件已保留，可再次同步或在手机查看该任务。".into()),
+                    timestamp_ms:task.timestamp, ..Default::default()
+                });
+                continue;
+            }
+            let mut waiting = true;
+            if depth < 3 && *budget > 0 {
+                *budget -= 1;
+                seen.insert(task.key.clone());
+                if let Ok(history) = self.call_with_timeout(
+                    "chat.history",
+                    json!({"sessionId":task.key,"limit":100}),
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_secs(8)),
+                ) {
+                    if let Some(child_rows) = history["messages"].as_array() {
+                        if let Ok(child_messages) = parse_messages(child_rows) {
+                            // A verified image/file result is already deliverable even
+                            // while the phone finishes its post-processing narration.
+                            waiting = !child_messages.iter().any(|message| {
+                                message.role == "assistant"
+                                    && (is_terminal(&message.stop_reason)
+                                        || !message.attachments.is_empty())
+                            });
+                            for mut message in
+                                child_messages.into_iter().filter(|m| m.role == "assistant")
+                            {
+                                message.usage_session_key = task.key.clone();
+                                message.message_id =
+                                    format!("child:{}:{}", task.key, message.message_id);
+                                message.run_id = run.clone();
+                                messages.push(message);
+                            }
+                            self.merge_child_tasks(
+                                child_rows,
+                                Some(&run),
+                                messages,
+                                seen,
+                                budget,
+                                depth + 1,
+                                deadline,
+                            );
+                        }
+                    }
+                }
+            }
+            if waiting {
+                messages.push(RealChatMessage {
+                    message_id: format!("child-pending:{}", task.key),
+                    run_id: run,
+                    role: "assistant".into(),
+                    stop_reason: "child_running".into(),
+                    tools_summary: "手机子任务仍在处理，正在同步实际结果".into(),
+                    timestamp_ms: task.timestamp,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    pub fn create_session(&mut self) -> Result<String> {
+        // The same protocol as Amoo's createOpenClawSession; never reset an existing key.
+        let key = format!("agent:main:desktop-{:032x}", rand::random::<u128>());
+        let payload = self.call("sessions.reset", json!({"key":key,"reason":"new"}))?;
+        Ok(payload
+            .get("key")
+            .and_then(Value::as_str)
+            .unwrap_or(&key)
+            .to_string())
+    }
+
+    /// Cloud Amoo and the phone OpenClaw gateway have different session stores.
+    /// Never silently patch a gateway session with an unrelated cloud key.
+    pub fn set_session_model(&mut self, _key: &str, _model: &str) -> Result<AppliedModel> {
+        bail!("当前 Amoo 云会话未开放可验证的模型切换接口；请使用手机自动模型。手机 OpenClaw 模型目录与云会话独立")
+    }
+
+    pub fn send(&mut self, key: &str, text: &str) -> Result<PendingReply> {
+        self.send_with_attachments(key, text, &[])
+    }
+
+    /// Native image attachments reference uploaded HTTPS images in `blob`.
+    /// Inline base64 `content` is not consumed by this phone's AgentBus protocol.
+    pub fn send_with_attachments(
+        &mut self,
+        key: &str,
+        text: &str,
+        attachments: &[Value],
+    ) -> Result<PendingReply> {
+        if key.is_empty() || text.trim().is_empty() {
+            bail!("请先创建会话并输入消息");
+        }
+        let mut context = crate::bridge::call_bridge(
+            &self._forward.adb,
+            &self.device,
+            &json!({"op":"amoo_context"}),
+            Duration::from_secs(10),
+        )?;
+        let run_id = format!("stepx-{:032x}", rand::random::<u128>());
+        context
+            .as_object_mut()
+            .context("Amoo 设备信息无效")?
+            .remove("ok");
+        context["session_id"] = json!(key);
+        context["msg_id"] = json!(&run_id);
+        context["channelMessageId"] = json!(&run_id);
+        context["trace_id"] = json!(format!("tr-{run_id}"));
+        let payload = self
+            .call(
+                "chat.send",
+                json!({"sessionId":key,"text":text,"stepclaw":context,
+                    "attachments":attachments,"idempotencyKey":run_id}),
+            )
+            .context("发送结果未能确认，请先刷新会话再决定是否重试；输入内容已保留")?;
+        if payload["accepted"].as_bool() == Some(false) {
+            bail!("Amoo 未接受此消息，输入内容已保留");
+        }
+        let accepted_run = string(&payload, &["runId"]);
+        if accepted_run.is_empty()
+            && payload["accepted"] != true
+            && !matches!(
+                payload["status"].as_str(),
+                Some("started" | "accepted" | "queued")
+            )
+        {
+            bail!("Amoo 未返回有效的发送回执，请先同步会话确认；输入内容已保留");
+        }
+        Ok(PendingReply {
+            key: key.into(),
+            text: text.into(),
+            run_id: if accepted_run.is_empty() {
+                run_id
+            } else {
+                accepted_run.into()
+            },
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AppliedModel {
+    pub session_key: String,
+    pub model: String,
+    pub provider: String,
+    pub verified: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingReply {
+    pub key: String,
+    pub text: String,
+    pub run_id: String,
+}
+
+impl PendingReply {
+    pub fn finished(&self, session: &RealSessionInfo) -> bool {
+        if session.key == self.key
+            && session
+                .messages
+                .iter()
+                .any(|m| m.run_id == self.run_id && m.stop_reason == "tracking_limit")
+        {
+            return true;
+        }
+        session.key == self.key
+            && !session
+                .messages
+                .iter()
+                .any(|m| m.run_id == self.run_id && m.stop_reason == "child_running")
+            && session.messages.iter().any(|m| {
+                m.role == "assistant" && m.run_id == self.run_id && is_terminal(&m.stop_reason)
+            })
+    }
+}
+
+fn is_terminal(reason: &str) -> bool {
+    matches!(
+        reason.to_ascii_lowercase().as_str(),
+        "stop" | "end_turn" | "error" | "aborted" | "cancelled" | "length" | "tracking_limit"
+    )
+}
+
+struct ChildTask {
+    key: String,
+    run_id: String,
+    timestamp: i64,
+}
+fn tool_result(tool: &Value) -> Option<Value> {
+    let value = tool.get("result")?;
+    let inner = value.get("result").unwrap_or(value);
+    if let Some(text) = inner.as_str() {
+        serde_json::from_str(text).ok()
+    } else if inner.is_object() {
+        Some(inner.clone())
+    } else {
+        None
+    }
+}
+fn child_tasks(rows: &[Value]) -> Vec<ChildTask> {
+    let mut tasks = Vec::new();
+    let mut seen = HashSet::new();
+    for row in rows {
+        for tool in row["toolCalls"].as_array().into_iter().flatten() {
+            if !matches!(
+                tool["name"].as_str(),
+                Some("task_create" | "sessions_spawn")
+            ) {
+                continue;
+            }
+            let Some(result) = tool_result(tool) else {
+                continue;
+            };
+            let key = string(&result, &["childSessionKey"]);
+            if key.is_empty() || !seen.insert(key.to_string()) {
+                continue;
+            }
+            tasks.push(ChildTask {
+                key: key.into(),
+                run_id: string(row, &["runId"]).into(),
+                timestamp: row["timestamp"].as_i64().unwrap_or(0),
+            });
+        }
+    }
+    tasks.reverse();
+    tasks
+}
+
+pub fn fetch(adb: &Adb, device: &Device, selected: Option<&str>) -> Result<RealAmooData> {
+    AgentBus::connect(adb, device)?.snapshot(selected)
+}
+
+fn string<'a>(value: &'a Value, names: &[&str]) -> &'a str {
+    names
+        .iter()
+        .find_map(|name| value[*name].as_str().filter(|s| !s.is_empty()))
+        .unwrap_or("")
+}
+
+fn parse_sessions(rows: &[Value]) -> Result<RealAmooData> {
+    let mut data = RealAmooData {
+        default_agent_id: "amoo".into(),
+        ..Default::default()
+    };
+    for row in rows {
+        let key = string(row, &["key"]);
+        if key.is_empty() {
+            bail!("Amoo 会话缺少真实标识，已停止同步");
+        }
+        let title = string(row, &["title", "displayName", "name"]);
+        let status = string(row, &["status"]);
+        let (label, kind) = match status {
+            "done" => ("已完成", 2),
+            "killed" => ("已停止", 0),
+            "idle" => ("空闲", 0),
+            "running" | "pending" | "streaming" => ("进行中", 1),
+            "error" | "failed" => ("失败", 1),
+            _ => (status, 0),
+        };
+        data.sessions.push(RealSessionInfo {
+            key: key.into(),
+            session_id: string(row, &["id"]).into(),
+            title: if title.is_empty() {
+                "未命名会话".into()
+            } else {
+                title.into()
+            },
+            agent: "Amoo 助手".into(),
+            status: label.into(),
+            status_kind: kind,
+            updated_at_ms: row["updatedAtMs"].as_i64().unwrap_or(0),
+            meta: "后台会话 · 点击读取历史".into(),
+            provider: "Amoo AgentBus".into(),
+            ..Default::default()
+        });
+        if let Some(cron) = row.get("cron").filter(|c| c.is_object()) {
+            data.cron_jobs.push(RealCronInfo {
+                session_key: key.into(),
+                status: string(cron, &["status"]).into(),
+                id: string(cron, &["id"]).into(),
+                name: string(cron, &["name"]).into(),
+                schedule: string(cron, &["scheduleText"]).into(),
+                enabled: cron["status"] == "active",
+            });
+        }
+    }
+    Ok(data)
+}
+
+pub(crate) fn parse_messages(rows: &[Value]) -> Result<Vec<RealChatMessage>> {
+    let mut messages = Vec::new();
+    for row in rows {
+        let role = string(row, &["role"]);
+        if !matches!(role, "user" | "assistant") {
+            continue;
+        }
+        let mut text = string(row, &["text", "content"]).to_string();
+        if text.is_empty() {
+            if let Some(parts) = row["content"].as_array() {
+                text = parts
+                    .iter()
+                    .filter(|p| p["type"] == "text")
+                    .filter_map(|p| p["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+            }
+        }
+        text = crate::amoo_gui_chat::display_text(&text);
+        let error = string(row, &["errorMessage"]);
+        let mut attachments = row["attachments"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(parse_attachment)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if role == "user" {
+            attachments.extend(take_native_attachments(&mut text));
+        }
+        for tool in row["toolCalls"].as_array().into_iter().flatten() {
+            if !matches!(
+                tool["name"].as_str(),
+                Some("text_to_image" | "image_to_image")
+            ) {
+                continue;
+            }
+            let Some(result) = tool_result(tool) else {
+                continue;
+            };
+            if result["ok"] != true {
+                continue;
+            }
+            let names = result["artifacts"].as_array().into_iter().flatten();
+            let name = names
+                .filter(|artifact| artifact["ok"] == true && artifact["type"] == "image")
+                .find_map(|artifact| artifact["title"].as_str())
+                .unwrap_or("生成图片.png");
+            let url = string(&result, &["url", "fileUrl"]).replace("\\u0026", "&");
+            if let Some(attachment) =
+                parse_attachment(&json!({"type":"image","mime":"image/png","filename":name,
+                "url":url,"path":result["path"],"size":result["bytes"],"blob":result["fileId"]}))
+            {
+                if !attachment.url.is_empty() || !attachment.path.is_empty() {
+                    attachments.push(attachment);
+                }
+            }
+        }
+        let mut attachment_keys = HashSet::new();
+        attachments.retain(|a| {
+            let key = if !a.url.is_empty() {
+                &a.url
+            } else if !a.path.is_empty() {
+                &a.path
+            } else {
+                &a.blob
+            };
+            key.is_empty() || attachment_keys.insert(key.clone())
+        });
+        let tool_names = row["toolCalls"]
+            .as_array()
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(|t| t["name"].as_str())
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            })
+            .unwrap_or_default();
+        if text.is_empty()
+            && error.is_empty()
+            && tool_names.is_empty()
+            && attachments.is_empty()
+            && string(row, &["stopReason"]).is_empty()
+        {
+            continue;
+        }
+        let timestamp = row["timestamp"].as_i64().unwrap_or(0);
+        messages.push(RealChatMessage {
+            usage: crate::amoo_usage::parse_message(row),
+            usage_message_id: string(row, &["id", "responseId"]).into(),
+            message_id: string(row, &["id"]).into(),
+            run_id: string(row, &["runId"]).into(),
+            stop_reason: string(row, &["stopReason"]).into(),
+            role: role.into(),
+            text,
+            attachments,
+            tools_summary: tool_names,
+            tool_authorization_failures: row["toolCalls"].as_array().into_iter().flatten()
+                .filter(|tool| {
+                    // Inspect the result only; a user quoting an error in tool arguments
+                    // is not evidence of an authorization failure.
+                    let result = tool["result"].to_string();
+                    result.contains("[Security Guard]") && result.contains("[ask_timeout]")
+                })
+                .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+                .collect(),
+            timestamp_ms: timestamp,
+            time_label: chrono::DateTime::from_timestamp_millis(timestamp)
+                .map(|d| {
+                    d.with_timezone(&chrono::Local)
+                        .format("%m-%d %H:%M")
+                        .to_string()
+                })
+                .unwrap_or_default(),
+            is_error: !error.is_empty()
+                || string(row, &["stopReason"]).eq_ignore_ascii_case("error"),
+            error_message: if error.is_empty() {
+                None
+            } else {
+                Some(error.into())
+            },
+            model: string(row, &["model"]).into(),
+            provider: string(row, &["provider"]).into(),
+            ..Default::default()
+        });
+    }
+    Ok(messages)
+}
+
+fn parse_attachment(value: &Value) -> Option<RealAttachment> {
+    if !value.is_object() {
+        return None;
+    }
+    let blob = string(value, &["blob"]);
+    let explicit_url = string(value, &["url", "fileUrl"]);
+    let candidate = if explicit_url.is_empty() {
+        blob
+    } else {
+        explicit_url
+    };
+    let url = if (candidate.starts_with("https://") || candidate.starts_with("http://"))
+        && !candidate.chars().any(char::is_control)
+    {
+        candidate
+    } else {
+        ""
+    };
+    let path = string(value, &["devicePath", "path"]);
+    let name = string(value, &["filename", "fileName", "name"]);
+    let kind = string(value, &["type", "kind"]);
+    let mime = string(value, &["mime", "mimeType"]);
+    if blob.is_empty() && url.is_empty() && path.is_empty() && name.is_empty() {
+        return None;
+    }
+    Some(RealAttachment {
+        kind: kind.into(),
+        mime: mime.into(),
+        name: if name.is_empty() {
+            if kind == "image" || mime.starts_with("image/") {
+                "图片".into()
+            } else {
+                "附件".into()
+            }
+        } else {
+            name.chars().filter(|c| !c.is_control()).take(160).collect()
+        },
+        url: url.into(),
+        blob: blob.into(),
+        path: path.into(),
+        size_bytes: value["size"].as_u64(),
+    })
+}
+
+fn take_native_attachments(text: &mut String) -> Vec<RealAttachment> {
+    let Some(start) = text.find("<extra>") else {
+        return vec![];
+    };
+    let body_start = start + "<extra>".len();
+    let Some(end) = text[body_start..]
+        .find("</extra>")
+        .map(|index| index + body_start)
+    else {
+        return vec![];
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&text[body_start..end]) else {
+        return vec![];
+    };
+    let Some(rows) = value["attachments"].as_array() else {
+        return vec![];
+    };
+    let attachments = rows.iter().filter_map(parse_attachment).collect::<Vec<_>>();
+    if !attachments.is_empty() {
+        text.replace_range(start..end + "</extra>".len(), "");
+        *text = text.trim().to_string();
+    }
+    attachments
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn authorization_timeout_comes_from_tool_result_not_prompt_or_arguments() {
+        let error = "[Security Guard] 用户在 180 秒内未确认授权 [ask_timeout]";
+        let messages = super::parse_messages(&[
+            serde_json::json!({"role":"assistant","toolCalls":[{"name":"image","result":{"error":error}}]}),
+            serde_json::json!({"role":"assistant","text":error,"toolCalls":[{"name":"image","arguments":{"prompt":error},"result":{"ok":true}}]})
+        ]).unwrap();
+        assert_eq!(messages[0].tool_authorization_failures, vec!["image"]);
+        assert!(messages[1].tool_authorization_failures.is_empty());
+    }
+    use super::*;
+
+    #[test]
+    fn gui_invocation_is_fixed_to_native_method_and_private_local_routing() {
+        let frame =
+            local_gui_frame("gui-test", "设置", "查看 Android 版本，不修改任何设置").unwrap();
+        let payload = &frame["payload"];
+        assert_eq!(payload["command"], "ability.call");
+        assert_eq!(payload["params"]["method"], "gui_agent");
+        assert_eq!(payload["_meta"]["dataClass"], "private");
+        assert_eq!(payload["timeoutMs"], 600000);
+        let args: Value =
+            serde_json::from_str(payload["params"]["invokeParamsJson"].as_str().unwrap()).unwrap();
+        assert_eq!(args["params"]["app_name"], "设置");
+        assert_eq!(args["params"].as_object().unwrap().len(), 2);
+        assert!(local_gui_frame("id", "", "查看版本").is_err());
+        assert!(local_gui_frame("id", "设置\u{0}", "查看版本").is_err());
+        assert!(local_gui_frame("id", "设置", &"a".repeat(12001)).is_err());
+    }
+
+    #[test]
+    fn gui_poll_preserves_partial_frames_and_absolute_deadline() {
+        use std::{net::TcpListener, thread};
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = server.accept().unwrap();
+            let body = br#"{"type":"req","params":{"ok":true}}"#;
+            let header = (body.len() as u32).to_be_bytes();
+            stream.write_all(&header[..2]).unwrap();
+            thread::sleep(Duration::from_millis(550));
+            stream.write_all(&header[2..]).unwrap();
+            stream.write_all(body).unwrap();
+        });
+        let end = read_local_frame(
+            &mut client,
+            Instant::now() + Duration::from_secs(2),
+            &AtomicBool::new(false),
+        );
+        assert!(matches!(end, LocalInvokeEnd::Reply(value) if value["params"]["ok"] == true));
+        worker.join().unwrap();
+
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        let (_stream, _) = server.accept().unwrap();
+        assert!(matches!(
+            read_local_frame(
+                &mut client,
+                Instant::now() + Duration::from_millis(30),
+                &AtomicBool::new(false)
+            ),
+            LocalInvokeEnd::TimedOut
+        ));
+        assert!(matches!(
+            read_local_frame(
+                &mut client,
+                Instant::now() + Duration::from_secs(600),
+                &AtomicBool::new(true)
+            ),
+            LocalInvokeEnd::WaitCancelled
+        ));
+    }
+
+    #[test]
+    fn local_image_upload_is_fixed_to_selected_image_paths() {
+        let path = "/sdcard/Download/Amoo Work/0123456789abcdef0123456789abcdef/00-图片 #1%.png"
+            .to_string();
+        let frame = local_image_upload_frame("test-id", &[path.clone()]).unwrap();
+        assert_eq!(frame["type"], "event");
+        assert_eq!(frame["event"], "node.invoke.request");
+        assert_eq!(frame["payload"]["command"], "ability.call");
+        assert_eq!(frame["payload"]["_meta"]["dataClass"], "private");
+        assert!(frame["payload"].get("nodeId").is_none());
+        let invoke: Value = serde_json::from_str(
+            frame["payload"]["params"]["invokeParamsJson"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(invoke["method"], "batch_file_upload_return_all");
+        assert_eq!(
+            serde_json::from_str::<Vec<String>>(invoke["params"]["files"].as_str().unwrap())
+                .unwrap(),
+            vec![path.clone()]
+        );
+        assert!(local_image_upload_frame("id", &[]).is_err());
+        assert!(local_image_upload_frame("id", &[path.clone(), path.clone()]).is_err());
+        for invalid in [
+            "/sdcard/private.png".to_string(),
+            path.replace("00-图片 #1%.png", "../private.png"),
+            path.replace(".png", ".txt"),
+            path.replace("0123456789abcdef0123456789abcdef", "invalid"),
+        ] {
+            assert!(local_image_upload_frame("id", &[invalid]).is_err());
+        }
+    }
+    #[test]
+    fn native_uploaded_attachment_becomes_a_card_without_protocol_text() {
+        let rows = vec![
+            json!({"role":"user","text":"分析这个文件\n<extra>{\"attachments\":[{\"id\":\"\",\"devicePath\":\"/sdcard/Download/Amoo Work/test/sales.csv\",\"filename\":\"sales.csv\",\"mimeType\":\"text/csv\",\"size\":43}]}</extra>"}),
+        ];
+        let messages = parse_messages(&rows).unwrap();
+        assert_eq!(messages[0].text, "分析这个文件");
+        assert_eq!(messages[0].attachments[0].name, "sales.csv");
+        assert_eq!(messages[0].attachments[0].size_bytes, Some(43));
+        assert!(messages[0].attachments[0].url.is_empty());
+    }
+    #[test]
+    fn image_wire_and_history_metadata_render_one_preview() {
+        let image = json!({"type":"image","blob":"https://example.test/photo.png","mime":"image/png","filename":"照片.png"});
+        let extra = json!({"attachments":[{"id":"","url":"https://example.test/photo.png","devicePath":"/sdcard/test.png","filename":"照片.png","mimeType":"image/png"}]});
+        let rows = [
+            json!({"role":"user","text":format!("看图\n<extra>{extra}</extra>"),"attachments":[image]}),
+        ];
+        let messages = parse_messages(&rows).unwrap();
+        assert_eq!(messages[0].text, "看图");
+        assert_eq!(messages[0].attachments.len(), 1);
+        assert_eq!(
+            messages[0].attachments[0].url,
+            "https://example.test/photo.png"
+        );
+        assert_eq!(messages[0].attachments[0].name, "照片.png");
+    }
+    #[test]
+    fn child_task_ack_is_not_completion_and_successful_image_result_is_kept() {
+        let tasks = child_tasks(&[
+            json!({"runId":"run","toolCalls":[{"name":"task_create","result":{"result":"{\"childSessionKey\":\"child\",\"taskId\":\"1\"}"}}]}),
+        ]);
+        assert_eq!(tasks[0].key, "child");
+        assert_eq!(tasks[0].run_id, "run");
+        let pending = PendingReply {
+            key: "parent".into(),
+            run_id: "run".into(),
+            text: "生成图片".into(),
+        };
+        let mut session = RealSessionInfo {
+            key: "parent".into(),
+            messages: vec![
+                RealChatMessage {
+                    role: "assistant".into(),
+                    run_id: "run".into(),
+                    stop_reason: "STOP".into(),
+                    ..Default::default()
+                },
+                RealChatMessage {
+                    role: "assistant".into(),
+                    run_id: "run".into(),
+                    stop_reason: "child_running".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(!pending.finished(&session));
+        session.messages.pop();
+        assert!(pending.finished(&session));
+        session.messages.push(RealChatMessage {
+            role: "assistant".into(),
+            run_id: "run".into(),
+            stop_reason: "child_running".into(),
+            ..Default::default()
+        });
+        session.messages.push(RealChatMessage {
+            role: "assistant".into(),
+            run_id: "run".into(),
+            stop_reason: "tracking_limit".into(),
+            is_error: true,
+            ..Default::default()
+        });
+        assert!(
+            pending.finished(&session),
+            "tracking limit must end waiting with a visible error, not lock sending forever"
+        );
+        let result = json!({"ok":true,"url":"https://example.test/boat.png?a=1\\u0026b=2","bytes":678741,"path":"/generated/boat.png","artifacts":[{"ok":true,"type":"image","title":"boat.png"}]}).to_string();
+        let image = parse_messages(&[json!({"role":"assistant","runId":"child-run","stopReason":"TOOL_CALLS","toolCalls":[{"name":"text_to_image","result":{"result":result}}]})]).unwrap();
+        assert_eq!(
+            image[0].attachments[0].url,
+            "https://example.test/boat.png?a=1&b=2"
+        );
+        assert_eq!(image[0].attachments[0].size_bytes, Some(678741));
+        assert_eq!(image[0].attachments[0].name, "boat.png");
+    }
+    #[test]
+    fn child_tracking_prioritizes_latest_run_in_long_conversations() {
+        let rows = (0..13).map(|i| json!({"runId":format!("run-{i}"),"toolCalls":[{"name":"task_create","result":{"result":json!({"childSessionKey":format!("child-{i}")}).to_string()}}]})).collect::<Vec<_>>();
+        let tasks = child_tasks(&rows);
+        assert_eq!(tasks[0].run_id, "run-12");
+        assert_eq!(tasks[11].run_id, "run-1");
+        assert_eq!(tasks[12].run_id, "run-0");
+    }
+    #[test]
+    fn attachment_only_reply_keeps_the_service_reference() {
+        let messages=parse_messages(&[json!({"id":"image-reply","role":"assistant","attachments":[{"type":"image","blob":"https://example.test/artifact.png","mime":"image/png","filename":"生成图.png","size":123}],"stopReason":"STOP"})]).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].attachments[0].name, "生成图.png");
+        assert_eq!(
+            messages[0].attachments[0].url,
+            "https://example.test/artifact.png"
+        );
+        assert_eq!(messages[0].attachments[0].size_bytes, Some(123));
+    }
+    #[test]
+    fn opaque_attachment_blob_is_not_assumed_to_be_a_url_or_base64() {
+        let attachment = parse_attachment(
+            &json!({"type":"file","blob":"opaque-service-blob","mime":"application/pdf"}),
+        )
+        .unwrap();
+        assert!(attachment.url.is_empty());
+        assert!(attachment.path.is_empty());
+        assert_eq!(attachment.blob, "opaque-service-blob");
+        let attachment = parse_attachment(
+            &json!({"type":"image","url":"javascript:alert(1)","filename":"photo"}),
+        )
+        .unwrap();
+        assert!(attachment.url.is_empty());
+    }
+    #[test]
+    fn completion_requires_this_run_and_final_marker_not_intermediate_text() {
+        let pending = PendingReply {
+            key: "session".into(),
+            text: "重复提问".into(),
+            run_id: "new-run".into(),
+        };
+        let mut session = RealSessionInfo {
+            key: "session".into(),
+            status: "已完成".into(),
+            ..Default::default()
+        };
+        session.messages = parse_messages(&[
+            json!({"role":"user","text":"重复提问","runId":"old-run"}),
+            json!({"role":"assistant","text":"旧结果","runId":"old-run","stopReason":"STOP"}),
+            json!({"role":"user","text":"重复提问","runId":"new-run"}),
+            json!({"role":"assistant","text":"我用美团来处理","runId":"new-run"}),
+            json!({"role":"assistant","runId":"new-run","stopReason":"TOOL_CALLS","toolCalls":[{"name":"ability"}]}),
+        ]).unwrap();
+        assert!(!pending.finished(&session));
+        session.messages.extend(parse_messages(&[json!({"role":"assistant","id":"final-id","text":"完整结果","runId":"new-run","stopReason":"STOP"})]).unwrap());
+        assert!(pending.finished(&session));
+        assert_eq!(session.messages.last().unwrap().message_id, "final-id");
+        session.key = "other-session".into();
+        assert!(!pending.finished(&session));
+    }
+
+    #[test]
+    fn empty_terminal_error_is_not_dropped() {
+        let pending = PendingReply {
+            key: "session".into(),
+            text: "test".into(),
+            run_id: "run".into(),
+        };
+        let session = RealSessionInfo {
+            key: "session".into(),
+            messages: parse_messages(&[
+                json!({"role":"assistant","runId":"run","stopReason":"ERROR"}),
+            ])
+            .unwrap(),
+            ..Default::default()
+        };
+        assert!(session.messages[0].is_error);
+        assert!(pending.finished(&session));
+    }
+    #[test]
+    fn actual_bus_text_and_errors_are_preserved_without_inventing_messages() {
+        let rows = vec![
+            json!({"role":"user","text":"中文输入","timestamp":1792602316149_i64}),
+            json!({"role":"assistant","text":"实际回复"}),
+            json!({"role":"assistant","errorMessage":"offline","stopReason":"error"}),
+            json!({"role":"assistant","text":""}),
+        ];
+        let parsed = parse_messages(&rows).unwrap();
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].text, "中文输入");
+        assert_eq!(parsed[1].text, "实际回复");
+        assert!(parsed[2].is_error);
+        assert!(parsed[1].thinking.is_empty());
+        assert!(parse_messages(&[]).unwrap().is_empty());
+    }
+    #[test]
+    fn session_keys_and_state_come_from_service_not_titles() {
+        let data = parse_sessions(&[
+            json!({"key":"id-a","title":"相同标题","status":"done"}),
+            json!({"key":"id-b","title":"相同标题","status":"killed"}),
+        ])
+        .unwrap();
+        assert_ne!(data.sessions[0].key, data.sessions[1].key);
+        assert_eq!(data.sessions[1].status, "已停止");
+        assert!(data.memory_entries.is_empty());
+        assert!(data.skills.is_empty());
+        assert!(!data.memory_initialized);
+        assert!(parse_sessions(&[json!({"title":"缺少标识"})]).is_err());
+        assert!(parse_sessions(&[]).unwrap().sessions.is_empty());
+    }
+    #[test]
+    fn split_frames_read_exactly_and_oversize_is_rejected() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let sender = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            for b in b"\0\0\0\x0b{\"ok\":true}" {
+                s.write_all(&[*b]).unwrap();
+            }
+            s.write_all(&((MAX_FRAME + 1) as u32).to_be_bytes())
+                .unwrap();
+        });
+        let mut stream = TcpStream::connect(address).unwrap();
+        assert_eq!(
+            read_frame(&mut stream, Instant::now() + Duration::from_secs(2)).unwrap()["ok"],
+            true
+        );
+        assert!(read_frame(&mut stream, Instant::now() + Duration::from_secs(2)).is_err());
+        sender.join().unwrap();
+    }
+}

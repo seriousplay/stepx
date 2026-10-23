@@ -1,0 +1,17 @@
+[package]
+authors = [ "FaCloud Team <dev@facloud.local>",]
+edition = "2021"
+name = "string-offset"
+publish = false
+license = "AGPL-3.0-only"
+
+[dependencies.get-size]
+version = "0.1.4"
+features = [ "derive",]
+
+[dependencies.num-traits]
+version = "0.2"
+
+[dependencies.serde]
+version = "1.0"
+features = [ "derive", "rc",]

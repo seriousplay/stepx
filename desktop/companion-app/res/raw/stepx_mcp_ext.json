@@ -1,0 +1,23 @@
+{
+  "serverExts": {
+    "versionCode": 2
+  },
+  "toolExts": [
+    {
+      "toolName": "stepx_gui_agent",
+      "ext": {
+        "classification": "StepX伴侣独立GUI Agent",
+        "timeout": 15,
+        "slaScene": 2
+      }
+    },
+    {
+      "toolName": "stepx_gui_control",
+      "ext": {
+        "classification": "StepX伴侣看屏操作",
+        "timeout": 15,
+        "slaScene": 2
+      }
+    }
+  ]
+}

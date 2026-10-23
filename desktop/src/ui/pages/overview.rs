@@ -13,6 +13,7 @@ impl Companion {
     pub(in super::super) fn overview_actions(&self) -> Vec<El> {
         if self.selected.is_none() {
             return vec![
+                self.button("ov-account", "账号与用量", Action::Page(Page::Account), Btn::Secondary),
                 self.button("ov-refresh", "重新扫描", Action::Refresh, Btn::Secondary),
                 self.button(
                     "ov-connect",
@@ -23,6 +24,7 @@ impl Companion {
             ];
         }
         vec![
+            self.button("ov-account", "账号与用量", Action::Page(Page::Account), Btn::Secondary),
             self.button("ov-summary", "刷新状态", Action::Summary, Btn::Secondary),
             self.button("ov-shot", "📷 截屏", Action::Screenshot, Btn::Secondary),
             if self.mirror.is_some() {

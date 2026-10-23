@@ -32,7 +32,7 @@ python3 -m unittest discover -s desktop/tests -p 'test_*.py'
 ## 发布包
 
 ```bash
-python3 scripts/package-release.py --platform linux-x86_64 --version 0.1.0
+python3 scripts/package-release.py --platform linux-x86_64 --version 0.2.0
 ```
 
 平台可选 `linux-x86_64`、`macos-arm64`、`macos-x86_64`、`windows-x86_64`。脚本验证官方 scrcpy 工具包的 SHA256，将可执行文件与运行资源封装到 `dist/`。通过 `.github/workflows/release.yml` 的手动运行构建全部平台；先生成草稿 Release，检查产物后再发布。

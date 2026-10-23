@@ -17,3 +17,13 @@ pub fn compiled_at() -> &'static str {
             .to_string()
     })
 }
+
+/// Compact build identifier, consistently expressed in China Standard Time.
+pub fn compiled_id() -> &'static str {
+    static LABEL: OnceLock<String> = OnceLock::new();
+    LABEL.get_or_init(|| {
+        chrono::DateTime::from_timestamp(COMPILED_UNIX_SECONDS.parse().unwrap(), 0).unwrap()
+            .with_timezone(&chrono::FixedOffset::east_opt(8 * 60 * 60).unwrap())
+            .format("%y%m%d%H%M%S").to_string()
+    })
+}

@@ -488,7 +488,7 @@ impl Companion {
                             6.,
                             vec![
                                 self.line_w("StepX", SUBHEAD, p.text, Weight::Semibold),
-                                self.mono("0.1", CAPTION, p.text2),
+                                self.mono(stepx_companion::build_info::VERSION, CAPTION, p.text2),
                             ],
                         ),
                     ],
@@ -525,7 +525,7 @@ impl Companion {
                             Page::Overview.icon(),
                             Page::Overview.title(),
                             None,
-                            self.page == Page::Overview,
+                            matches!(self.page, Page::Overview | Page::Account),
                             Action::Page(Page::Overview),
                         ),
                         self.nav_item_badge(
@@ -619,40 +619,6 @@ impl Companion {
             )
             .finish();
 
-        let footer_state = self.mouse_state("sidebar-footer");
-        let footer_row = self.between(
-            self.lead(
-                6.,
-                self.dot(if self.selected.is_some() {
-                    p.success
-                } else {
-                    p.text3
-                }),
-                self.line(
-                    if self.selected.is_some() {
-                        "设备连接正常"
-                    } else if self.initializing {
-                        "正在检测设备"
-                    } else {
-                        "等待设备连接"
-                    },
-                    CAPTION,
-                    p.text2,
-                ),
-            ),
-            self.mono("ADB", CAPTION, p.text2),
-        );
-        let footer = Hoverable::new(footer_state, move |_| {
-            Container::new(footer_row)
-                .with_padding_top(10.)
-                .with_horizontal_padding(4.)
-                .with_border(Border::top(1.).with_border_color(p.border))
-                .finish()
-        })
-        .with_cursor(Cursor::PointingHand)
-        .on_click(|ctx, _, _| ctx.dispatch_typed_action(Action::CycleTheme))
-        .finish();
-
         self.fixed_w(
             SIDEBAR_W,
             Container::new(
@@ -664,14 +630,7 @@ impl Companion {
                     .with_child(self.vstack(
                         S2,
                         vec![
-                            self.button(
-                                "sidebar-account",
-                                "账号与用量",
-                                Action::Page(Page::Account),
-                                Btn::Ghost,
-                            ),
                             self.button("sidebar-about", "关于 StepX", Action::Page(Page::About), if self.page == Page::About { Btn::Secondary } else { Btn::Ghost }),
-                            footer,
                         ],
                     ))
                     .finish(),
@@ -742,8 +701,8 @@ impl Companion {
     }
 
     fn page_subtitle(&self) -> String {
-        if self.selected.is_none() && self.page != Page::Connect {
-            return "当前未选择设备".into();
+        if self.selected.is_none() && self.page.needs_device() {
+            return String::new();
         }
         match self.page {
             Page::Overview => {
@@ -763,7 +722,7 @@ impl Companion {
             Page::BackScreen => "17 列 × 23 行 · 379 颗单色灯珠 · 创作与手机联动".into(),
             Page::Amoo => "后台连接 · 会话与文字对话".into(),
             Page::Account => "手机账号 · 真实消息 Token 用量".into(),
-            Page::About => "版本信息 · 联系与开源说明".into(),
+            Page::About => String::new(),
             Page::Work => "手机任务同步 · 本地文件协作".into(),
             Page::Studio => "studio.stepx.com 应用一键上机建图标 · OpenClaw 远端反向代理".into(),
             Page::Sms => {
@@ -805,7 +764,7 @@ impl Companion {
 
     pub(super) fn header(&self) -> El {
         let p = self.p();
-        let mut actions = if self.selected.is_none() && self.page != Page::Connect {
+        let mut actions = if self.selected.is_none() && self.page.needs_device() && self.page != Page::Overview {
             vec![
                 self.button("hdr-rescan", "重新扫描", Action::Refresh, Btn::Secondary),
                 self.button(
@@ -887,45 +846,27 @@ impl Companion {
 
     pub(super) fn status_bar(&self) -> El {
         let p = self.p();
+        let transport = match &self.selected {
+            Some(d) if is_wireless(&d.transport) => "无线",
+            Some(_) => "USB",
+            None => "ADB",
+        };
+        let detail = if self.status.is_empty() || self.status == "就绪" {
+            if self.initializing { "正在检测设备" }
+            else if self.selected.is_some() { "设备已连接" }
+            else { "等待设备连接" }
+        } else { &self.status };
         let left = self.lead(
             S2,
-            self.dot(if self.error {
-                p.danger
-            } else if self.busy {
-                p.warning
-            } else {
-                p.success
-            }),
-            self.line(
-                &self.status,
-                CAPTION,
-                if self.error { p.danger } else { p.text2 },
-            ),
+            self.dot(if self.error { p.danger } else if self.busy || self.initializing { p.warning }
+                else if self.selected.is_some() { p.success } else { p.text3 }),
+            self.line(format!("{transport} · {detail}"), CAPTION, if self.error { p.danger } else { p.text2 }),
         );
-        let right = self.hstack(
-            S4,
-            vec![
-                self.line(
-                    match &self.selected {
-                        Some(d) if is_wireless(&d.transport) => "无线连接",
-                        Some(_) => "USB 连接",
-                        None => "未连接设备",
-                    },
-                    CAPTION,
-                    p.text2,
-                ),
-                self.mono(
-                    format!("v{}", stepx_companion::build_info::VERSION),
-                    CAPTION,
-                    p.text2,
-                ),
-                self.line(
-                    format!("编译 {}", stepx_companion::build_info::compiled_at()),
-                    CAPTION,
-                    p.text2,
-                ),
-            ],
-        );
+        let right = self.hstack(S3, vec![
+            self.link_action("status-theme", "外观", Action::CycleTheme),
+            self.mono(format!("v{} · {}", stepx_companion::build_info::VERSION,
+                stepx_companion::build_info::compiled_id()), CAPTION, p.text2),
+        ]);
         ConstrainedBox::new(
             Container::new(self.between(left, right))
                 .with_horizontal_padding(S4)

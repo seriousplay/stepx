@@ -40,7 +40,7 @@ def main():
         shutil.copytree(ROOT/'licenses',resource_dir/'licenses')
         for file in ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','README.md']:
             shutil.copy2(ROOT/file,resource_dir/file)
-        shutil.copytree(ROOT/'docs',resource_dir/'docs',ignore=shutil.ignore_patterns('images'))
+        shutil.copytree(ROOT/'docs',resource_dir/'docs')
         filename,digest=TOOLS[a.platform];download=stage/filename
         urllib.request.urlretrieve('https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/'+filename,download)
         if hashlib.sha256(download.read_bytes()).hexdigest()!=digest:raise RuntimeError('Tool archive SHA256 mismatch')

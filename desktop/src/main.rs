@@ -5,9 +5,9 @@ mod ui;
 fn main() -> anyhow::Result<()> {
     if std::env::args().any(|arg| arg == "--version" || arg == "-V") {
         println!(
-            "StepX Companion v{} · 编译 {}",
+            "StepX Companion v{} · {}",
             stepx_companion::build_info::VERSION,
-            stepx_companion::build_info::compiled_at()
+            stepx_companion::build_info::compiled_id()
         );
         return Ok(());
     }

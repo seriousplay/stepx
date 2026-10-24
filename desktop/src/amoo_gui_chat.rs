@@ -200,12 +200,13 @@ fn claim(id: &str) -> bool {
         .insert(id.into())
 }
 pub fn cloud_nonce(adb: &Adb, device: &Device) -> Result<String> {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let scope = crate::amoo_usage::account_scope(adb, device)?
         .context("无法确认 Amoo 账号，未连接 GUI 对话")?;
-    let base = std::path::PathBuf::from(std::env::var("HOME")?)
-        .join(".local/state/stepx-companion/gui-cloud");
+    let base = crate::resources::user_state().join("gui-cloud");
     std::fs::create_dir_all(&base)?;
+    #[cfg(unix)]
     std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700))?;
     let file = base.join(crate::amoo_media::artifact_content_key(scope.as_bytes()));
     if file.exists() {
@@ -218,12 +219,14 @@ pub fn cloud_nonce(adb: &Adb, device: &Device) -> Result<String> {
     }
     let n = format!("{:032x}", rand::random::<u128>());
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(file)?
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(file)?
         .write_all(n.as_bytes())?;
     Ok(n)
 }

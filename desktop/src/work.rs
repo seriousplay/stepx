@@ -1098,7 +1098,9 @@ fn run_loop(
             Ok(plan) => plan,
             Err(error) if format_repairs < 2 => {
                 format_repairs += 1;
-                let _ = tx.send(WorkEvent::Status(format!("正在修正文件操作格式（{format_repairs}/2），原文件未改动…")));
+                let _ = tx.send(WorkEvent::Status(format!(
+                    "正在修正文件操作格式（{format_repairs}/2），原文件未改动…"
+                )));
                 next = format!("<amoo_work_protocol>\nAmoo Work 桌面执行结果：上条回复格式无效，本条中的任何工具均未执行。错误：{error}。请修正后重发一个完整协议对象。需要工具时 done=false；只有收到成功执行回执后才能 done=true 且 tools=[]。不要宣称上条操作已成功。已执行的早期回执仍有效，不要重复创建。\n</amoo_work_protocol>");
                 continue;
             }
@@ -1483,10 +1485,13 @@ fn extract_pdf(path: &Path) -> Result<String> {
     Ok(text)
 }
 fn python(code: &str, args: &[&Path], stdin: Option<Vec<u8>>) -> Result<Vec<u8>> {
-    let binary = adb::find_executable("python3")
-        .context("此电脑缺少 Python 3，暂不能读取或生成 Office 文件")?;
-    let mut command = Command::new(binary);
-    command.arg("-I").arg("-c").arg(code);
+    // Use the packaged interpreter. A script file also avoids Windows' 32K
+    // command-line limit for Office generation and long installation paths.
+    let mut script = tempfile::Builder::new().suffix(".py").tempfile()?;
+    script.write_all(code.as_bytes())?;
+    script.flush()?;
+    let mut command = crate::resources::python_command();
+    command.arg("-I").arg(script.path());
     for arg in args {
         command.arg(arg);
     }
@@ -1830,7 +1835,7 @@ mod tests {
         ] {
             let mut model = FakeBackend {
                 requests: vec![],
-                replies: [malformed.into(),malformed.into(),malformed.into()].into(),
+                replies: [malformed.into(), malformed.into(), malformed.into()].into(),
             };
             let (tx, rx) = mpsc::channel();
             assert!(run_loop(
@@ -1842,7 +1847,7 @@ mod tests {
                 &AtomicBool::new(false)
             )
             .is_err());
-            assert_eq!(model.requests.len(),3);
+            assert_eq!(model.requests.len(), 3);
             assert!(!rx.try_iter().any(|e| matches!(e, WorkEvent::Complete(_))));
         }
     }
@@ -1855,13 +1860,30 @@ mod tests {
             json!({"amoo_work":1,"done":false,"tools":[{"tool":"write_file","path":"good.md","content":"corrected"}]}).to_string(),
             json!({"amoo_work":1,"done":true,"summary":"完成","tools":[]}).to_string(),
         ].into()};
-        let (tx,rx)=mpsc::channel();
-        run_loop(&ws,"生成文件",&[],&mut backend,&tx,&AtomicBool::new(false)).unwrap();
+        let (tx, rx) = mpsc::channel();
+        run_loop(
+            &ws,
+            "生成文件",
+            &[],
+            &mut backend,
+            &tx,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert!(backend.requests[1].contains("任何工具均未执行"));
-        let files=rx.try_iter().filter_map(|e|if let WorkEvent::Artifact(a)=e {Some(a)}else{None}).collect::<Vec<_>>();
-        assert_eq!(files.len(),1);
-        assert_eq!(files[0].path.file_name().unwrap(),"good.md");
-        assert_eq!(fs::read_to_string(&files[0].path).unwrap(),"corrected");
+        let files = rx
+            .try_iter()
+            .filter_map(|e| {
+                if let WorkEvent::Artifact(a) = e {
+                    Some(a)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path.file_name().unwrap(), "good.md");
+        assert_eq!(fs::read_to_string(&files[0].path).unwrap(), "corrected");
     }
     #[test]
     fn read_only_analysis_reports_real_operation_and_zero_artifacts() {

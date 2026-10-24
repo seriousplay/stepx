@@ -297,7 +297,8 @@ class Browser:
                 self.proc = subprocess.Popen([sys.executable,'-c',wrapper,str(incoming),str(outgoing),*args], pass_fds=(incoming,outgoing), **kwargs)
             os.close(incoming); os.close(outgoing)
             threading.Thread(target=self.read, daemon=True).start()
-            self.call('Browser.getVersion')
+            # A cold browser start on a newly installed machine can exceed 12 seconds.
+            self.call('Browser.getVersion', timeout=30)
             target = self.call('Target.createTarget', {'url':'about:blank'})['targetId']
             self.session = self.call('Target.attachToTarget', {'targetId':target,'flatten':True})['sessionId']
             for method in ['Page.enable', 'Runtime.enable', 'Log.enable', 'Network.enable']:
@@ -306,9 +307,10 @@ class Browser:
             self.call('Browser.setDownloadBehavior', {'behavior':'deny'})
             # Built-in page errors survive accidental model replacement of console handlers.
             self.call('Page.addScriptToEvaluateOnNewDocument', {'source':"window.addEventListener('error',e=>console.error('STEPX_UNCAUGHT:'+e.message));window.addEventListener('unhandledrejection',e=>console.error('STEPX_UNHANDLED:'+String(e.reason)));"}, self.session)
-        except Exception:
+        except Exception as error:
             self.close()
-            raise Failure('无法启动隔离浏览器验收，请检查 Chrome 或 Edge 安装') from None
+            detail = str(error) if isinstance(error, Failure) else type(error).__name__
+            raise Failure('无法启动隔离浏览器验收，请检查 Chrome 或 Edge 安装（'+detail+'）') from None
     def send(self, method, params=None, session=None, expect=True):
         with self.lock:
             self.serial += 1

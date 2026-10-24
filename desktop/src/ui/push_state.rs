@@ -262,7 +262,7 @@ impl Companion {
                 }
                 if let Some(device) = self.selected.clone() {
                     self.push.syncing = true;
-        self.push.sync_started = Instant::now();
+                    self.push.sync_started = Instant::now();
                     self.push.last_sync = Instant::now();
                     self.status = "正在通过同 Wi-Fi / ADB 通道同步手机推送与聊天记录…".into();
                     let tx = self.push.outcome_tx.clone();
@@ -439,9 +439,7 @@ impl Companion {
                     #[cfg(target_os = "macos")]
                     let _ = std::process::Command::new("open").arg(url).spawn();
                     #[cfg(target_os = "windows")]
-                    let _ = std::process::Command::new("cmd")
-                        .args(["/C", "start", "", url])
-                        .spawn();
+                    let _ = std::process::Command::new("explorer.exe").arg(url).spawn();
                 }
                 self.status = format!("已在浏览器打开并复制链接：{url}");
             }
@@ -764,7 +762,9 @@ impl Companion {
             PushAction::CompactHistory => {
                 self.compact.history = !self.compact.history;
                 self.scroll_aux = Default::default();
-                if !self.compact.history { self.reveal_latest_chat(); }
+                if !self.compact.history {
+                    self.reveal_latest_chat();
+                }
             }
             PushAction::TogglePinWindow => self.set_compact_pin(!self.push.pin_window, ctx),
             PushAction::OpenMiniAiWindow => self.set_compact_mode(ShellMode::MiniAi, ctx),
@@ -1202,8 +1202,10 @@ impl Companion {
         let mut changed = false;
         while let Ok(mut outcome) = self.push.outcome_rx.try_recv() {
             if let PushOutcome::Snapshot(serial, Ok(next)) = &mut outcome {
-                if self.push.loaded && self.push.error.is_none()
-                    && self.selected.as_ref().is_some_and(|d| d.serial == *serial) {
+                if self.push.loaded
+                    && self.push.error.is_none()
+                    && self.selected.as_ref().is_some_and(|d| d.serial == *serial)
+                {
                     push::merge_local_replies(next, &self.push.snapshot);
                     if *next == self.push.snapshot {
                         self.push.syncing = false;
@@ -1216,11 +1218,16 @@ impl Companion {
         }
         if !self.demo_mode
             && !self.push.syncing
-            && self.push.last_sync.elapsed() >= Duration::from_millis(if self.push.error.is_some() {10_000} else {2500})
+            && self.push.last_sync.elapsed()
+                >= Duration::from_millis(if self.push.error.is_some() {
+                    10_000
+                } else {
+                    2500
+                })
         {
             if let Some(device) = self.selected.clone() {
                 self.push.syncing = true;
-        self.push.sync_started = Instant::now();
+                self.push.sync_started = Instant::now();
                 self.push.last_sync = Instant::now();
                 let tx = self.push.outcome_tx.clone();
                 let serial = device.serial.clone();

@@ -21,6 +21,9 @@ struct Reference {
 }
 
 pub(super) fn root() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return Some(stepx_companion::resources::user_state().join("cache/amoo-previews-v2"));
+    }
     std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())

@@ -738,9 +738,8 @@ fn model_proof_path(scope: &str) -> Result<std::path::PathBuf> {
     if scope.len() != 64 || !scope.bytes().all(|b| b.is_ascii_hexdigit()) {
         bail!("模型验证账号标识无效")
     }
-    let home = std::env::var_os("HOME").context("无法读取桌面账号目录")?;
-    Ok(std::path::PathBuf::from(home)
-        .join(".local/state/stepx-companion/model-permissions")
+    Ok(crate::resources::user_state()
+        .join("model-permissions")
         .join(format!("{scope}.json")))
 }
 fn proof_is_current(proof: &ModelProof, scope: &str, version: &str, now: i64) -> bool {

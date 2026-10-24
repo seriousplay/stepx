@@ -1342,10 +1342,9 @@ impl AmooUiState {
         if scope.len() != 64 || !scope.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
-        let home = std::env::var_os("HOME")?;
         Some(
-            PathBuf::from(home)
-                .join(".local/state/stepx-companion/amoo-usage-v2")
+            stepx_companion::resources::user_state()
+                .join("amoo-usage-v2")
                 .join(format!("{scope}.json")),
         )
     }

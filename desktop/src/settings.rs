@@ -51,22 +51,60 @@ pub struct CompactShortcut {
 }
 impl Default for CompactShortcut {
     fn default() -> Self {
-        Self { key: "a".into(), ctrl: !cfg!(target_os="macos"), cmd: cfg!(target_os="macos"), alt: true, shift: false }
+        Self {
+            key: "a".into(),
+            ctrl: !cfg!(target_os = "macos"),
+            cmd: cfg!(target_os = "macos"),
+            alt: true,
+            shift: false,
+        }
     }
 }
 impl CompactShortcut {
     pub fn valid(&self) -> bool {
-        let letter = self.key.len() == 1 && self.key.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
-        let function = self.key.strip_prefix('f').and_then(|s| s.parse::<u8>().ok()).is_some_and(|n| (1..=12).contains(&n));
-        (letter || function) && (self.ctrl || self.cmd) && (self.alt || self.shift)
+        let letter = self.key.len() == 1
+            && self
+                .key
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+        let function = self
+            .key
+            .strip_prefix('f')
+            .and_then(|s| s.parse::<u8>().ok())
+            .is_some_and(|n| (1..=12).contains(&n));
+        (letter || function)
+            && (self.ctrl || self.cmd)
+            && (self.alt || self.shift)
             && !(self.ctrl && self.shift && self.key == "escape")
     }
     pub fn label(&self) -> String {
         let mut parts = Vec::new();
-        if self.ctrl { parts.push("Ctrl".into()); }
-        if self.cmd { parts.push(if cfg!(target_os="macos") { "⌘" } else { "Win" }.into()); }
-        if self.alt { parts.push(if cfg!(target_os="macos") { "⌥" } else { "Alt" }.into()); }
-        if self.shift { parts.push("Shift".into()); }
+        if self.ctrl {
+            parts.push("Ctrl".into());
+        }
+        if self.cmd {
+            parts.push(
+                if cfg!(target_os = "macos") {
+                    "⌘"
+                } else {
+                    "Win"
+                }
+                .into(),
+            );
+        }
+        if self.alt {
+            parts.push(
+                if cfg!(target_os = "macos") {
+                    "⌥"
+                } else {
+                    "Alt"
+                }
+                .into(),
+            );
+        }
+        if self.shift {
+            parts.push("Shift".into());
+        }
         parts.push(self.key.to_ascii_uppercase());
         parts.join(" + ")
     }
@@ -89,7 +127,9 @@ fn load_from(path: &Path) -> Settings {
     if !s.tray_icon {
         s.close_to_tray = false;
     }
-    if !s.compact_shortcut.valid() { s.compact_shortcut = CompactShortcut::default(); }
+    if !s.compact_shortcut.valid() {
+        s.compact_shortcut = CompactShortcut::default();
+    }
     s
 }
 pub fn save(s: &Settings) -> Result<()> {
@@ -97,7 +137,10 @@ pub fn save(s: &Settings) -> Result<()> {
 }
 fn save_to(path: &Path, s: &Settings) -> Result<()> {
     ensure!(s.tray_icon || !s.close_to_tray, "请先开启托盘图标");
-    ensure!(s.compact_shortcut.valid(), "快捷键需包含 Ctrl 或 Command，加 Alt 或 Shift，再加字母、数字或 F1–F12");
+    ensure!(
+        s.compact_shortcut.valid(),
+        "快捷键需包含 Ctrl 或 Command，加 Alt 或 Shift，再加字母、数字或 F1–F12"
+    );
     let parent = path.parent().context("设置目录无效")?;
     fs::create_dir_all(parent)?;
     let temp = tempfile::NamedTempFile::new_in(parent)?;
@@ -151,19 +194,23 @@ mod tests {
     }
     #[test]
     fn shortcut_migrates_and_persists_without_losing_other_settings() {
-        let t = tempfile::tempdir().unwrap(); let p = t.path().join("settings.json");
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("settings.json");
         fs::write(&p, r#"{"reduced_motion":true}"#).unwrap();
         let mut s = load_from(&p);
         assert_eq!(s.compact_shortcut, CompactShortcut::default());
-        s.compact_shortcut.key = "q".into(); s.compact_shortcut.shift = true;
-        save_to(&p, &s).unwrap(); assert_eq!(load_from(&p),s);
+        s.compact_shortcut.key = "q".into();
+        s.compact_shortcut.shift = true;
+        save_to(&p, &s).unwrap();
+        assert_eq!(load_from(&p), s);
         s.compact_shortcut.key = "enter".into();
-        assert!(save_to(&p,&s).is_err()); assert_eq!(load_from(&p).compact_shortcut.key,"q");
+        assert!(save_to(&p, &s).is_err());
+        assert_eq!(load_from(&p).compact_shortcut.key, "q");
     }
     #[test]
     fn missing_directory_is_not_silently_replaced() {
         let t = tempfile::tempdir().unwrap();
         assert!(choose_directory(&t.path().join("offline-drive")).is_err());
-        assert_eq!(choose_directory(t.path()).unwrap(), t.path());
+        assert_eq!(choose_directory(t.path()).unwrap(), t.path().canonicalize().unwrap());
     }
 }

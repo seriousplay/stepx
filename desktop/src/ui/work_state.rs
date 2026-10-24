@@ -146,7 +146,14 @@ pub(super) struct WorkUiState {
 impl Default for WorkUiState {
     fn default() -> Self {
         let local_preview = initial_local_preview();
-        let workspace = stepx_companion::settings::load().work_directory.or_else(||local_preview.as_ref().and_then(|preview|preview.path.parent()).map(std::path::Path::to_path_buf));
+        let workspace = stepx_companion::settings::load()
+            .work_directory
+            .or_else(|| {
+                local_preview
+                    .as_ref()
+                    .and_then(|preview| preview.path.parent())
+                    .map(std::path::Path::to_path_buf)
+            });
         let files = workspace
             .as_ref()
             .and_then(|root| {
@@ -586,9 +593,23 @@ impl Companion {
                 if self.work.attachments == attachments {
                     self.work.attachments.clear();
                 }
-                if self.workspace.running.as_ref().is_some_and(|r| r.executor == stepx_companion::amoo_workspace::Executor::Image) {
-                    if self.fields[F_AMOO].text.trim() == draft.trim() { self.fields[F_AMOO].clear(); }
-                    if self.amoo_attachments.iter().filter_map(|a| a.local_path.as_ref()).eq(attachments.iter()) { self.amoo_attachments.clear(); }
+                if self
+                    .workspace
+                    .running
+                    .as_ref()
+                    .is_some_and(|r| r.executor == stepx_companion::amoo_workspace::Executor::Image)
+                {
+                    if self.fields[F_AMOO].text.trim() == draft.trim() {
+                        self.fields[F_AMOO].clear();
+                    }
+                    if self
+                        .amoo_attachments
+                        .iter()
+                        .filter_map(|a| a.local_path.as_ref())
+                        .eq(attachments.iter())
+                    {
+                        self.amoo_attachments.clear();
+                    }
                 }
                 self.apply(Outcome::AmooSent(receipt));
                 self.work.status = "手机已接收，正在等待回复".into();
@@ -660,12 +681,14 @@ impl Companion {
             WorkAction::Tab(tab) => {
                 self.clear_text_interaction();
                 self.page = Page::Amoo;
-                self.workspace.panel=3;
+                self.workspace.panel = 3;
                 self.work.tab = *tab;
                 self.work.capabilities_open = *tab > 0;
                 self.work.catalog_page = 0;
                 self.scroll = Default::default();
-                if *tab == 0 { self.reveal_latest_chat(); }
+                if *tab == 0 {
+                    self.reveal_latest_chat();
+                }
                 if self.work.catalog.is_none() && !self.busy {
                     self.refresh_work();
                 }
@@ -677,7 +700,9 @@ impl Companion {
                 self.work.capabilities_open = !self.work.capabilities_open;
                 self.work.tab = if self.work.capabilities_open { 2 } else { 0 };
                 self.scroll = Default::default();
-                if !self.work.capabilities_open { self.reveal_latest_chat(); }
+                if !self.work.capabilities_open {
+                    self.reveal_latest_chat();
+                }
                 if self.work.capabilities_open && self.work.catalog.is_none() && !self.busy {
                     self.refresh_work();
                 }
@@ -700,7 +725,7 @@ impl Companion {
                             return Ok(());
                         };
                         self.work.workspace = Some(path.canonicalize()?);
-                    self.remember_work_directory()?;
+                        self.remember_work_directory()?;
                     }
                     let root = self.work.workspace.as_ref().context("请选择工作文件夹")?;
                     let mut local_files = Vec::new();
@@ -1045,6 +1070,8 @@ impl Companion {
                 anyhow::ensure!(!url.chars().any(char::is_control), "附件链接无效");
                 let command = if cfg!(target_os = "macos") {
                     "open"
+                } else if cfg!(windows) {
+                    "explorer.exe"
                 } else {
                     "xdg-open"
                 };
@@ -1371,7 +1398,7 @@ impl Companion {
                     return Ok(());
                 };
                 self.work.workspace = Some(path.canonicalize()?);
-                    self.remember_work_directory()?;
+                self.remember_work_directory()?;
                 self.work_files()?;
             }
             let workspace = self
@@ -1379,7 +1406,7 @@ impl Companion {
                 .workspace
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("桌面协作需要先选择工作文件夹"))?;
-            let attachments=self.work.attachments.clone();
+            let attachments = self.work.attachments.clone();
             let request = work::WorkRequest {
                 prompt: draft.clone(),
                 workspace,
@@ -1492,7 +1519,10 @@ impl Companion {
                     self.work.status = status.clone();
                     self.work.log(status);
                 }
-                work::WorkEvent::Assistant(text) => {self.work.final_reply=Some(text.clone());self.work.log(text);},
+                work::WorkEvent::Assistant(text) => {
+                    self.work.final_reply = Some(text.clone());
+                    self.work.log(text);
+                }
                 work::WorkEvent::Tool(log) => self.work.log(format!(
                     "{} · {} · {}{}",
                     log.step,
@@ -1501,7 +1531,17 @@ impl Companion {
                     log.detail
                 )),
                 work::WorkEvent::Artifact(file) => {
-                    self.workspace_output(stepx_companion::amoo_workspace::Output {path:file.path.clone(),name:file.path.file_name().unwrap_or_default().to_string_lossy().into_owned(),kind:file.kind.clone(),lab_id:None});
+                    self.workspace_output(stepx_companion::amoo_workspace::Output {
+                        path: file.path.clone(),
+                        name: file
+                            .path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                        kind: file.kind.clone(),
+                        lab_id: None,
+                    });
                     self.work.log(format!("已生成 {}", file.relative_path));
                     self.work.artifacts.push(WorkArtifactItem {
                         name: file.relative_path,
@@ -1510,17 +1550,51 @@ impl Companion {
                     });
                 }
                 work::WorkEvent::Complete(summary) => {
-                    if let Some(key)=&self.work.active_key {self.reply_motion.live.insert(key.clone());}
-                    if self.workspace.running.is_none() && self.settings.value.sync_work_outputs && !self.work.artifacts.is_empty() {
-                        if let (Some(root),Some(device))=(self.work.workspace.clone(),self.selected.clone()) {
-                            let paths=self.work.artifacts.iter().map(|a|a.path.clone()).collect::<Vec<_>>();
-                            let (tx,rx)=mpsc::channel();self.settings.staging=Some(rx);
-                            std::thread::spawn(move||{let _=tx.send(stepx_companion::work_sync::enqueue(&root,&paths,&device.serial).map(|n|format!("已准备 {n} 个成果，连接手机后发送")).map_err(|e|e.to_string()));});
+                    if let Some(key) = &self.work.active_key {
+                        self.reply_motion.live.insert(key.clone());
+                    }
+                    if self.workspace.running.is_none()
+                        && self.settings.value.sync_work_outputs
+                        && !self.work.artifacts.is_empty()
+                    {
+                        if let (Some(root), Some(device)) =
+                            (self.work.workspace.clone(), self.selected.clone())
+                        {
+                            let paths = self
+                                .work
+                                .artifacts
+                                .iter()
+                                .map(|a| a.path.clone())
+                                .collect::<Vec<_>>();
+                            let (tx, rx) = mpsc::channel();
+                            self.settings.staging = Some(rx);
+                            std::thread::spawn(move || {
+                                let _ = tx.send(
+                                    stepx_companion::work_sync::enqueue(
+                                        &root,
+                                        &paths,
+                                        &device.serial,
+                                    )
+                                    .map(|n| format!("已准备 {n} 个成果，连接手机后发送"))
+                                    .map_err(|e| e.to_string()),
+                                );
+                            });
                         }
                     }
-                    let delivered=!self.work.artifacts.is_empty();
+                    let delivered = !self.work.artifacts.is_empty();
                     let reply = self.work.final_reply.take().unwrap_or_default();
-                    self.workspace_finish(if delivered{stepx_companion::amoo_workspace::Phase::Done}else{stepx_companion::amoo_workspace::Phase::Failed},if delivered{format!("{reply}\n\n{summary}")}else{format!("尚未收到实际文件，请补充要求后继续。{summary}")});
+                    self.workspace_finish(
+                        if delivered {
+                            stepx_companion::amoo_workspace::Phase::Done
+                        } else {
+                            stepx_companion::amoo_workspace::Phase::Failed
+                        },
+                        if delivered {
+                            format!("{reply}\n\n{summary}")
+                        } else {
+                            format!("尚未收到实际文件，请补充要求后继续。{summary}")
+                        },
+                    );
                     self.work.running = false;
                     self.work.submitted_draft = None;
                     self.work.status = summary.clone();
@@ -1530,7 +1604,10 @@ impl Companion {
                     self.last_amoo_poll = Instant::now() - Duration::from_secs(11);
                 }
                 work::WorkEvent::Failed(error) => {
-                    self.workspace_finish(stepx_companion::amoo_workspace::Phase::Failed,error.clone());
+                    self.workspace_finish(
+                        stepx_companion::amoo_workspace::Phase::Failed,
+                        error.clone(),
+                    );
                     self.work.running = false;
                     if self.fields[F_WORK_PROMPT].text.is_empty() {
                         if let Some(draft) = self.work.submitted_draft.take() {
@@ -1542,7 +1619,10 @@ impl Companion {
                     self.last_amoo_poll = Instant::now() - Duration::from_secs(11);
                 }
                 work::WorkEvent::Cancelled => {
-                    self.workspace_finish(stepx_companion::amoo_workspace::Phase::Stopped,"桌面执行已停止；手机已接收的任务可能仍继续".into());
+                    self.workspace_finish(
+                        stepx_companion::amoo_workspace::Phase::Stopped,
+                        "桌面执行已停止；手机已接收的任务可能仍继续".into(),
+                    );
                     self.work.running = false;
                     if let Some(draft) = self.work.submitted_draft.take() {
                         if self.fields[F_WORK_PROMPT].text.is_empty() {
@@ -1772,7 +1852,9 @@ fn read_work_preview(root: &std::path::Path, path: &std::path::Path) -> Result<W
                 preview.text = Some(spreadsheet_preview_markdown(&data));
                 preview.note = "表格预览 · 显示已有计算结果，最多 3 张表、20 行、8 列；公式与完整内容请打开原文件。".into();
             }
-            Err(error) => preview.note = format!("此表格暂不能内嵌预览：{error}。可打开原文件或导出。"),
+            Err(error) => {
+                preview.note = format!("此表格暂不能内嵌预览：{error}。可打开原文件或导出。")
+            }
         }
     } else if matches!(extension.as_str(), "html" | "htm") {
         preview.note =
@@ -1822,16 +1904,59 @@ fn read_work_preview(root: &std::path::Path, path: &std::path::Path) -> Result<W
 }
 
 fn spreadsheet_preview_markdown(data: &serde_json::Value) -> String {
-    let escape = |s: &str| s.chars().take(160).collect::<String>().replace('\\',"\\\\").replace('|',"\\|").replace(['\r','\n']," ").replace('`',"\\`").replace('*',"\\*").replace('[',"\\[").replace(']',"\\]").replace('<',"&lt;");
-    let mut out=String::new();
-    if let Some(sheets)=data["sheets"].as_array() { for sheet in sheets.iter().take(3) {
-        out.push_str(&format!("### {}\n\n",escape(sheet["name"].as_str().unwrap_or("工作表"))));
-        let Some(rows)=sheet["rows"].as_array() else {continue;};
-        let columns=rows.iter().take(20).filter_map(|r|r["cells"].as_array()).flat_map(|r|r.iter().take(8).enumerate()).filter(|(_,c)|!c.as_str().unwrap_or("").is_empty()).map(|(i,_)|i+1).max().unwrap_or(1);
-        out.push_str(&format!("| 行 | {} |\n| {} |\n",(0..columns).map(|i|((b'A'+i as u8) as char).to_string()).collect::<Vec<_>>().join(" | "),vec!["---";columns+1].join(" | ")));
-        for row in rows.iter().take(20) {out.push_str(&format!("| {} | {} |\n",escape(row["row"].as_str().unwrap_or("")),(0..columns).map(|i|escape(row["cells"][i].as_str().unwrap_or(""))).collect::<Vec<_>>().join(" | ")));}
-        out.push('\n');
-    }}
+    let escape = |s: &str| {
+        s.chars()
+            .take(160)
+            .collect::<String>()
+            .replace('\\', "\\\\")
+            .replace('|', "\\|")
+            .replace(['\r', '\n'], " ")
+            .replace('`', "\\`")
+            .replace('*', "\\*")
+            .replace('[', "\\[")
+            .replace(']', "\\]")
+            .replace('<', "&lt;")
+    };
+    let mut out = String::new();
+    if let Some(sheets) = data["sheets"].as_array() {
+        for sheet in sheets.iter().take(3) {
+            out.push_str(&format!(
+                "### {}\n\n",
+                escape(sheet["name"].as_str().unwrap_or("工作表"))
+            ));
+            let Some(rows) = sheet["rows"].as_array() else {
+                continue;
+            };
+            let columns = rows
+                .iter()
+                .take(20)
+                .filter_map(|r| r["cells"].as_array())
+                .flat_map(|r| r.iter().take(8).enumerate())
+                .filter(|(_, c)| !c.as_str().unwrap_or("").is_empty())
+                .map(|(i, _)| i + 1)
+                .max()
+                .unwrap_or(1);
+            out.push_str(&format!(
+                "| 行 | {} |\n| {} |\n",
+                (0..columns)
+                    .map(|i| ((b'A' + i as u8) as char).to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+                vec!["---"; columns + 1].join(" | ")
+            ));
+            for row in rows.iter().take(20) {
+                out.push_str(&format!(
+                    "| {} | {} |\n",
+                    escape(row["row"].as_str().unwrap_or("")),
+                    (0..columns)
+                        .map(|i| escape(row["cells"][i].as_str().unwrap_or("")))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                ));
+            }
+            out.push('\n');
+        }
+    }
     out
 }
 
@@ -1935,8 +2060,8 @@ mod preview_tests {
     use super::*;
     #[test]
     fn spreadsheet_grid_preserves_gaps_results_and_literal_cell_text() {
-        let data=serde_json::json!({"sheets":[{"name":"金额汇总","rows":[{"row":"2","cells":["A | B","","249","[链接](https://example.test)"]}]}]});
-        let text=spreadsheet_preview_markdown(&data);
+        let data = serde_json::json!({"sheets":[{"name":"金额汇总","rows":[{"row":"2","cells":["A | B","","249","[链接](https://example.test)"]}]}]});
+        let text = spreadsheet_preview_markdown(&data);
         assert!(text.contains("| 行 | A | B | C | D |"));
         assert!(text.contains("A \\| B |  | 249"));
         assert!(text.contains("\\[链接\\]"));
@@ -2100,8 +2225,16 @@ mod preview_tests {
     }
 }
 pub(super) fn open_work_path(path: &std::path::Path) -> Result<()> {
-    let command = if cfg!(target_os = "macos") { "open" } else if cfg!(windows) { "explorer" } else { "xdg-open" };
+    let command = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
     let mut child = std::process::Command::new(command).arg(path).spawn()?;
-    std::thread::spawn(move || { let _ = child.wait(); });
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     Ok(())
 }

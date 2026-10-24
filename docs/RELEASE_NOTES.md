@@ -27,4 +27,10 @@ Linux + PZ261A 已从客户端界面完成：混合附件对话、Excel/Word/三
 
 本版本的 Actions 会在四个平台执行核心测试、更新器测试、真实隔离浏览器交互测试和完整打包烟测；打包测试清空 SDK/Python 环境并使用中文空格路径。Windows/macOS 尚无连接真机的完整 GUI 操作验收，不将 CI 编译结果等同于真机验证。
 
+## 更新视频
+
+[60 秒微信竖版（720p，约 1.7 MB）](https://github.com/xydzf520/stepx/releases/download/v0.2.25/StepX-Companion-0.2.25-update-wechat.mp4) · [1080p 高清版](https://github.com/xydzf520/stepx/releases/download/v0.2.25/StepX-Companion-0.2.25-update-1080p.mp4)
+
+实际测试截图与流程动画，展示从 0.2.1 到本版的主要变化；含中文配音、字幕和下载二维码。
+
 完整变化见 [CHANGELOG.md](https://github.com/xydzf520/stepx/blob/main/CHANGELOG.md)。

@@ -19,6 +19,10 @@ Linux / macOS / Windows · Rust 原生客户端 · 配套 StepX伴侣 Android �
 
 从 0.2.1 到现在：统一 Amoo 输入框、手机模型制作应用、真实 Office 成果、存储扩容、简洁模式与 GitHub 自动更新。[本次更新说明](docs/RELEASE_NOTES.md) · [完整更新日志](CHANGELOG.md)
 
+[<img src="docs/images/update-0.2.25-cover.jpg" width="300" alt="0.2.1 → 0.2.25 更新介绍视频封面" />](https://github.com/xydzf520/stepx/releases/download/v0.2.25/StepX-Companion-0.2.25-update-wechat.mp4)
+
+[观看 / 下载 60 秒竖版更新视频](https://github.com/xydzf520/stepx/releases/download/v0.2.25/StepX-Companion-0.2.25-update-wechat.mp4) · 720p / 约 1.7 MB / 配音与中文字幕，适合微信聊天和群分享。画面使用实际测试界面与明确标注的流程示意。
+
 ## 特色功能
 
 - **压缩与释放手机空间**：在手机本地压缩适合压缩的文档、清理缓存和重复文件，查看处理结果，并按需还原压缩文件。

@@ -16,15 +16,39 @@ pub(super) struct Menu {
 }
 impl Companion {
     pub(super) fn open_workspace_intent_menu(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(anchor) = ctx.element_position_by_id("workspace-intent-anchor".to_string()) else { return; };
-        let Some(window) = facloud_ui::windowing::winit::winit_window_for_id(ctx, ctx.window_id()) else { return; };
-        let size = window.inner_size().to_logical::<f32>(window.scale_factor());
-        let (x, y) = intent_menu_position(anchor.origin().x(), anchor.origin().y(), anchor.height(), size.width, size.height);
+        let Some(anchor) = ctx.element_position_by_id("workspace-intent-anchor".to_string()) else {
+            return;
+        };
+        let Some(size) = ctx.windows().platform_window(ctx.window_id()).map(|w| w.size()) else {
+            return;
+        };
+        let (x, y) = intent_menu_position(
+            anchor.origin().x(),
+            anchor.origin().y(),
+            anchor.height(),
+            size.x(),
+            size.y(),
+        );
         #[cfg(feature = "ui-capture")]
-        if std::env::var_os("STEPX_CHAT_FIRST_TEST").is_some() { eprintln!("MENU_GEOMETRY anchor={anchor:?} client={}x{} above={}",size.width,size.height,y<anchor.origin().y()); }
+        if std::env::var_os("STEPX_CHAT_FIRST_TEST").is_some() {
+            eprintln!(
+                "MENU_GEOMETRY anchor={anchor:?} client={}x{} above={}",
+                size.x(),
+                size.y(),
+                y < anchor.origin().y()
+            );
+        }
         use stepx_companion::amoo_workspace::Intent;
-        let selected = [Intent::Chat, Intent::Files, Intent::Image, Intent::App].iter().position(|i| *i == self.workspace.intent).unwrap_or(0);
-        self.context_menu = Some(Menu { target: Target::WorkspaceIntent(y < anchor.origin().y()), at: Vector2F::new(x,y), text: None, selected: Some(selected) });
+        let selected = [Intent::Chat, Intent::Files, Intent::Image, Intent::App]
+            .iter()
+            .position(|i| *i == self.workspace.intent)
+            .unwrap_or(0);
+        self.context_menu = Some(Menu {
+            target: Target::WorkspaceIntent(y < anchor.origin().y()),
+            at: Vector2F::new(x, y),
+            text: None,
+            selected: Some(selected),
+        });
         ctx.notify();
     }
     pub(super) fn handle_context(&mut self, action: &Action, ctx: &mut ViewContext<Self>) -> bool {
@@ -149,7 +173,16 @@ impl Companion {
         match &menu.target {
             Target::WorkspaceIntent(_) => {
                 use stepx_companion::amoo_workspace::Intent;
-                return [Intent::Chat, Intent::Files, Intent::Image, Intent::App].into_iter().map(|intent| (intent.label().into(), String::new(), Some(Action::Workspace(WorkspaceAction::Intent(intent))))).collect();
+                return [Intent::Chat, Intent::Files, Intent::Image, Intent::App]
+                    .into_iter()
+                    .map(|intent| {
+                        (
+                            intent.label().into(),
+                            String::new(),
+                            Some(Action::Workspace(WorkspaceAction::Intent(intent))),
+                        )
+                    })
+                    .collect();
             }
             Target::Input(i) => {
                 let f = &self.fields[*i];
@@ -235,25 +268,48 @@ impl Companion {
                 let row = Hoverable::new(self.mouse_state(format!("context-{i}")), move |mouse| {
                     let content = if is_intent {
                         use stepx_companion::amoo_workspace::Intent;
-                        let description = ["日常聊天、看图、解读附件", "整理资料，生成可编辑文件", "描述画面，生成图片", "制作并验证手机小工具"][i];
-                        let selected = [Intent::Chat, Intent::Files, Intent::Image, Intent::App][i] == self.workspace.intent;
-                        self.between(self.vstack(2., vec![self.line(&label, BODY, p.text), self.line(description, MICRO, p.text3)]),
-                            if selected { self.ui_icon(icons::UiIcon::Check, 16., p.text) } else { self.line("", MICRO, p.text3) })
+                        let description = [
+                            "日常聊天、看图、解读附件",
+                            "整理资料，生成可编辑文件",
+                            "描述画面，生成图片",
+                            "制作并验证手机小工具",
+                        ][i];
+                        let selected = [Intent::Chat, Intent::Files, Intent::Image, Intent::App][i]
+                            == self.workspace.intent;
+                        self.between(
+                            self.vstack(
+                                2.,
+                                vec![
+                                    self.line(&label, BODY, p.text),
+                                    self.line(description, MICRO, p.text3),
+                                ],
+                            ),
+                            if selected {
+                                self.ui_icon(icons::UiIcon::Check, 16., p.text)
+                            } else {
+                                self.line("", MICRO, p.text3)
+                            },
+                        )
                     } else {
-                        self.between(self.line(&label, BODY, if enabled { p.text } else { p.text3 }), self.line(&key, MICRO, p.text3))
+                        self.between(
+                            self.line(&label, BODY, if enabled { p.text } else { p.text3 }),
+                            self.line(&key, MICRO, p.text3),
+                        )
                     };
                     Container::new(content)
-                    .with_horizontal_padding(S3)
-                    .with_vertical_padding(S2)
-                    .with_background_color(
-                        if enabled && (mouse.is_mouse_over_element() || menu.selected == Some(i)) {
-                            p.hover
-                        } else {
-                            ColorU::transparent_black()
-                        },
-                    )
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
-                    .finish()
+                        .with_horizontal_padding(S3)
+                        .with_vertical_padding(S2)
+                        .with_background_color(
+                            if enabled
+                                && (mouse.is_mouse_over_element() || menu.selected == Some(i))
+                            {
+                                p.hover
+                            } else {
+                                ColorU::transparent_black()
+                            },
+                        )
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                        .finish()
                 })
                 .with_cursor(if enabled {
                     Cursor::PointingHand
@@ -266,7 +322,9 @@ impl Companion {
                     }
                 })
                 .finish();
-                SavePosition::new(row, &format!("context-choice-{i}")).for_single_frame().finish()
+                SavePosition::new(row, &format!("context-choice-{i}"))
+                    .for_single_frame()
+                    .finish()
             })
             .collect();
         let surface = self.fixed_w(
@@ -278,7 +336,15 @@ impl Companion {
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_PANEL)))
                 .finish(),
         );
-        let surface = if is_intent { motion::enter(surface, self.workspace.panel_entered, !self.settings.value.reduced_motion) } else { surface };
+        let surface = if is_intent {
+            motion::enter(
+                surface,
+                self.workspace.panel_entered,
+                !self.settings.value.reduced_motion,
+            )
+        } else {
+            surface
+        };
         let dismiss = Hoverable::new(self.mouse_state("context-dismiss"), |_| {
             Container::new(Empty::new().finish())
                 .with_background_color(ColorU::transparent_black())
@@ -290,16 +356,32 @@ impl Companion {
             Stack::new()
                 .with_child(dismiss)
                 .with_positioned_child(
-                    SavePosition::new(surface, "context-surface").for_single_frame().finish(),
+                    SavePosition::new(surface, "context-surface")
+                        .for_single_frame()
+                        .finish(),
                     if let Target::WorkspaceIntent(above) = menu.target {
                         OffsetPositioning::offset_from_save_position_element(
-                            "workspace-intent-anchor", Vector2F::new(0., if above { -6. } else { 6. }),
+                            "workspace-intent-anchor",
+                            Vector2F::new(0., if above { -6. } else { 6. }),
                             PositionedElementOffsetBounds::WindowByPosition,
-                            if above { PositionedElementAnchor::TopLeft } else { PositionedElementAnchor::BottomLeft },
-                            if above { ChildAnchor::BottomLeft } else { ChildAnchor::TopLeft },
+                            if above {
+                                PositionedElementAnchor::TopLeft
+                            } else {
+                                PositionedElementAnchor::BottomLeft
+                            },
+                            if above {
+                                ChildAnchor::BottomLeft
+                            } else {
+                                ChildAnchor::TopLeft
+                            },
                         )
                     } else {
-                        OffsetPositioning::offset_from_parent(menu.at, ParentOffsetBounds::WindowByPosition, ParentAnchor::TopLeft, ChildAnchor::TopLeft)
+                        OffsetPositioning::offset_from_parent(
+                            menu.at,
+                            ParentOffsetBounds::WindowByPosition,
+                            ParentAnchor::TopLeft,
+                            ChildAnchor::TopLeft,
+                        )
                     },
                 )
                 .finish(),
@@ -311,12 +393,37 @@ impl Companion {
 fn intent_menu_position(x: f32, y: f32, anchor_height: f32, width: f32, height: f32) -> (f32, f32) {
     let menu_height = 240.;
     let below = y + anchor_height + 6.;
-    (x.clamp(8., (width - 288.).max(8.)), if below + menu_height <= height - 8. { below } else { (y - menu_height - 6.).max(8.) })
+    (
+        x.clamp(8., (width - 288.).max(8.)),
+        if below + menu_height <= height - 8. {
+            below
+        } else {
+            (y - menu_height - 6.).max(8.)
+        },
+    )
 }
 #[cfg(test)]
 mod intent_tests {
     use super::*;
-    #[test] fn opens_below_when_room() { assert_eq!(intent_menu_position(120.,200.,36.,1000.,800.), (120.,242.)); }
-    #[test] fn flips_above_bottom_composer() { assert_eq!(intent_menu_position(120.,700.,36.,1000.,800.), (120.,454.)); }
-    #[test] fn stays_inside_narrow_window() { assert_eq!(intent_menu_position(480.,500.,36.,600.,650.), (312.,254.)); }
+    #[test]
+    fn opens_below_when_room() {
+        assert_eq!(
+            intent_menu_position(120., 200., 36., 1000., 800.),
+            (120., 242.)
+        );
+    }
+    #[test]
+    fn flips_above_bottom_composer() {
+        assert_eq!(
+            intent_menu_position(120., 700., 36., 1000., 800.),
+            (120., 454.)
+        );
+    }
+    #[test]
+    fn stays_inside_narrow_window() {
+        assert_eq!(
+            intent_menu_position(480., 500., 36., 600., 650.),
+            (312., 254.)
+        );
+    }
 }

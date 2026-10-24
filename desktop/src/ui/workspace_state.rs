@@ -1184,11 +1184,7 @@ impl Companion {
                 changed = true;
             }
         }
-        if let Some(window) =
-            facloud_ui::windowing::winit::winit_window_for_id(ctx, ctx.window_id())
-        {
-            let size = window.inner_size().to_logical::<f32>(window.scale_factor());
-            let next = Vector2F::new(size.width, size.height);
+        if let Some(next) = ctx.windows().platform_window(ctx.window_id()).map(|w| w.size()) {
             if self.workspace.viewport != next {
                 self.workspace.viewport = next;
                 changed = true;

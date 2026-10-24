@@ -41,7 +41,9 @@ class UpdateTests(unittest.TestCase):
                 m=tarfile.TarInfo('bin/python3.13');m.size=4;m.mode=0o755;t.addfile(m,io.BytesIO(b'data'))
                 m=tarfile.TarInfo('bin/python3');m.type=tarfile.SYMTYPE;m.linkname='python3.13';t.addfile(m)
             u.extract(root/'x.tar.gz',out,root)
-            self.assertEqual((out/'bin/python3').read_bytes(),b'data');self.assertTrue((out/'bin/python3').stat().st_mode&stat.S_IXUSR)
+            self.assertEqual((out/'bin/python3').read_bytes(),b'data')
+            if os.name != 'nt':
+                self.assertTrue((out/'bin/python3').stat().st_mode&stat.S_IXUSR)
     def test_windows_zip_and_macos_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);out=root/'out';out.mkdir()

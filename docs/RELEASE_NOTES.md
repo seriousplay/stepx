@@ -15,8 +15,10 @@
 
 选择对应平台的完整压缩包，解压后运行；不要只复制 EXE。Windows x64、macOS Apple Silicon、macOS Intel、Linux x64 分别原生编译。发布包含 ADB、scrcpy、Python、Java 和 APK 身份/签名校验工具，无需自行安装 Android SDK。
 
-- Windows 后台工具隐藏命令行窗口；安装与用户数据目录支持中文和空格。
+- Windows 后台工具隐藏命令行窗口；安装与用户数据目录支持中文和空格。模型验证、图片缓存和 Office 处理使用 Windows 用户目录及随包 Python。没有商业代码签名，首次运行可能有 SmartScreen 提示。
 - macOS 使用 `.app/Contents/Resources` 寻址，分别提供 Intel/ARM 包。没有 Apple Developer 公证，系统可能要求在“隐私与安全性”中允许打开；电脑截图需屏幕录制权限。
+- Linux x64 包使用 Ubuntu 24.04 构建，需要 glibc 2.39 或更新版本；Ubuntu 22.04 请按构建指南从源码构建。
+- macOS 简洁模式暂不提供窗口置顶按钮。
 - 制作应用和 Studio 官网独立会话需要 Chrome、Edge 或 Chromium；macOS 的 Safari 不能代替这个验收引擎。文字对话、文件处理和图片生成不依赖该浏览器。
 - Windows/macOS 的朗读使用系统语音；需要在系统设置添加中文语音。Linux 需要可用的 espeak-ng/系统语音服务。
 - Google Play 安装不等于获得 Play Protect 认证。GUI Agent 使用单独配置的视觉模型；Amoo 手机任务沿用手机账号权益。
@@ -32,5 +34,7 @@ Linux + PZ261A 已从客户端界面完成：混合附件对话、Excel/Word/三
 [60 秒微信竖版（720p，约 1.7 MB）](https://github.com/xydzf520/stepx/releases/download/v0.2.25/StepX-Companion-0.2.25-update-wechat.mp4) · [1080p 高清版](https://github.com/xydzf520/stepx/releases/download/v0.2.25/StepX-Companion-0.2.25-update-1080p.mp4)
 
 实际测试截图与流程动画，展示从 0.2.1 到本版的主要变化；含中文配音、字幕和下载二维码。
+
+[跨平台验证与已知限制](https://github.com/xydzf520/stepx/blob/main/docs/CROSS_PLATFORM_0_2_25.md)。
 
 完整变化见 [CHANGELOG.md](https://github.com/xydzf520/stepx/blob/main/CHANGELOG.md)。

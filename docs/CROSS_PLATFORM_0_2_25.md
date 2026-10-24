@@ -17,7 +17,14 @@
 
 ## 原生 CI 与安装包
 
-[本轮构建记录](https://github.com/xydzf520/stepx/actions/runs/40103974265)。四种目标使用各自原生 runner，执行核心及契约测试、更新器、运行环境、Chrome / Edge 真实交互检查，然后编译正式包。
+[本轮构建记录](https://github.com/xydzf520/stepx/actions/runs/40103974265)。四种目标均通过，使用各自原生 runner，执行核心及契约测试、更新器、运行环境、Chrome / Edge 真实交互检查，然后编译正式包。
+
+| 平台 | 原生构建 | 更新器 / 浏览器 | 便携包运行环境 |
+| --- | --- | --- | --- |
+| Windows x64 | 通过 | 通过 | 通过，PE GUI 子系统 |
+| macOS Apple Silicon | 通过 | 通过 | 通过，签名检查 |
+| macOS Intel | 通过 | 通过 | 通过，签名检查 |
+| Linux x64 | 通过 | 通过 | 通过，本机下载后复核 |
 
 包内 ADB、scrcpy、Python、Java 和 APK 校验工具同时检查；清空 SDK / Python 环境，并复制到带中文和空格的路径执行。APK 验证包含正常签名、篡改内容、错误包名的对照。Windows 额外校验 PE GUI 子系统；macOS 验证 .app 资源寻址与 ad-hoc 签名。每个归档附 SHA-256。
 

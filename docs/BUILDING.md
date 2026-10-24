@@ -32,7 +32,7 @@ python3 -m unittest discover -s desktop/tests -p 'test_*.py'
 ## 发布包
 
 ```bash
-python3 scripts/package-release.py --platform linux-x86_64 --version 0.2.1
+python3 scripts/package-release.py --platform linux-x86_64 --version 0.2.25
 ```
 
 平台可选 `linux-x86_64`、`macos-arm64`、`macos-x86_64`、`windows-x86_64`。脚本验证官方 scrcpy 工具包的 SHA256，将可执行文件与运行资源封装到 `dist/`。通过 `.github/workflows/release.yml` 的手动运行构建全部平台；先生成草稿 Release，检查产物后再发布。
@@ -48,3 +48,5 @@ Android 源码位于 `desktop/companion-app`，以及 bridge、权限与后台�
 发布打包还需要 JAVA_HOME 与 ANDROID_HOME（或 ANDROID_SDK_ROOT）。脚本用 jlink 生成最小 Java 运行时，编译 APK 身份校验助手并复制官方 apksig 校验库，并下载经固定 SHA256 校验的 Python。打包检查会清空 SDK/Python 环境，在中文、空格目录运行包内 ADB、Python、APK 签名校验和文件锁，不连接手机。macOS 仍未做 Apple Developer 公证。
 
 APK 包名通过 Android 官方 apksig 的解析器读取，签名仍用 apksigner 验证；发布包不依赖原生 aapt，也不要求 Apple Silicon 用户为该流程安装 Rosetta。
+
+应用生成验收使用已安装的 Chrome / Edge / Chromium 独立临时会话，不读取个人浏览器配置。CI 通过 `python scripts/ci-platform-smoke.py` 验证浏览器键入、点击、结果与隔离策略。

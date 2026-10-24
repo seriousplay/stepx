@@ -12,6 +12,7 @@ public final class GuiControlProvider extends ContentProvider {
     @Override public boolean onCreate(){return true;}
     @Override public Bundle call(String method,String arg,Bundle extras){
         int uid=Binder.getCallingUid();if(uid!=2000&&uid!=android.os.Process.myUid())throw new SecurityException("不允许的调用方");
+        long identity=Binder.clearCallingIdentity();
         Bundle b=new Bundle();
         try{
             if(!"request".equals(method)||arg==null||arg.length()>32768)throw new IllegalArgumentException("请求无效");
@@ -30,7 +31,7 @@ public final class GuiControlProvider extends ContentProvider {
         }catch(Exception error){
             Throwable cause=error.getCause()==null?error:error.getCause();
             try{b.putString("result",Base64.encodeToString(new JSONObject().put("ok",false).put("error",String.valueOf(cause.getMessage())).toString().getBytes(StandardCharsets.UTF_8),Base64.NO_WRAP));}catch(Exception ignored){}
-        }return b;
+        }finally{Binder.restoreCallingIdentity(identity);}return b;
     }
     @Override public Cursor query(Uri u,String[] p,String s,String[] a,String o){throw new UnsupportedOperationException();}
     @Override public String getType(Uri u){return null;}

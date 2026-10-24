@@ -56,7 +56,7 @@ impl Companion {
         self.button(format!("work-{id}"), label, Action::Work(action), kind)
     }
 
-    pub(super) fn work_action_icon(
+    pub(in super::super) fn work_action_icon(
         &self,
         id: impl Into<String>,
         label: impl Into<String>,
@@ -378,6 +378,7 @@ impl Companion {
                 Action::CopyText(body.clone(), "已复制回复".into()),
             ));
         }
+        if !user && !body.is_empty() {meta.push(self.speech_icon(format!("work-speech:{}:{index}",self.amoo_session_idx),body.clone()));}
         let mut children = vec![self.between(
             self.hstack(
                 S2,
@@ -410,7 +411,7 @@ impl Companion {
             children.push(if user {
                 self.text(body.clone(), BODY, p.text)
             } else {
-                self.work_rich_text(&body, &format!("message-{index}"))
+                self.work_rich_text(&self.live_reply_text(index,&body), &format!("message-{index}"))
             });
         }
         Container::new(self.vstack(S2, children))
@@ -429,16 +430,10 @@ impl Companion {
         let mut caret = 0;
         if focused {
             let cursor = field.cursor.min(value.len());
-            caret = cursor + field.preedit.len();
-            value.insert_str(cursor, &format!("{}│", field.preedit));
+            caret = value[..cursor].chars().count() + field.preedit.chars().count();
+            value.insert_str(cursor, &field.preedit);
         }
         let is_empty = field.text.is_empty() && field.preedit.is_empty();
-        let line_count = field
-            .text
-            .lines()
-            .map(|line| (line.chars().count() / 70 + 1) as f32)
-            .sum::<f32>();
-        let height = (line_count.max(1.) * 19. + 16.).clamp(48., 112.);
         if value.is_empty() {
             value = if self.work.mode == 2 {
                 "描述要生成的图片，可添加参考图、指定风格与尺寸…"
@@ -449,30 +444,32 @@ impl Companion {
         }
         Hoverable::new(self.mouse_state("work-prompt"), move |_| {
             ConstrainedBox::new(
-                Container::new(
-                    self.pane_scroll(
-                        self.work.prompt_scroll.clone(),
-                        Text::new(value, self.font, BODY)
-                            .with_saved_char_position(caret, format!("input-caret:{F_WORK_PROMPT}"))
-                            .with_color(if is_empty && !focused {
-                                p.text3
-                            } else {
-                                p.text
-                            })
-                            .with_line_height_ratio(1.4)
-                            .finish(),
+                Container::new(self.pane_scroll(
+                    self.work.prompt_scroll.clone(),
+                    self.multiline_field_text(
+                        &value,
+                        caret,
+                        F_WORK_PROMPT,
+                        if is_empty {
+                            p.text3
+                        } else {
+                            p.text
+                        },
                     ),
-                )
+                ))
                 .with_horizontal_padding(S1)
                 .with_vertical_padding(S2)
                 .with_background_color(p.bg)
                 .finish(),
             )
-            .with_height(height)
+            .with_min_height(48.)
+            .with_max_height(112.)
             .finish()
         })
         .with_cursor(Cursor::IBeam)
+        .with_defer_events_to_children()
         .on_mouse_down(|ctx, _, _| ctx.dispatch_typed_action(Action::Focus(F_WORK_PROMPT)))
+        .on_right_click(|ctx, _, at| ctx.dispatch_typed_action(Action::ContextOpen(crate::ui::context_menu::Target::Input(F_WORK_PROMPT), at)))
         .finish()
     }
 
@@ -799,7 +796,7 @@ impl Companion {
             header,
             Expanded::new(
                 1.,
-                self.pane_scroll(self.scroll.clone(), self.vstack(S3, stream)),
+                self.chat_scroll(self.selectable_messages(self.vstack(S3, stream))),
             )
             .finish(),
             Container::new(self.vstack(S2, composer))
@@ -1116,7 +1113,7 @@ impl Companion {
                 ),
                 selected,
                 Some(Action::Work(WorkAction::PreviewArtifact(index))),
-                None,
+                Some(Action::Work(WorkAction::OpenArtifact(index))),
             ));
         }
         items.push(self.divider());
@@ -1186,7 +1183,7 @@ impl Companion {
                     ),
                     selected,
                     Some(Action::Work(WorkAction::PreviewFile(index))),
-                    None,
+                    Some(Action::Work(WorkAction::OpenFile(index))),
                 ));
             }
         } else {
@@ -1257,7 +1254,7 @@ impl Companion {
         self.panel(desktop_workflows)
     }
 
-    fn work_catalog_pane(&self) -> El {
+    pub(in super::super) fn work_catalog_pane(&self) -> El {
         let p = self.p();
         let Some(catalog) = &self.work.catalog else {
             let unavailable = self.empty(
@@ -1363,7 +1360,7 @@ impl Companion {
                         vec![
                             self.heading("跟随手机默认"),
                             self.text(
-                                "使用当前手机会话的默认模型，不修改手机全局设置。",
+                                "由手机 Amoo 自动选择；下方显示实际调用记录，当前不支持手动指定。",
                                 CAPTION,
                                 p.text2,
                             ),
@@ -1462,7 +1459,7 @@ impl Companion {
                             self.tag(&model.provider, p.text3),
                             self.tag(
                                 if model.current {
-                                    "手机当前模型"
+                                    "最近验证通过"
                                 } else if model.available {
                                     "已验证可用"
                                 } else {

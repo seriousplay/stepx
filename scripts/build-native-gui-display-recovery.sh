@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-JDK="${STEPX_JDK:-${JAVA_HOME}}"
-SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+JDK="${STEPX_JDK:-${JAVA_HOME:?Set JAVA_HOME to JDK 17}}"
+SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Set ANDROID_HOME to Android SDK}}"
 BUILD="$PROJECT_ROOT/desktop/.runtime/native-gui-research"
 mkdir -p "$BUILD"
 RECOVERY_BUILD="$(mktemp -d "$BUILD/display-recovery-build.XXXXXX")"

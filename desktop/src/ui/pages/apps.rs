@@ -183,10 +183,14 @@ impl Companion {
                     .finish(),
             );
         }
-        Container::new(self.vstack(S3, contents))
-            .with_horizontal_padding(S4)
-            .with_vertical_padding(S3)
-            .finish()
+        let body = Container::new(self.vstack(S3, contents))
+            .with_horizontal_padding(S4).with_vertical_padding(S3).finish();
+        if app.launchable && app.enabled {
+            let package = package.clone();
+            Hoverable::new(self.mouse_state(format!("app-row:{package}")), move |_| body)
+                .on_double_click(move |ctx, _, _| ctx.dispatch_typed_action(Action::OpenApp(package.clone())))
+                .finish()
+        } else { body }
     }
 
     pub(in super::super) fn apps_page(&self) -> El {

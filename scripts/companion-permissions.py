@@ -24,6 +24,7 @@ WORKFLOW = Path(os.environ.get('STEPX_GOOGLE_HOME', ROOT / 'handoff/google-play-
 sys.path.insert(0, str(WORKFLOW / 'tools'))
 from common import ADB, CONFIG, guard, root_json, shell
 from host_runtime import file_lock, sdk_tool, sdk_command, java_environment, subprocess_options
+from companion_apk import ensure_update_preserves_runtime, signer_digests
 
 PACKAGE = 'com.stepx.companion.app'
 PERMISSION = 'com.stepos.permission.MANAGE_BACK_SCREEN'
@@ -32,7 +33,7 @@ CONNECTION_SCOPE = 'connection_permissions_v1'
 WAKE_PERMISSIONS = ('com.stepos.cloud.push.permission.MESSAGE',)
 WAKE_OWNER = 'com.stepos.pushservice'
 WAKE_SCOPE = 'wake_permission_v1'
-AUTHORIZED_SERIAL = os.environ.get("STEPX_SERIAL", "")
+AUTHORIZED_SERIAL = 'ZYPZ261A01M692000LP'
 LOADER_SHA256 = '279305289749acada3f9951c816d7e9f00367dce4331d4396c04554e4685fbf8'
 WORKER_SHA256 = 'cb05bdcb08a86967b1e1f9cf7f807bba93f94616b49dc90f0c6a0d90d6fbea40'
 STATE = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'stepx-companion/permissions'
@@ -65,13 +66,13 @@ def signer(apk):
     if package != PACKAGE:
         raise RuntimeError('APK is not StepX伴侣')
     result = run(sdk_command('apksigner') + ['verify', '--print-certs', str(apk)])
-    matches = re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$', result, re.M)
+    matches = signer_digests(result)
     if len(matches) != 1:
         raise RuntimeError('Expected exactly one verified APK signer')
-    return matches[0].lower()
+    return next(iter(matches))
 
 
-def inspect(apk=None):
+def inspect(apk=None, preserve_embedded=False):
     # This command deliberately has no RootBridge call and does not start the app.
     if ADB[-1] != AUTHORIZED_SERIAL:
         raise RuntimeError('Companion adaptation is scoped to the authorized StepX phone')
@@ -102,16 +103,28 @@ def inspect(apk=None):
                 run(ADB + ['pull', package_paths[0][8:], str(local)])
                 if signer(local) != cert:
                     raise RuntimeError('Installed companion has a different signing certificate')
+                if preserve_embedded:
+                    result.update(ensure_update_preserves_runtime(apk, local))
         result['signature_verified'] = installed
     return result
 
 
-def preflight(apk):
+def update_signer(apk, installed, trusted_apk=None):
+    cert = signer(apk)
+    if trusted_apk:
+        if cert != signer(trusted_apk):
+            raise RuntimeError('伴侣资源 APK 与客户端内置签名基线不一致，已阻止安装；请使用同签名完整安装包')
+    elif not installed:
+        raise RuntimeError('首次安装缺少客户端内置签名基线，未安装；请从 desktop 安装伴侣')
+    return cert
+
+
+def preflight(apk, trusted_apk=None):
     if not apk:
         raise RuntimeError('A verified local companion APK is required')
-    summary = inspect(apk)
+    summary = inspect(apk, preserve_embedded=True)
+    cert = update_signer(apk, summary['installed'], trusted_apk)
     guard(native=True)
-    cert = signer(apk)
     if shell('getprop', 'sys.boot_completed') != '1' or 'RUNNING_UNLOCKED' not in shell('dumpsys', 'user'):
         raise RuntimeError('Unlock the StepX phone before companion installation')
     # RootBridge is read-only here: just verifies the existing authorized runtime.
@@ -147,8 +160,8 @@ def install_gate_path():
     return STATE / ('install-gate-' + hashlib.sha256(ADB[-1].encode()).hexdigest()[:24] + '.json')
 
 
-def prepare_install(apk):
-    proof = preflight(apk)
+def prepare_install(apk, trusted_apk=None):
+    proof = preflight(apk, trusted_apk)
     if not proof['usb_install_master_enabled']:
         raise RuntimeError('手机的 USB 安装总开关未开启；未修改全局开关')
     path = install_gate_path()
@@ -810,15 +823,16 @@ def main():
                                            'inspect-connection', 'grant-connection', 'revoke-connection',
                                            'inspect-wake', 'grant-wake', 'revoke-wake'])
     parser.add_argument('--apk', type=Path)
+    parser.add_argument('--trusted-apk', type=Path, help='Client embedded APK snapshot used as the signing trust anchor')
     args = parser.parse_args()
     if args.command.endswith('-wake'):
         print(json.dumps(wake_permissions(args.apk, args.command.split('-', 1)[0]), ensure_ascii=False)); return
     if args.command.endswith('-connection'):
         print(json.dumps(connection_permissions(args.apk, args.command.split('-', 1)[0]), ensure_ascii=False)); return
     if args.command == 'preflight':
-        print(json.dumps(preflight(args.apk), ensure_ascii=False)); return
+        print(json.dumps(preflight(args.apk, args.trusted_apk), ensure_ascii=False)); return
     if args.command == 'prepare-install':
-        print(json.dumps(prepare_install(args.apk), ensure_ascii=False)); return
+        print(json.dumps(prepare_install(args.apk, args.trusted_apk), ensure_ascii=False)); return
     if args.command == 'finish-install':
         print(json.dumps(finish_install(), ensure_ascii=False)); return
     initial = inspect(args.apk)

@@ -1,6 +1,6 @@
 [package]
 name = "stepx-companion"
-version = "0.2.1"
+version = "0.2.25"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -32,13 +32,17 @@ facloud_ui = { path = "../vendor/facloud_ui", optional = true }
 pathfinder_geometry = { version = "0.5.1", optional = true }
 native-dialog = { version = "0.7", optional = true }
 markdown_parser = { path = "../vendor/markdown_parser", optional = true }
+global-hotkey = "0.7"
+async-channel = "2.5"
 
 [profile.dev]
 debug = 1
 codegen-units = 8
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.8"
 x11rb = "0.13.2"
+tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] }
 
 [patch.crates-io]
 core-foundation = { git = "https://github.com/servo/core-foundation-rs", rev = "0bcad1e103ead6bd71c4e5f85598ada9508e3a82" }
@@ -48,3 +52,9 @@ core-text = { git = "https://github.com/servo/core-foundation-rs", rev = "0bcad1
 objc = { git = "https://github.com/warpdotdev/rust-objc.git", rev = "5b656827fa9f863ef0eb22e444a3fedac009e78a" }
 pathfinder_simd = { git = "https://github.com/warpdotdev/pathfinder.git", rev = "34128a129ca6aee168fbc5060a4f21b4f7e486a9" }
 yaml-rust = { git = "https://github.com/warpdotdev/yaml-rust.git", rev = "51684719d0102ca85ff4b21cec39877a0c669e19" }
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+winit = { git = "https://github.com/warpdotdev/winit.git", rev = "7ef01853ae3fe952e6014080a88dc4352662dfb1" }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+tray-icon = { version = "0.26.1", default-features = false }

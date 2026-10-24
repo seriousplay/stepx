@@ -1,18 +1,24 @@
 //! One module per page. Each page exposes `<name>_page()` and `<name>_actions()`.
 
 mod about;
+mod settings;
 mod amoo;
 mod apps;
 mod backscreen;
 mod connect;
+mod expansion;
 mod files;
+mod notifications;
 mod overview;
 mod phone;
 mod sms;
 mod studio;
+mod studio_lab;
 mod tools;
 mod work;
+mod workspace;
 mod work_rich_text;
+pub(super) use work_rich_text::markdown_images;
 
 use super::{theme::*, widgets::*, Companion, Page};
 use facloud_ui::elements::*;
@@ -115,40 +121,76 @@ impl Companion {
                     .get(url)
                     .filter(|path| path.is_file())
                 {
+                    let path = path.to_string_lossy().into_owned();
+                    let image_url = url.to_owned();
                     body.push(
-                        ConstrainedBox::new(
-                            Image::new(
-                                facloud_ui::assets::asset_cache::AssetSource::LocalFile {
-                                    path: path.to_string_lossy().into_owned(),
-                                },
-                                CacheOption::BySize,
-                            )
-                            .contain()
-                            .finish(),
+                        Hoverable::new(
+                            self.mouse_state(format!("attachment-image-{url}")),
+                            move |_| {
+                                ConstrainedBox::new(
+                                    Image::new(
+                                        facloud_ui::assets::asset_cache::AssetSource::LocalFile {
+                                            path: path.clone(),
+                                        },
+                                        CacheOption::BySize,
+                                    )
+                                    .contain()
+                                    .finish(),
+                                )
+                                .with_max_width(440.)
+                                .with_height(240.)
+                                .finish()
+                            },
                         )
-                        .with_max_width(440.)
-                        .with_height(240.)
+                        .with_cursor(facloud_ui::platform::Cursor::PointingHand)
+                        .on_click(move |ctx, _, _| {
+                            ctx.dispatch_typed_action(super::Action::Work(
+                                super::WorkAction::OpenPreview(image_url.clone()),
+                            ))
+                        })
                         .finish(),
                     );
-                } else {
+                } else if let Some(error) = self.work.preview_errors.get(url) {
+                    body.push(self.text("图片暂时无法载入", BODY, p.text2));
+                    body.push(self.text(error, CAPTION, p.text3));
                     body.push(self.button(
                         format!("attachment-preview-{url}"),
-                        if self.work.preview_errors.contains_key(url) {
-                            "重新载入图片"
-                        } else {
-                            "载入图片"
-                        },
+                        "重试",
                         super::Action::Work(super::WorkAction::PreviewAttachment {
                             name: name.into(),
                             kind: kind.into(),
                             mime: mime.into(),
                             url: url.into(),
                         }),
-                        Btn::Ghost,
+                        Btn::Secondary,
                     ));
-                    if let Some(error) = self.work.preview_errors.get(url) {
-                        body.push(self.text(error, CAPTION, p.text3));
-                    }
+                } else {
+                    let label = if self.selected.is_none() {
+                        "连接手机后自动载入图片"
+                    } else if self.work.preview_pending.contains(url) {
+                        "正在载入图片…"
+                    } else {
+                        "图片等待载入…"
+                    };
+                    body.push(
+                        Container::new(
+                            ConstrainedBox::new(
+                                Align::new(self.hstack(
+                                    S2,
+                                    vec![
+                                        self.ui_icon(super::icons::UiIcon::Image, 22., p.text3),
+                                        self.text(label, CAPTION, p.text2),
+                                    ],
+                                ))
+                                .finish(),
+                            )
+                            .with_height(240.)
+                            .finish(),
+                        )
+                        .with_background_color(p.bg)
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+                        .finish(),
+                    );
                 }
             }
             let mut actions = vec![self.button(
@@ -165,11 +207,11 @@ impl Companion {
             if self.work.image_previews.contains_key(url) {
                 actions.push(self.button(
                     format!("attachment-view-{url}"),
-                    "查看原图",
+                    "放大查看",
                     super::Action::Work(super::WorkAction::OpenPreview(url.into())),
                     Btn::Ghost,
                 ));
-            } else if !url.starts_with("http://127.0.0.1:") {
+            } else if !is_image && !url.starts_with("http://127.0.0.1:") {
                 actions.push(self.button(
                     format!("attachment-open-{url}"),
                     "打开附件",
@@ -194,16 +236,61 @@ impl Companion {
         self.panel(body)
     }
 
+    /// A viewer inside the current window: opening and closing never changes shell mode.
+    pub(super) fn amoo_image_viewer(&self) -> Option<El> {
+        let url = self.work.image_viewer.as_ref()?;
+        let path = self.work.image_previews.get(url)?;
+        let p = self.p();
+        let header = self.between(
+            self.heading("图片预览"),
+            self.button(
+                "image-viewer-close",
+                "返回对话",
+                super::Action::Work(super::WorkAction::CloseImagePreview),
+                Btn::Secondary,
+            ),
+        );
+        let image = Image::new(
+            facloud_ui::assets::asset_cache::AssetSource::LocalFile {
+                path: path.to_string_lossy().into_owned(),
+            },
+            CacheOption::BySize,
+        )
+        .contain()
+        .finish();
+        Some(
+            Container::new(
+                Flex::column()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_child(header)
+                    .with_child(
+                        Expanded::new(1., Container::new(image).with_vertical_padding(S4).finish())
+                            .finish(),
+                    )
+                    .with_child(self.line("Esc 返回 · 会话、附件和草稿保留", CAPTION, p.text3))
+                    .finish(),
+            )
+            .with_uniform_padding(S4)
+            .with_background_color(p.surface)
+            .with_border(Border::all(1.).with_border_color(p.border))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.)))
+            .finish(),
+        )
+    }
+
     pub(super) fn page_content(&self) -> El {
         match self.page {
             Page::Overview => self.overview_page(),
+            Page::Expansion => self.expansion_page(),
             Page::BackScreen => self.backscreen_page(),
-            Page::Amoo => self.amoo_page(),
+            Page::Amoo => self.workspace_page(false),
             Page::Account => self.account_usage_page(),
-            Page::About => self.about_page(),
-            Page::Work => self.work_page(),
-            Page::Studio => self.studio_page(),
+            Page::About | Page::Settings => self.settings_page(),
+            Page::Work => self.workspace_page(false),
+            Page::Studio => self.workspace_page(false),
             Page::Sms => self.sms_page(),
+            Page::Notifications => self.notifications_page(),
             Page::Phone => self.phone_page(),
             Page::Files => self.files_page(),
             Page::Apps => self.apps_page(),
@@ -215,19 +302,21 @@ impl Companion {
     /// Buttons on the right of the page header. At most one `Primary`.
     pub(super) fn page_actions(&self) -> Vec<El> {
         match self.page {
-            Page::About => Vec::new(),
+            Page::About | Page::Settings => Vec::new(),
             Page::Overview => self.overview_actions(),
+            Page::Expansion => self.expansion_actions(),
             Page::BackScreen => self.backscreen_actions(),
-            Page::Amoo => self.amoo_actions(),
+            Page::Amoo => self.workspace_actions(),
             Page::Account => vec![self.button(
                 "account-refresh",
                 "刷新用量",
                 super::Action::AmooUi(super::AmooUiAction::RefreshUsage),
                 Btn::Secondary,
             )],
-            Page::Work => self.work_actions(),
-            Page::Studio => self.studio_actions(),
+            Page::Work => self.workspace_actions(),
+            Page::Studio => self.workspace_actions(),
             Page::Sms => self.sms_actions(),
+            Page::Notifications => self.notifications_actions(),
             Page::Phone => self.phone_actions(),
             Page::Files => self.files_actions(),
             Page::Apps => self.apps_actions(),

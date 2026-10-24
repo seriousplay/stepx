@@ -32,6 +32,7 @@ public final class PairingActivity extends Activity implements TextureView.Surfa
     private final Handler ui=new Handler(Looper.getMainLooper());
     private HandlerThread cameraThread; private Handler cameraHandler;
     private CameraDevice camera; private CameraCaptureSession capture; private ImageReader reader;
+    private CompanionUi design;private TextView cameraHint;
     private TextureView texture; private TextView status; private Button scan,enable,cancel;
     private PairingController controller;
     private boolean resumed,waitingNetwork,selectingImage,scannerRequested,galleryRequested,destroyed,openingCamera;
@@ -42,23 +43,24 @@ public final class PairingActivity extends Activity implements TextureView.Surfa
     private boolean diagnosticPending,diagnosticSubmitted;
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private TextView label(LinearLayout p,String value,int size){TextView v=new TextView(this);v.setText(value);v.setTextSize(size);v.setTextColor(Color.rgb(30,30,36));v.setPadding(0,dp(10),0,dp(10));p.addView(v,new LinearLayout.LayoutParams(-1,-2));return v;}
-    private Button button(LinearLayout p,String text,Runnable action){Button b=new Button(this);b.setText(text);b.setAllCaps(false);b.setMinHeight(dp(50));p.addView(b,new LinearLayout.LayoutParams(-1,-2));b.setOnClickListener(v->action.run());return b;}
-    @Override public void onCreate(Bundle state){super.onCreate(state);
-        LinearLayout root=new LinearLayout(this);root.setOrientation(1);root.setPadding(dp(22),dp(22),dp(22),dp(20));root.setBackgroundColor(Color.rgb(248,248,251));
+    private Button button(LinearLayout p,String text,Runnable action){return design.button(p,text,text.equals("开始扫描"),action);}
+    @Override public void onCreate(Bundle state){super.onCreate(state);design=new CompanionUi(this);
+        LinearLayout root=new LinearLayout(this);root.setOrientation(1);root.setPadding(dp(22),dp(22),dp(22),dp(20));root.setBackgroundColor(CompanionUi.BG);
         root.setOnApplyWindowInsetsListener((v,insets)->{Insets bars=insets.getInsets(WindowInsets.Type.systemBars());v.setPadding(dp(22)+bars.left,dp(14)+bars.top,dp(22)+bars.right,dp(16)+bars.bottom);return insets;});
-        button(root,"‹ 返回 StepX伴侣",this::finish);
-        label(root,"扫码连接电脑",26).setTypeface(null,Typeface.BOLD);
-        label(root,"手机与电脑连接同一 Wi-Fi。在 desktop 打开『连接设备』，让二维码完整进入取景框。",15);
-        texture=new TextureView(this);texture.setSurfaceTextureListener(this);root.addView(texture,new LinearLayout.LayoutParams(-1,dp(260)));
+        design.back(root,"扫码连接",this::finish);
+        label(root,"1. 连接同一 Wi-Fi    2. 电脑显示二维码\n3. 扫码并确认连接",14).setTextColor(CompanionUi.MUTED);
+        FrameLayout finder=new FrameLayout(this);finder.setBackground(design.shape(CompanionUi.INK,0,12));finder.setClipToOutline(true);LinearLayout.LayoutParams previewLayout=new LinearLayout.LayoutParams(-1,dp(250));previewLayout.topMargin=dp(16);root.addView(finder,previewLayout);
+        texture=new TextureView(this);texture.setSurfaceTextureListener(this);finder.addView(texture,new FrameLayout.LayoutParams(-1,-1));cameraHint=new TextView(this);cameraHint.setText("点击开始扫描\n将电脑上的二维码放入框内");cameraHint.setTextSize(14);cameraHint.setGravity(Gravity.CENTER);cameraHint.setTextColor(Color.WHITE);UiGlyph icon=new UiGlyph(UiGlyph.SCAN,Color.WHITE);icon.setBounds(0,0,dp(40),dp(40));cameraHint.setCompoundDrawables(null,icon,null,null);cameraHint.setCompoundDrawablePadding(dp(20));finder.addView(cameraHint,new FrameLayout.LayoutParams(-1,-1));
         status=label(root,"正在检查扫码能力…",15);
-        scan=button(root,"扫描 desktop 二维码",this::requestScan);
+        scan=button(root,"开始扫描",this::requestScan);UiGlyph.attach(scan,UiGlyph.SCAN,Color.WHITE,dp(18));
         button(root,"从相册选择二维码",this::requestGallery);
-        enable=button(root,"开启无线连接",this::confirmEnable);
+        LinearLayout options=design.column();root.addView(options);Button more=button(options,"连接选项",()->{});LinearLayout advanced=design.column();options.addView(advanced);advanced.setVisibility(View.GONE);more.setOnClickListener(v->{boolean show=advanced.getVisibility()!=View.VISIBLE;advanced.setVisibility(show?View.VISIBLE:View.GONE);more.setText(show?"收起连接选项":"连接选项");});
+        enable=button(advanced,"开启无线连接",this::confirmEnable);
         cancel=button(root,"取消本次配对",()->{waitingNetwork=false;scannerRequested=false;galleryRequested=false;closeCamera();controller.cancel();});
-        button(root,"管理已配对电脑",()->{try{startActivity(new Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS"));}catch(Exception e){startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));}});
+        button(advanced,"管理已配对电脑",()->{try{startActivity(new Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS"));}catch(Exception e){startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));}});
         label(root,"二维码只在手机本地识别。无线连接使用 Android 安全配对；口令不会上传或保存在文件中。",12);
-        ScrollView scroll=new ScrollView(this);scroll.addView(root);setContentView(scroll);root.requestApplyInsets();
-        controller=new PairingController(this,(s,m)->{status.setText(m);cancel.setEnabled(controller!=null&&controller.isPairing());if(diagnosticSubmitted){diagnostic(s,m);if("paired".equals(s)||"error".equals(s)||"cancelled".equals(s))diagnosticSubmitted=false;}if("paired".equals(s)||"error".equals(s)){scannerRequested=false;closeCamera();}});
+        ScrollView scroll=new ScrollView(this);scroll.addView(root);setContentView(scroll);root.requestApplyInsets();getWindow().getInsetsController().setSystemBarsAppearance(WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+        controller=new PairingController(this,(s,m)->{status.setText(m);cancel.setEnabled(controller!=null&&controller.isPairing());cancel.setVisibility(controller!=null&&controller.isPairing()?View.VISIBLE:View.GONE);if(diagnosticSubmitted){diagnostic(s,m);if("paired".equals(s)||"error".equals(s)||"cancelled".equals(s))diagnosticSubmitted=false;}if("paired".equals(s)||"error".equals(s)){scannerRequested=false;closeCamera();}});
         updateReadiness();
         acceptDiagnostic(getIntent());
     }
@@ -130,11 +132,11 @@ public final class PairingActivity extends Activity implements TextureView.Surfa
     private void updateReadiness(){if(destroyed)return;
         boolean granted=PairingController.permitted(this)&&PairingController.settingsPermitted(this);
         enable.setText(controller.wirelessEnabled()?"关闭无线连接":"开启无线连接");
-        cancel.setEnabled(controller!=null&&controller.isPairing());
+        cancel.setEnabled(controller!=null&&controller.isPairing());cancel.setVisibility(controller!=null&&controller.isPairing()?View.VISIBLE:View.GONE);
         if(!granted)status.setText("请先在 desktop 小工具中安装或修复 StepX伴侣，完成安全配对权限适配。");
         else if(waitingNetwork&&controller.port()>0){waitingNetwork=false;status.setText("无线连接已就绪，可以扫码连接电脑。");if(scannerRequested)requestScan();else if(galleryRequested)requestGallery();}
         else if(controller.ready()&&!scannerRequested&&!controller.isPairing()&&!waitingNetwork&&"正在检查扫码能力…".contentEquals(status.getText()))status.setText("请选择扫描二维码，或从相册选择二维码。");
-        controller.publish();
+        cameraHint.setVisibility(camera!=null?View.GONE:View.VISIBLE);scan.setText(camera!=null?"重新扫描":"开始扫描");controller.publish();
     }
     private final Runnable tick=new Runnable(){public void run(){updateReadiness();ui.postDelayed(this,1000);}};
     private void candidate(String raw){

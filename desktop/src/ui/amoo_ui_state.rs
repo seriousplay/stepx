@@ -31,7 +31,6 @@ enum GuiEvent {
     Progress(amoo_screen::ScreenEvent),
 }
 
-
 struct GuiCancellation(Arc<AtomicBool>);
 // Dropping a desktop view/observer does not cancel a phone-owned task.
 // Cancellation is sent only by an explicit Stop action.
@@ -69,6 +68,11 @@ pub(super) enum AmooUiOutcome {
 }
 #[derive(Default)]
 pub(super) struct AmooUiState {
+    pub snapshot_generation: u64,
+    pub snapshot_worker: Option<super::amoo_sync::SyncWorker>,
+    pub snapshot_job: Option<super::amoo_sync::SnapshotJob>,
+    pub composer_scroll: ClippedScrollStateHandle,
+    pub attachment_scroll: ClippedScrollStateHandle,
     pub screen_mode: bool,
     pub gui_desktop: bool,
     pub gui_status: Option<GuiStatus>,
@@ -118,7 +122,15 @@ impl Companion {
         if images_only {
             dialog = dialog.add_filter("图片", &["png", "jpg", "jpeg", "webp", "gif"]);
         }
-        match dialog.show_open_multiple_file() {
+        #[cfg(feature = "ui-capture")]
+        let fixtures = super::compact_live_check::attachment_selection(images_only);
+        #[cfg(not(feature = "ui-capture"))]
+        let fixtures: Option<Vec<PathBuf>> = None;
+        let selection = match fixtures {
+            Some(paths) => Ok(paths),
+            None => dialog.show_open_multiple_file(),
+        };
+        match selection {
             Ok(paths) if !paths.is_empty() => {
                 if let Err(error) = self.add_amoo_paths(&paths) {
                     self.status = format!("{error:#}");
@@ -133,7 +145,7 @@ impl Companion {
         }
     }
 
-    fn add_amoo_paths(&mut self, paths: &[PathBuf]) -> Result<()> {
+    pub(super) fn add_amoo_paths(&mut self, paths: &[PathBuf]) -> Result<()> {
         let mut all: Vec<PathBuf> = self
             .amoo_attachments
             .iter()
@@ -211,7 +223,11 @@ impl Companion {
             self.error = true;
             return;
         };
-        if self.selected.is_none() {self.status="请先连接手机".into();self.error=true;return;}
+        if self.selected.is_none() {
+            self.status = "请先连接手机".into();
+            self.error = true;
+            return;
+        }
         // Ordinary chat uses the official installed skill and native ability tool calls.
         self.with_device(
             "正在上传附件并发送给 Amoo…",
@@ -245,7 +261,9 @@ impl Companion {
         match action {
             AmooUiAction::GuiMode(enabled) => {
                 self.amoo_ui.screen_mode = *enabled;
-                if *enabled && !self.amoo_ui.gui_running { self.amoo_ui.gui_desktop = true; }
+                if *enabled && !self.amoo_ui.gui_running {
+                    self.amoo_ui.gui_desktop = true;
+                }
                 self.amoo_plus_open = false;
                 self.amoo_recording = false;
                 if *enabled {
@@ -267,20 +285,48 @@ impl Companion {
                 }
             }
             AmooUiAction::GuiPhoneControl(operation) => {
-                let operation=operation.clone();
-                self.with_device("正在控制手机 GUI 任务…", move |adb,device| {
-                    let state=stepx_companion::companion_gui::call(adb,&device,serde_json::json!({"op":"status"}))?;
-                    anyhow::ensure!(matches!(state["phase"].as_str(), Some("running" | "paused")) || (operation == "resume" && (state["userStopped"] == true || state["userPaused"] == true)), "当前没有正在执行的手机任务");
-                    let next=stepx_companion::companion_gui::call(adb,&device,serde_json::json!({"op":format!("user_{operation}"),"task":state["task"]}))?;
-                    Ok(Outcome::AmooUi(AmooUiOutcome::GuiControlled(next["detail"].as_str().unwrap_or("手机任务状态已更新").into())))
+                let operation = operation.clone();
+                self.with_device("正在控制手机 GUI 任务…", move |adb, device| {
+                    let state = stepx_companion::companion_gui::call(
+                        adb,
+                        &device,
+                        serde_json::json!({"op":"status"}),
+                    )?;
+                    anyhow::ensure!(
+                        matches!(state["phase"].as_str(), Some("running" | "paused"))
+                            || (operation == "resume"
+                                && (state["userStopped"] == true || state["userPaused"] == true)),
+                        "当前没有正在执行的手机任务"
+                    );
+                    let next = stepx_companion::companion_gui::call(
+                        adb,
+                        &device,
+                        serde_json::json!({"op":format!("user_{operation}"),"task":state["task"]}),
+                    )?;
+                    Ok(Outcome::AmooUi(AmooUiOutcome::GuiControlled(
+                        next["detail"]
+                            .as_str()
+                            .unwrap_or("手机任务状态已更新")
+                            .into(),
+                    )))
                 });
             }
             AmooUiAction::GuiEnableTools => {
                 self.with_device("正在检查伴侣看屏服务…", |adb, device| {
-                    let state = stepx_companion::companion_gui::call(adb, &device, serde_json::json!({"op":"agent","agentOp":"status"}))?;
-                    let model = if state["modelConfigured"] == true { "模型已配置" } else { "请在手机配置 Step Plan 模型" };
+                    let state = stepx_companion::companion_gui::call(
+                        adb,
+                        &device,
+                        serde_json::json!({"op":"agent","agentOp":"status"}),
+                    )?;
+                    let model = if state["modelConfigured"] == true {
+                        "模型已配置"
+                    } else {
+                        "请在手机配置 Step Plan 模型"
+                    };
                     let progress = state["progress"].as_str().unwrap_or("暂无任务");
-                    Ok(Outcome::AmooUi(AmooUiOutcome::GuiControlled(format!("手机独立执行 · {model} · {progress}"))))
+                    Ok(Outcome::AmooUi(AmooUiOutcome::GuiControlled(format!(
+                        "手机独立执行 · {model} · {progress}"
+                    ))))
                 });
             }
             AmooUiAction::GuiPauseResume => {
@@ -383,6 +429,7 @@ impl Companion {
                 match native_dialog::FileDialog::new()
                     .set_title("保存手机附件")
                     .set_filename(filename)
+                    .set_location(&stepx_companion::settings::downloads())
                     .show_save_single_file()
                 {
                     Ok(Some(output)) => {
@@ -499,9 +546,19 @@ impl Companion {
             let result = Adb::discover()
                 .and_then(|adb| {
                     if desktop {
-                        stepx_companion::gui_agent::run(&adb, &device, &app_name, &task, &stepx_companion::gui_agent::Control { stop: cancel.clone(), pause: pause.clone() }, |event| {
-                            let _ = sender.send(GuiEvent::Progress(event));
-                        })
+                        stepx_companion::gui_agent::run(
+                            &adb,
+                            &device,
+                            &app_name,
+                            &task,
+                            &stepx_companion::gui_agent::Control {
+                                stop: cancel.clone(),
+                                pause: pause.clone(),
+                            },
+                            |event| {
+                                let _ = sender.send(GuiEvent::Progress(event));
+                            },
+                        )
                     } else {
                         amoo_gui::run(&adb, &device, &app_name, &task, &cancel)
                     }
@@ -512,7 +569,9 @@ impl Companion {
     }
 
     pub(super) fn poll_amoo_gui(&mut self) -> bool {
-        if let Some(pause)=&self.amoo_ui.gui_pause {self.amoo_ui.gui_paused=pause.load(Ordering::Relaxed); }
+        if let Some(pause) = &self.amoo_ui.gui_pause {
+            self.amoo_ui.gui_paused = pause.load(Ordering::Relaxed);
+        }
         let event = match self.amoo_ui.gui_rx.as_ref().map(|rx| rx.try_recv()) {
             Some(Ok(event)) => Some(event),
             Some(Err(mpsc::TryRecvError::Disconnected)) => Some(if self.amoo_ui.gui_running {
@@ -560,7 +619,8 @@ impl Companion {
                                 // Before/after frames share a step number. Give changed pixels
                                 // a new cache key so the preview cannot keep the previous frame.
                                 let digest = amoo_media::artifact_content_key(&png);
-                                let path = cache.path().join(format!("screen-{number}-{digest}.png"));
+                                let path =
+                                    cache.path().join(format!("screen-{number}-{digest}.png"));
                                 if std::fs::write(&path, png).is_ok() {
                                     if let Some(previous) = &self.amoo_ui.gui_screenshot {
                                         if *previous != path {
@@ -660,7 +720,9 @@ impl Companion {
 
     pub(super) fn apply_amoo_ui(&mut self, result: AmooUiOutcome) {
         match result {
-            AmooUiOutcome::GuiControlled(message) => { self.amoo_ui.gui_message = message; },
+            AmooUiOutcome::GuiControlled(message) => {
+                self.amoo_ui.gui_message = message;
+            }
             AmooUiOutcome::DraftSent {
                 receipt,
                 draft,
@@ -845,6 +907,8 @@ impl Companion {
 
     fn clear_changed_account_views(&mut self, next: Option<&str>) {
         if self.amoo_ui.account_scope.as_deref() != next {
+            self.clear_text_interaction();
+            self.speech = Default::default();
             if self.amoo_ui.account_scope.is_some()
                 || !self.amoo_ui.gui_records.is_empty()
                 || self.amoo_ui.gui_running
@@ -990,8 +1054,12 @@ impl Companion {
     }
 
     pub(super) fn start_account_usage_sync(&mut self) {
-        if self.amoo_ui.usage_loading || self.demo_mode { return; }
-        let Some(device) = self.selected.clone() else { return; };
+        if self.amoo_ui.usage_loading || self.demo_mode {
+            return;
+        }
+        let Some(device) = self.selected.clone() else {
+            return;
+        };
         let (tx, rx) = mpsc::channel();
         self.amoo_ui.usage_rx = Some(rx);
         self.amoo_ui.usage_loading = true;
@@ -1000,7 +1068,8 @@ impl Companion {
         // Keep slow account-history reads off the interactive device job queue.
         // Changing devices drops the receiver with AmooUiState; stale results cannot apply.
         std::thread::spawn(move || {
-            let result = Adb::discover().and_then(|adb| amoo_usage::fetch_account_usage(&adb, &device))
+            let result = Adb::discover()
+                .and_then(|adb| amoo_usage::fetch_account_usage(&adb, &device))
                 .map_err(|error| format!("{error:#}"));
             let _ = tx.send(result);
         });
@@ -1018,7 +1087,9 @@ impl Companion {
             Ok(snapshot) => {
                 let status = self.status.clone();
                 self.apply_amoo_ui(AmooUiOutcome::Usage(snapshot));
-                if self.busy { self.status = status; }
+                if self.busy {
+                    self.status = status;
+                }
             }
             Err(error) => self.amoo_ui.usage_error = Some(error),
         }
@@ -1029,10 +1100,18 @@ impl Companion {
     pub(super) fn seed_demo_usage(&mut self) {
         // Fictional screenshot-only values; never read from or written to an account cache.
         self.amoo_ui.account_scope = Some("demo-usage".into());
-        self.amoo_ui.messages.insert("demo:work".into(), BTreeMap::from([("demo:reply".into(), UsageMetrics {
-            input_tokens: Some(1_200_000), output_tokens: Some(80_000), total_tokens: Some(1_280_000),
-            ..UsageMetrics::default()
-        })]));
+        self.amoo_ui.messages.insert(
+            "demo:work".into(),
+            BTreeMap::from([(
+                "demo:reply".into(),
+                UsageMetrics {
+                    input_tokens: Some(1_200_000),
+                    output_tokens: Some(80_000),
+                    total_tokens: Some(1_280_000),
+                    ..UsageMetrics::default()
+                },
+            )]),
+        );
         self.amoo_ui.last_updated = Some("15:30:00".into());
     }
 
@@ -1045,13 +1124,28 @@ impl Companion {
             Some(n) => n.to_string(),
             None => "—".into(),
         };
-        let mut columns = Flex::row().with_main_axis_size(MainAxisSize::Max).with_spacing(S4);
-        for (label, number) in [("已同步 Token", value(usage.total_tokens)),
-            ("输入 Token", value(usage.input_tokens)), ("输出 Token", value(usage.output_tokens)),
-            ("账号剩余额度", "未提供".into())] {
-            columns = columns.with_child(Expanded::new(1., self.vstack(S1, vec![
-                self.line(label, CAPTION, p.text2), self.line_w(number, 21., p.text, facloud_ui::fonts::Weight::Semibold),
-            ])).finish());
+        let mut columns = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_spacing(S4);
+        for (label, number) in [
+            ("已同步 Token", value(usage.total_tokens)),
+            ("输入 Token", value(usage.input_tokens)),
+            ("输出 Token", value(usage.output_tokens)),
+            ("账号剩余额度", "未提供".into()),
+        ] {
+            columns = columns.with_child(
+                Expanded::new(
+                    1.,
+                    self.vstack(
+                        S1,
+                        vec![
+                            self.line(label, CAPTION, p.text2),
+                            self.line_w(number, 21., p.text, facloud_ui::fonts::Weight::Semibold),
+                        ],
+                    ),
+                )
+                .finish(),
+            );
         }
         let hint = if self.selected.is_none() {
             "连接手机后自动同步 Amoo 账号用量。".to_string()
@@ -1060,19 +1154,49 @@ impl Companion {
         } else if let Some(error) = &self.amoo_ui.usage_error {
             format!("同步未完成：{error}")
         } else if let Some(time) = &self.amoo_ui.last_updated {
-            format!("同步于 {time} · {} 个会话 · 仅统计已读取历史，非账号全部消费。", self.amoo_ui.messages.len())
+            format!(
+                "同步于 {time} · {} 个会话 · 仅统计已读取历史，非账号全部消费。",
+                self.amoo_ui.messages.len()
+            )
         } else {
             "仅统计已同步消息；手机接口未返回账号总额度与剩余额度。".into()
         };
         self.panel(vec![
-            self.between(self.heading("Amoo 账号与用量"), self.hstack(S2, vec![
-                if self.amoo_ui.usage_loading { self.disabled_button("同步中…") }
-                else if self.selected.is_some() { self.button("ov-usage-refresh", "刷新用量", Action::AmooUi(AmooUiAction::RefreshUsage), Btn::Ghost) }
-                else { self.disabled_button("等待连接") },
-                self.link_action("ov-usage-detail", "查看详情", Action::Page(Page::Account)),
-            ])),
+            self.between(
+                self.heading("Amoo 账号与用量"),
+                self.hstack(
+                    S2,
+                    vec![
+                        if self.amoo_ui.usage_loading {
+                            self.disabled_button("同步中…")
+                        } else if self.selected.is_some() {
+                            self.button(
+                                "ov-usage-refresh",
+                                "刷新用量",
+                                Action::AmooUi(AmooUiAction::RefreshUsage),
+                                Btn::Ghost,
+                            )
+                        } else {
+                            self.disabled_button("等待连接")
+                        },
+                        self.link_action(
+                            "ov-usage-detail",
+                            "查看详情",
+                            Action::Page(Page::Account),
+                        ),
+                    ],
+                ),
+            ),
             columns.finish(),
-            self.text(hint, CAPTION, if self.amoo_ui.usage_error.is_some() { p.warning } else { p.text3 }),
+            self.text(
+                hint,
+                CAPTION,
+                if self.amoo_ui.usage_error.is_some() {
+                    p.warning
+                } else {
+                    p.text3
+                },
+            ),
         ])
     }
 
@@ -1218,7 +1342,7 @@ impl AmooUiState {
         if scope.len() != 64 || !scope.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
-        let home = crate::resources::user_home()?;
+        let home = std::env::var_os("HOME")?;
         Some(
             PathBuf::from(home)
                 .join(".local/state/stepx-companion/amoo-usage-v2")

@@ -254,7 +254,6 @@ class TaskHostGuardTests(unittest.TestCase):
                 self.assertNotIn(getattr(call.func, 'attr', ''), ('kill', 'terminate', 'communicate', 'wait'))
             compile(code, '<worker>', 'exec')
 
-    @unittest.skipUnless(runner.DEX.is_file(), "Build optional task-host DEX first")
     def test_actual_compressed_dex_transport_stays_below_single_argument_limit(self):
         permissions = runner.module('task_host_transport_size_test', 'companion-permissions.py')
         source = permissions.agentbus_worker_source((permissions.WORKFLOW / 'tools/root_worker.py').read_text())

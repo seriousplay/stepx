@@ -3,16 +3,13 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-import os
-import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
-JAVA = Path(shutil.which('javac') or '/missing-jdk/javac').parent
-ANDROID = Path(os.environ.get('ANDROID_HOME', str(Path.home() / 'Android/Sdk'))) / 'platforms/android-36/android.jar'
+JAVA = Path('/home/zhengfa/.local/opt/android-studio/jbr/bin')
+ANDROID = Path('/home/zhengfa/Android/Sdk/platforms/android-36/android.jar')
 GSON = ROOT / 'research/jadx/lib/jadx-1.5.6-all.jar'
 
 
-@unittest.skipUnless((JAVA / "javac").exists() and ANDROID.is_file() and GSON.is_file(), "Requires Android SDK and optional Gson test jar")
 class ModelPreferencesTest(unittest.TestCase):
     def test_only_valid_registered_model_selection_is_returned(self):
         with tempfile.TemporaryDirectory(prefix='stepx-model-preferences-') as tmp:

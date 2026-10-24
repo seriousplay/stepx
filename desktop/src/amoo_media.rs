@@ -88,7 +88,7 @@ pub fn prepare_attachments(paths: &[PathBuf]) -> Result<Vec<Value>> {
 }
 
 pub fn image_request(prompt: &str) -> String {
-    format!("{}\n<amoo_work_image_instructions>\n请真正完成图片创作并交付图片文件，不要只给提示词或说任务已下发。使用当前 Amoo 的 text_to_image 能力；若该工具仅供 task-bot 使用，创建 image 类型任务，并将参考附件传给该任务。必须保留生成结果的实际文件和可下载附件。\n</amoo_work_image_instructions>",prompt.trim())
+    format!("{}\n<amoo_work_image_instructions>\n请真正完成图片创作并交付图片文件，不要只给提示词或说任务已下发。使用当前 Amoo 的 text_to_image 能力；若该工具仅供 task-bot 使用，创建 image 类型任务，并将参考附件传给该任务。必须等待任务实际完成，再交付原图附件或工具真实返回的下载链接；不能将“已下发任务”作为最终交付。保留用户要求的数量、比例、文字与参考图约束；未指定时先交付一张。不要编造文件名或 URL，失败时说明实际原因。服务自动添加的标识如实保留和说明，不能声称已去除服务水印。\n</amoo_work_image_instructions>",prompt.trim())
 }
 
 #[derive(Clone, Debug)]
@@ -489,7 +489,6 @@ mod tests {
                 let deadline = Instant::now() + Duration::from_secs(10);
                 while Instant::now() < deadline {
                     if let Ok((mut stream, _)) = listener.accept() {
-                        // Winsock inherits the listener's non-blocking mode.
                         stream.set_nonblocking(false).unwrap();
                         stream
                             .set_read_timeout(Some(Duration::from_secs(3)))

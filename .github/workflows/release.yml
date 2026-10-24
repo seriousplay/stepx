@@ -5,7 +5,7 @@ on:
       version:
         description: Release version (without v)
         required: true
-        default: '0.2.1'
+        default: '0.2.25'
 permissions:
   contents: read
 jobs:
@@ -51,6 +51,8 @@ jobs:
         run: '"LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV'
       - name: Core tests
         run: cargo test --locked --manifest-path desktop/Cargo.toml --no-default-features --lib --test contracts
+      - name: Runtime and updater tests
+        run: python scripts/ci-platform-smoke.py
       - name: Build
         run: cargo build --release --locked --manifest-path desktop/Cargo.toml
       - name: Package and smoke test
@@ -83,5 +85,5 @@ jobs:
             gh release upload "v$RELEASE_VERSION" dist/* --clobber
             gh release edit "v$RELEASE_VERSION" --target "$GITHUB_SHA" --notes-file docs/RELEASE_NOTES.md
           else
-            gh release create "v$RELEASE_VERSION" dist/* --target "$GITHUB_SHA" --draft --title "StepX Companion $RELEASE_VERSION · 兼容性修复与 Studio 同步" --notes-file docs/RELEASE_NOTES.md
+            gh release create "v$RELEASE_VERSION" dist/* --target "$GITHUB_SHA" --draft --title "StepX Companion $RELEASE_VERSION · Amoo 统一体验与存储扩容" --notes-file docs/RELEASE_NOTES.md
           fi

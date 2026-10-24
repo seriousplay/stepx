@@ -63,6 +63,7 @@ impl Layer {
         {
             return;
         }
+
         if let Some(intersected) = self
             .clip_bounds
             .map_or(Some(rect), |c| rect.intersection(c))

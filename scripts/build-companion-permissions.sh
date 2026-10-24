@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-JDK="${STEPX_JDK:-${JAVA_HOME}}"
-SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+JDK="${STEPX_JDK:-${JAVA_HOME:?Set JAVA_HOME to JDK 17}}"
+SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Set ANDROID_HOME to Android SDK}}"
 BUILD="$PROJECT_ROOT/desktop/.runtime/companion-permissions-build"
 mkdir -p "$BUILD/classes" "$BUILD/dex" "$PROJECT_ROOT/desktop/assets"
 "$JDK/bin/javac" -encoding UTF-8 -source 11 -target 11 -cp "$SDK/platforms/android-36/android.jar" -d "$BUILD/classes" "$PROJECT_ROOT/desktop/companion-permissions/CompanionGrant.java"

@@ -70,7 +70,15 @@ public final class NativeMcpService extends Service {
     private void send(Client c,String body){if(!c.connected)return;Parcel out=Parcel.obtain();try{out.writeInterfaceToken(CALLBACK);out.writeString(body);c.callback.transact(1,out,null,IBinder.FLAG_ONEWAY);}catch(Exception e){stop(c);}finally{out.recycle();}}
     private JSONArray tools()throws Exception {
         int id=getResources().getIdentifier("stepx_mcp_tools","raw",getPackageName());
-        try(InputStream in=getResources().openRawResource(id)){return new JSONArray(new String(in.readAllBytes(),StandardCharsets.UTF_8));}
+        try(InputStream in=getResources().openRawResource(id)){
+            JSONArray definitions=new JSONArray(new String(in.readAllBytes(),StandardCharsets.UTF_8)),visible=new JSONArray();
+            boolean neoSelected=NeoAgent.selected(this);
+            for(int i=0;i<definitions.length();i++){
+                JSONObject tool=definitions.getJSONObject(i);
+                if(McpRoutePolicy.visible(tool.optString("name"),neoSelected))visible.put(tool);
+            }
+            return visible;
+        }
     }
     private void handle(Client c,String body){if(!c.connected)return;Object id=JSONObject.NULL;try{
         JSONObject q=new JSONObject(body);id=q.opt("id");String method=q.getString("method");
@@ -79,7 +87,7 @@ public final class NativeMcpService extends Service {
         switch(method){
             case "initialize":c.initialized=true;result=new JSONObject().put("protocolVersion",q.optJSONObject("params")==null?"2024-11-05":q.getJSONObject("params").optString("protocolVersion","2024-11-05"))
                 .put("capabilities",new JSONObject().put("tools",new JSONObject().put("listChanged",false)))
-                .put("serverInfo",new JSONObject().put("name","StepX伴侣").put("version","0.1.10"));break;
+                .put("serverInfo",new JSONObject().put("name","StepX伴侣").put("version",getPackageManager().getPackageInfo(getPackageName(),0).versionName));break;
             case "ping":result=new JSONObject();break;
             case "tools/list":result=new JSONObject().put("tools",tools());break;
             case "tools/call":
@@ -95,10 +103,15 @@ public final class NativeMcpService extends Service {
         }
         if(id!=null)send(c,new JSONObject().put("jsonrpc","2.0").put("id",id).put("result",result).toString());
     }catch(Exception e){try{send(c,new JSONObject().put("jsonrpc","2.0").put("id",id==null?JSONObject.NULL:id).put("error",new JSONObject().put("code",-32602).put("message",String.valueOf(e.getMessage()))).toString());}catch(Exception ignored){}}}
+    private void requireLegacyOperation(String op){
+        if(!McpRoutePolicy.legacyOperation(op,NeoAgent.selected(this)))
+            throw new IllegalStateException("已启用内置 GUI Agent，请使用 stepx_gui_agent；旧逐步控制仅允许查询或停止既有任务");
+    }
     private JSONObject execute(Client c,JSONObject args)throws Exception{
         if(!c.connected)throw new IllegalStateException("MCP session closed");
         String op=args.getString("op");
         if(!Arrays.asList("status","start","observe","action","pause","resume","stop").contains(op))throw new IllegalArgumentException("Unknown operation");
+        requireLegacyOperation(op);
         if(op.equals("stop")&&c.task.isEmpty()&&c.uid==endedUid&&!endedTask.isEmpty()&&endedTask.equals(args.optString("task"))) {
             JSONObject stopped=new JSONObject().put("ok",true).put("task",endedTask).put("phase","stopped").put("alreadyStopped",true).put("detail","原会话已结束，未执行任何新动作");
             return new JSONObject().put("isError",false).put("content",new JSONArray().put(new JSONObject().put("type","text").put("text",stopped.toString())));
@@ -112,7 +125,7 @@ public final class NativeMcpService extends Service {
         }
         GuiAccessibilityService s=GuiAccessibilityService.instance;
         if(s==null)throw new IllegalStateException("请在 StepX伴侣启用看屏操作服务");
-        CompletableFuture<JSONObject> answer=new CompletableFuture<>();s.main.post(()->{if(!answer.isDone()){try{if(!c.connected)throw new IllegalStateException("MCP session closed");if(!op.equals("status")&&!op.equals("start")&&!op.equals("stop"))s.task.renew(c.task,SystemClock.elapsedRealtime());s.request(request,answer);}catch(Exception e){answer.completeExceptionally(e);}}});
+        CompletableFuture<JSONObject> answer=new CompletableFuture<>();s.main.post(()->{if(!answer.isDone()){try{if(!c.connected)throw new IllegalStateException("MCP session closed");requireLegacyOperation(op);if(!op.equals("status")&&!op.equals("start")&&!op.equals("stop"))s.task.renew(c.task,SystemClock.elapsedRealtime());s.request(request,answer);}catch(Exception e){answer.completeExceptionally(e);}}});
         JSONObject value;try{value=answer.get(8,TimeUnit.SECONDS);}catch(TimeoutException e){answer.cancel(false);throw e;}
         if(!value.optBoolean("ok"))throw new IllegalStateException(value.optString("error","Operation failed"));
         if(op.equals("start")){if(!c.task.isEmpty())new File(getExternalFilesDir(null),"mcp-screen-"+c.task+".jpg").delete();c.task=request.getString("task");if(!c.connected){stop(c);throw new IllegalStateException("MCP session closed");}}if(op.equals("stop")){endedUid=c.uid;endedTask=c.task;new File(getExternalFilesDir(null),"mcp-screen-"+c.task+".jpg").delete();c.task="";}

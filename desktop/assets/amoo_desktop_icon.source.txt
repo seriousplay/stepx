@@ -1,0 +1,23 @@
+Generated with Codex built-in image_gen (imagegen skill), transparent_background=true, 2026-10-22.
+Source reference: amoo_icon.png, extracted original Amoo icon retained unchanged.
+Desktop asset: amoo_desktop_icon.png
+Usage: application / Dock icon and top-left desktop brand mark. The Amoo navigation keeps its original star glyph.
+Generated output: exec-7ef94874-962d-4f15-a33e-d17c32436459.png
+The original mascot identity remains the property of its original rights holder.
+
+Initial prompt:
+Use case: precise-object-edit / background-extraction.
+Asset type: production desktop application and Linux Dock icon, square transparent PNG.
+Input image 1 is the EDIT TARGET: the existing Amoo orange mascot app icon.
+Primary request: optimize this exact mascot for a desktop Dock. Remove the entire dark black rectangular background and its four opaque square corners. Output a genuinely transparent alpha background, including all corners and negative space. Make the mascot itself a clean, friendly, polished app icon with no enclosing tile.
+Preserve invariants: preserve the same recognizable rounded star-shaped Amoo character silhouette, its two simple vertical white eyes, its upright forward-facing pose, and the warm yellow-orange-coral palette. No mouth, extra face details, lettering, new symbols or accessories.
+Refinement: gently sharpen the soft silhouette and make the body an appealing warm orange jelly-like form with subtle dimensional shading and a small restrained warm highlight. Remove the muddy dark-brown haze and black rectangular backdrop. Keep enough contrast for both light and dark desktops. Avoid excessive bloom, noisy textures, heavy shadows or dramatic reflections.
+Composition: one centered complete mascot, occupying approximately 82% of square canvas width and height, with balanced transparent padding, no cropping. Clean anti-aliased alpha edges for legibility at 32, 48 and 64 px.
+No mockup, no desktop screenshot, no grid of options, no border, no background tile, no watermark. The background must be true transparency, not painted checkerboard or a solid color.
+
+Final finishing prompt:
+Use case: background-extraction / precise-object-edit.
+Asset: final desktop Dock application icon.
+Edit target: the supplied transparent orange Amoo mascot icon.
+Make one precise finishing pass: preserve the existing warm orange star mascot, white eyes, shape, proportions and soft dimensional jelly shading. Clean up the alpha silhouette: remove ALL isolated colored specks, stray red or yellow pixels, halo fragments and detached marks outside the mascot. Keep the exterior of the silhouette and all four corners completely transparent. Use smooth clean antialiased edges without a bright outline or dark fringe. Center the complete mascot in a square canvas with at least 8% fully transparent padding on all four sides. No black square, no background tile, no painted checkerboard, no text, no additional objects. Do not redesign the character. Produce the actual ready-to-use transparent PNG asset.
+

@@ -5,6 +5,17 @@ use stepx_companion::studio::{self, CloudLibrary, Work};
 #[derive(Clone, Debug)]
 pub(super) enum StudioAction {
     Tab(u8),
+    Source(u8),
+    WebsiteLogin,
+    WebsiteDisconnect,
+    WebSelect(usize),
+    WebKeep,
+    Edit(bool),
+    ListPage(usize),
+    PhoneItem(usize),
+    KeepWeb(usize),
+    UsePhone(usize),
+    KeepPhone(usize),
     Category(usize),
     Select(usize),
     New,
@@ -33,10 +44,21 @@ pub(super) enum StudioOutcome {
     Qr(String, PathBuf),
     Phone(String, String),
     Cloud(String, Result<CloudLibrary, String>),
+    Workspace(
+        String,
+        Result<CloudLibrary, String>,
+        Result<CloudLibrary, String>,
+    ),
 }
 #[derive(Default)]
 pub(super) struct StudioUiState {
     pub tab: u8,
+    pub source: u8,
+    pub editing: bool,
+    pub list_page: usize,
+    pub web: Option<CloudLibrary>,
+    pub web_error: Option<String>,
+    pub web_selected: Option<usize>,
     pub category: usize,
     pub works: Vec<Work>,
     pub selected: Option<usize>,
@@ -58,15 +80,42 @@ pub(super) const BRIEFS: [(&str,&str,&str);3] = [
 ];
 impl Companion {
     pub(super) fn sync_studio_cloud(&mut self) {
-        self.studio.cloud_checked=Some(Instant::now());
-        self.with_device("正在用手机账号同步 Studio 作品…", |adb,d| {
-            Ok(Outcome::Studio(StudioOutcome::Cloud(d.serial.clone(),studio::sync_cloud(adb,&d).map_err(|e|e.to_string()))))
+        self.studio.cloud_checked = Some(Instant::now());
+        self.with_device("正在用手机账号同步 Studio 作品…", |adb, d| {
+            let phone = studio::sync_cloud(adb, &d).map_err(|e| e.to_string());
+            let website = studio::sync_web(adb, &d).map_err(|e| e.to_string());
+            Ok(Outcome::Studio(StudioOutcome::Workspace(
+                d.serial.clone(),
+                phone,
+                website,
+            )))
         });
     }
     pub(super) fn tick_studio_cloud(&mut self) {
-        if self.page!=Page::Studio || self.busy || self.demo_mode || self.selected.is_none() || !self.studio.loaded {return;}
-        let interval=if self.studio.connecting_until.is_some_and(|t|t>Instant::now()){3}else{60};
-        if self.studio.cloud_checked.is_none_or(|t|t.elapsed()>=Duration::from_secs(interval)) {self.sync_studio_cloud();}
+        if !(self.page==Page::Studio || (self.page==Page::Amoo && self.workspace.panel==4))
+            || self.busy
+            || self.demo_mode
+            || self.selected.is_none()
+            || !self.studio.loaded
+        {
+            return;
+        }
+        let interval = if self
+            .studio
+            .connecting_until
+            .is_some_and(|t| t > Instant::now())
+        {
+            3
+        } else {
+            60
+        };
+        if self
+            .studio
+            .cloud_checked
+            .is_none_or(|t| t.elapsed() >= Duration::from_secs(interval))
+        {
+            self.sync_studio_cloud();
+        }
     }
     pub(super) fn refresh_studio(&mut self) {
         self.studio.loaded = true;
@@ -82,50 +131,186 @@ impl Companion {
         action: &StudioAction,
         ctx: &mut ViewContext<Self>,
     ) {
-        if self.busy && !matches!(action, StudioAction::Tab(_)) {
+        if self.busy
+            && !matches!(
+                action,
+                StudioAction::Tab(_)
+                    | StudioAction::Source(_)
+                    | StudioAction::CloudCategory(_)
+                    | StudioAction::CloudSelect(_)
+                    | StudioAction::WebSelect(_)
+                    | StudioAction::Select(_)
+                    | StudioAction::ListPage(_)
+                    | StudioAction::Edit(_)
+            )
+        {
             return;
         }
         self.error = false;
         match action {
-            StudioAction::CloudRefresh=>self.sync_studio_cloud(),
-            StudioAction::ConnectAccount=>{
-                self.studio.connecting_until=Some(Instant::now()+Duration::from_secs(120));
-                self.studio.cloud_checked=None;
-                self.with_device("请在手机选择账号并完成系统授权…",|adb,d|{
-                    studio::open_phone(adb,&d,"account",None)?;
-                    Ok(Outcome::Studio(StudioOutcome::Phone(d.serial,"请在手机确认账号授权；完成后自动同步作品".into())))
+            StudioAction::ListPage(page) => self.studio.list_page = *page,
+            StudioAction::PhoneItem(i) => {
+                self.studio.cloud_selected = Some(*i);
+                self.studio.source = 1;
+                self.studio.cloud_category = 3;
+                self.fields[F_STUDIO_SEARCH].clear();
+            }
+            StudioAction::KeepWeb(i) => {
+                self.studio.web_selected = Some(*i);
+                self.handle_studio_action(&StudioAction::WebKeep, ctx);
+            }
+            StudioAction::UsePhone(i) => {
+                self.studio.cloud_selected = Some(*i);
+                self.handle_studio_action(&StudioAction::CloudOpen, ctx);
+            }
+            StudioAction::KeepPhone(i) => {
+                self.studio.cloud_selected = Some(*i);
+                self.handle_studio_action(&StudioAction::CloudKeep, ctx);
+            }
+            StudioAction::Source(source) => {
+                self.studio.list_page = 0;
+                self.studio.source = (*source).min(2);
+                self.studio.tab = 0;
+                self.fields[F_STUDIO_SEARCH].clear();
+                self.scroll = Default::default();
+            }
+            StudioAction::Edit(value) => self.studio.editing = *value,
+            StudioAction::WebsiteLogin => {
+                self.studio.connecting_until = Some(Instant::now() + Duration::from_secs(300));
+                self.studio.cloud_checked = None;
+                self.with_device("正在打开手机 Studio 官方登录…", |adb, d| {
+                    studio::open_phone(adb, &d, "website", None)?;
+                    Ok(Outcome::Studio(StudioOutcome::Phone(
+                        d.serial,
+                        "请在手机完成官网验证，完成后将自动同步项目".into(),
+                    )))
                 });
             }
-            StudioAction::DisconnectAccount=>{
-                self.studio.cloud=None;self.studio.cloud_selected=None;self.studio.connecting_until=None;
-                self.with_device("正在断开作品同步…",|adb,d|{
-                    studio::phone_call(adb,&d,serde_json::json!({"op":"cloud-disconnect"}))?;
-                    Ok(Outcome::Studio(StudioOutcome::Cloud(d.serial,Ok(CloudLibrary::default()))))
+            StudioAction::WebsiteDisconnect => {
+                self.studio.web = None;
+                self.studio.web_selected = None;
+                self.studio.connecting_until = None;
+                self.with_device("正在断开 Studio 官网…", |adb, d| {
+                    stepx_companion::studio_browser::close_session();
+                    studio::phone_call(adb, &d, serde_json::json!({"op":"web-disconnect"}))?;
+                    Ok(Outcome::Studio(StudioOutcome::Phone(
+                        d.serial,
+                        "已断开官网同步并清除伴侣中的网页登录会话".into(),
+                    )))
                 });
             }
-            StudioAction::CloudCategory(i)=>{self.studio.cloud_category=(*i).min(2);self.studio.cloud_selected=self.studio.cloud.as_ref().and_then(|c|c.items.iter().position(|w|w.category==CATEGORIES[self.studio.cloud_category]));}
-            StudioAction::CloudSelect(i)=>self.studio.cloud_selected=Some(*i),
-            StudioAction::CloudOpen|StudioAction::CloudKeep=>{
-                let Some(cloud)=self.studio.cloud.as_ref().filter(|c|c.authorized) else{return;};
-                let Some(item)=self.studio.cloud_selected.and_then(|i|cloud.items.get(i)).cloned() else{return;};
-                let scope=cloud.scope.clone();let keep=matches!(action,StudioAction::CloudKeep);
-                if keep {self.studio.tab=1;}
-                self.with_device("正在核对当前手机账号…",move |adb,d|{
-                    let status=studio::phone_call(adb,&d,serde_json::json!({"op":"cloud-status"}))?;
-                    anyhow::ensure!(status["authorized"]==true && status["scope"]==scope,"手机账号已变化，请刷新作品后重试");
-                    if let Some(w)=item.experience(){
-                        if keep {return Ok(Outcome::Studio(StudioOutcome::Library(studio::save(w.clone())?,Some(w.url))));}
-                        studio::send(adb,&d,&w)?;
-                        let note=studio::open_phone(adb,&d,"open",Some(&w.id))?;
-                        Ok(Outcome::Studio(StudioOutcome::Phone(d.serial,note)))
-                    }else{
-                        let note=studio::open_phone(adb,&d,"amoo",None)?;
-                        Ok(Outcome::Studio(StudioOutcome::Phone(d.serial,note)))
+            StudioAction::WebSelect(i) => self.studio.web_selected = Some(*i),
+            StudioAction::WebKeep => {
+                let Some(w) = self
+                    .studio
+                    .web
+                    .as_ref()
+                    .and_then(|c| self.studio.web_selected.and_then(|i| c.items.get(i)))
+                    .cloned()
+                else {
+                    return;
+                };
+                if let Some(url) = w.editor() {
+                    let work = match Work::new(&w.name, &url, &w.category) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            self.status = e.to_string();
+                            self.error = true;
+                            return;
+                        }
+                    };
+                    self.submit("正在收藏项目…", move |_| {
+                        Ok(Outcome::Studio(StudioOutcome::Library(
+                            studio::save(work)?,
+                            Some(url),
+                        )))
+                    });
+                }
+            }
+            StudioAction::CloudRefresh => self.sync_studio_cloud(),
+            StudioAction::ConnectAccount => {
+                self.studio.connecting_until = Some(Instant::now() + Duration::from_secs(120));
+                self.studio.cloud_checked = None;
+                self.with_device(
+                    "请在手机选择账号并完成系统授权…",
+                    |adb, d| {
+                        studio::open_phone(adb, &d, "account", None)?;
+                        Ok(Outcome::Studio(StudioOutcome::Phone(
+                            d.serial,
+                            "请在手机确认账号授权；完成后自动同步作品".into(),
+                        )))
+                    },
+                );
+            }
+            StudioAction::DisconnectAccount => {
+                self.studio.cloud = None;
+                self.studio.cloud_selected = None;
+                self.studio.connecting_until = None;
+                self.with_device("正在断开作品同步…", |adb, d| {
+                    studio::phone_call(adb, &d, serde_json::json!({"op":"cloud-disconnect"}))?;
+                    Ok(Outcome::Studio(StudioOutcome::Cloud(
+                        d.serial,
+                        Ok(CloudLibrary::default()),
+                    )))
+                });
+            }
+            StudioAction::CloudCategory(i) => {
+                self.studio.list_page = 0;
+                self.studio.cloud_category = (*i).min(3);
+                self.studio.cloud_selected = self.studio.cloud.as_ref().and_then(|c| {
+                    c.items.iter().position(|w| {
+                        self.studio.cloud_category == 3
+                            || w.category == CATEGORIES[self.studio.cloud_category]
+                    })
+                });
+            }
+            StudioAction::CloudSelect(i) => self.studio.cloud_selected = Some(*i),
+            StudioAction::CloudOpen | StudioAction::CloudKeep => {
+                let Some(cloud) = self.studio.cloud.as_ref().filter(|c| c.authorized) else {
+                    return;
+                };
+                let Some(item) = self
+                    .studio
+                    .cloud_selected
+                    .and_then(|i| cloud.items.get(i))
+                    .cloned()
+                else {
+                    return;
+                };
+                let scope = cloud.scope.clone();
+                let keep = matches!(action, StudioAction::CloudKeep);
+                if keep {
+                    self.studio.tab = 0;
+                    self.studio.source = 2;
+                }
+                self.with_device("正在核对当前手机账号…", move |adb, d| {
+                    let status =
+                        studio::phone_call(adb, &d, serde_json::json!({"op":"cloud-status"}))?;
+                    anyhow::ensure!(
+                        status["authorized"] == true && status["scope"] == scope,
+                        "手机账号已变化，请刷新作品后重试"
+                    );
+                    if let Some(w) = item.experience() {
+                        if keep {
+                            return Ok(Outcome::Studio(StudioOutcome::Library(
+                                studio::save(w.clone())?,
+                                Some(w.url),
+                            )));
+                        }
+                        studio::send(adb, &d, &w)?;
+                        let note = studio::open_phone(adb, &d, "open", Some(&w.id))?;
+                        Ok(Outcome::Studio(StudioOutcome::Phone(d.serial, note)))
+                    } else {
+                        let note = studio::open_phone(adb, &d, "amoo", None)?;
+                        Ok(Outcome::Studio(StudioOutcome::Phone(d.serial, note)))
                     }
                 });
             }
             StudioAction::Tab(tab) => {
-                self.studio.tab = *tab;
+                self.studio.tab = if *tab == 1 { 0 } else { *tab };
+                if *tab == 1 {
+                    self.studio.source = 2;
+                }
                 self.scroll = Default::default();
             }
             StudioAction::Category(i) => self.studio.category = (*i).min(2),
@@ -166,6 +351,9 @@ impl Companion {
                 }
             }
             StudioAction::New => {
+                self.studio.editing = true;
+                self.studio.source = 2;
+                self.studio.tab = 0;
                 self.studio.selected = None;
                 self.studio.qr = None;
                 self.studio.phone_note = None;
@@ -312,20 +500,80 @@ impl Companion {
     }
     pub(super) fn apply_studio(&mut self, result: StudioOutcome) {
         match result {
-            StudioOutcome::Cloud(serial,result)=>{
-                if !self.selected.as_ref().is_some_and(|d|d.serial==serial){return;}
-                self.studio.cloud_checked=Some(Instant::now());
-                match result{
-                    Ok(cloud)=>{
-                        let old_id=self.studio.cloud.as_ref().filter(|c|c.scope==cloud.scope).and_then(|c|self.studio.cloud_selected.and_then(|i|c.items.get(i))).map(|w|w.id.clone());
-                        self.studio.cloud_selected=old_id.and_then(|id|cloud.items.iter().position(|w|w.id==id));
-                        self.studio.cloud_selected=self.studio.cloud_selected.or_else(||cloud.items.iter().position(|w|w.category==CATEGORIES[self.studio.cloud_category]));
-                        self.studio.cloud_error=None;
-                        if cloud.authorized {self.studio.connecting_until=None;self.status=format!("已同步 {} 个应用、{} 个智能体、{} 个技能",cloud.totals[0],cloud.totals[1],cloud.totals[2]);}
-                        else{self.status="手机账号尚未连接 Studio 作品同步".into();}
-                        self.studio.cloud=Some(cloud);
+            StudioOutcome::Workspace(serial, phone, website) => {
+                if !self.selected.as_ref().is_some_and(|d| d.serial == serial) {
+                    return;
+                }
+                self.apply_studio(StudioOutcome::Cloud(serial, phone));
+                match website {
+                    Ok(web) => {
+                        let old = self
+                            .studio
+                            .web
+                            .as_ref()
+                            .filter(|c| c.scope == web.scope)
+                            .and_then(|c| self.studio.web_selected.and_then(|i| c.items.get(i)))
+                            .map(|w| w.id.clone());
+                        self.studio.web_selected = old
+                            .and_then(|id| web.items.iter().position(|w| w.id == id))
+                            .or_else(|| if web.items.is_empty() { None } else { Some(0) });
+                        self.studio.web_error = None;
+                        if web.authorized {
+                            self.studio.connecting_until = None;
+                            self.status = format!(
+                                "官网项目已同步：{} 个应用、{} 个智能体、{} 个技能",
+                                web.totals[0], web.totals[1], web.totals[2]
+                            );
+                        }
+                        self.studio.web = Some(web);
                     }
-                    Err(error)=>{self.studio.cloud=None;self.studio.cloud_selected=None;self.studio.cloud_error=Some(error.clone());self.status=error;self.error=true;}
+                    Err(e) => {
+                        self.studio.web = None;
+                        self.studio.web_selected = None;
+                        self.studio.web_error = Some(e);
+                    }
+                }
+            }
+            StudioOutcome::Cloud(serial, result) => {
+                if !self.selected.as_ref().is_some_and(|d| d.serial == serial) {
+                    return;
+                }
+                self.studio.cloud_checked = Some(Instant::now());
+                match result {
+                    Ok(cloud) => {
+                        let old_id = self
+                            .studio
+                            .cloud
+                            .as_ref()
+                            .filter(|c| c.scope == cloud.scope)
+                            .and_then(|c| self.studio.cloud_selected.and_then(|i| c.items.get(i)))
+                            .map(|w| w.id.clone());
+                        self.studio.cloud_selected =
+                            old_id.and_then(|id| cloud.items.iter().position(|w| w.id == id));
+                        self.studio.cloud_selected = self.studio.cloud_selected.or_else(|| {
+                            cloud.items.iter().position(|w| {
+                                self.studio.cloud_category == 3
+                                    || w.category == CATEGORIES[self.studio.cloud_category]
+                            })
+                        });
+                        self.studio.cloud_error = None;
+                        if cloud.authorized {
+                            self.status = format!(
+                                "已同步 {} 个应用、{} 个智能体、{} 个技能",
+                                cloud.totals[0], cloud.totals[1], cloud.totals[2]
+                            );
+                        } else {
+                            self.status = "手机账号尚未连接 Studio 作品同步".into();
+                        }
+                        self.studio.cloud = Some(cloud);
+                    }
+                    Err(error) => {
+                        self.studio.cloud = None;
+                        self.studio.cloud_selected = None;
+                        self.studio.cloud_error = Some(error.clone());
+                        self.status = error;
+                        self.error = true;
+                    }
                 }
             }
             StudioOutcome::Library(works, url) => {
@@ -336,6 +584,9 @@ impl Companion {
                         .map(|w| w.url.clone())
                 });
                 self.studio.works = works;
+                if url.is_some() {
+                    self.studio.editing = false;
+                }
                 self.studio.loaded = true;
                 self.studio.selected =
                     selected_url.and_then(|u| self.studio.works.iter().position(|w| w.url == u));
@@ -352,6 +603,18 @@ impl Companion {
                             .unwrap_or(0);
                         self.studio.selected = Some(0);
                     }
+                }
+                if let Some(w) = self.studio.selected.and_then(|i| self.studio.works.get(i)) {
+                    self.fields[F_STUDIO_NAME].set(&w.name);
+                    self.fields[F_STUDIO_URL].set(&w.url);
+                    self.studio.category = CATEGORIES
+                        .iter()
+                        .position(|c| *c == w.category)
+                        .unwrap_or(0);
+                }
+                if url.is_some() {
+                    self.studio.source = 2;
+                    self.studio.tab = 0;
                 }
                 self.studio.qr = None;
                 self.status = if url.is_some() {

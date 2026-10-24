@@ -1,6 +1,8 @@
 # Fixed Office text reader; never runs document macros or embedded scripts.
-import sys, zipfile, posixpath, xml.etree.ElementTree as ET
+import sys, zipfile, posixpath, json, xml.etree.ElementTree as ET
 p = sys.argv[1]
+preview = '--preview' in sys.argv[2:]
+preview_sheets = []
 MAX_XML = 8 * 1024 * 1024
 MAX_TEXT = 65536
 parts = []
@@ -52,8 +54,10 @@ with zipfile.ZipFile(p) as z:
                 if name.startswith('xl/worksheets/') and name in names: sheets.append((sheet.get('name',name),name))
         for label, name in sheets[:30]:
             append('工作表: ' + label)
+            preview_rows = []
             for row in tree(z, name).findall('.//s:row', ns):
                 values = []
+                preview_cells = [''] * 8
                 for cell in row.findall('s:c', ns):
                     value = cell.findtext('s:v', default='', namespaces=ns)
                     typ = cell.get('t')
@@ -63,11 +67,26 @@ with zipfile.ZipFile(p) as z:
                     elif typ == 'inlineStr':
                         value = ''.join(t.text or '' for t in cell.findall('.//s:t', ns))
                     formula = cell.findtext('s:f', default='', namespaces=ns)
+                    if preview and len(preview_rows) < 20:
+                        # Keep empty columns in place and use cached results only.
+                        # Never evaluate workbook formulas, links or macros.
+                        column = 0
+                        for c in cell.get('r', ''):
+                            if not ('A' <= c <= 'Z'): break
+                            column = column * 26 + ord(c) - ord('A') + 1
+                            if column > 8: break
+                        if 1 <= column <= 8:
+                            preview_cells[column-1] = (value if value != '' or not formula else '尚未计算')[:160]
                     if formula: value = f'={formula} → {value if value != "" else "[尚无计算缓存]"}'
                     values.append(f'{cell.get("r", "")}: {value}')
+                if preview and len(preview_rows) < 20:
+                    preview_rows.append({'row':row.get('r',''), 'cells':preview_cells})
                 append(' | '.join(values))
                 if size >= MAX_TEXT: break
+                if preview and len(preview_rows) >= 20: break
+            if preview: preview_sheets.append({'name':label, 'rows':preview_rows})
             if size >= MAX_TEXT: break
+            if preview and len(preview_sheets) >= 3: break
     elif 'ppt/presentation.xml' in names:
         ns = {'a':'http://schemas.openxmlformats.org/drawingml/2006/main'}
         rel = {'r': 'http://schemas.openxmlformats.org/package/2006/relationships'}
@@ -90,4 +109,4 @@ if size >= MAX_TEXT:
 result = '\n'.join(parts)
 if not result.strip():
     raise ValueError('文档没有可提取的文字')
-sys.stdout.write(result)
+sys.stdout.write(json.dumps({'sheets':preview_sheets},ensure_ascii=False) if preview else result)

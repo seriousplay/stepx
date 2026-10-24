@@ -2,17 +2,21 @@
 //! read-only; compatibility changes require an explicit installation or action.
 use crate::{
     adb::Adb,
-    device::{Device, GoogleSuiteStatus},
+    device::{
+        Device, GoogleSuiteStatus, PlayProtectBlocker, PlayProtectCheck, PlayProtectFirmware,
+        PlayProtectLayer, PlayProtectLeverage, PlayProtectPatchFreshness, PlayProtectReport,
+        PlayProtectVendorServices,
+    },
 };
 use anyhow::{bail, Context, Result};
 use std::{path::PathBuf, process::Command};
 
+const PLAY_PROTECT_SCHEMA: &str = "stepx-play-protect-certification-v1";
+
 pub fn workflow_root() -> Result<PathBuf> {
     let root = std::env::var_os("STEPX_GOOGLE_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            crate::resources::root().join("handoff/google-play-stepx")
-        });
+        .unwrap_or_else(|| crate::resources::root().join("handoff/google-play-stepx"));
     if !root.join("tools/manage.py").is_file() {
         bail!("缺少 Google 安装组件，请配置 STEPX_GOOGLE_HOME 后重试");
     }
@@ -47,8 +51,7 @@ fn run_compatibility_script(device: &Device, adb: &Adb, action: &str) -> Result<
     if !matches!(action, "status" | "apply" | "rollback") {
         bail!("不支持的 Google 兼容补丁操作");
     }
-    let script =
-        crate::resources::root().join("scripts/google-play-compat.py");
+    let script = crate::resources::root().join("scripts/google-play-compat.py");
     if !script.is_file() {
         bail!("当前桌面安装缺少 Google Play 兼容组件，请更新 desktop 后重试");
     }
@@ -78,6 +81,254 @@ fn run_compatibility_script(device: &Device, adb: &Adb, action: &str) -> Result<
         bail!("Google Play 兼容组件异常退出，请重新检测");
     }
     Ok(value)
+}
+
+/// The read-only certification model script sits next to the compatibility
+/// component so a packaged desktop carries both.
+fn play_protect_script() -> Result<PathBuf> {
+    let script = crate::resources::root().join("scripts/play_protect_certification.py");
+    if !script.is_file() {
+        bail!("当前桌面安装缺少 Play 保护机制认证组件，请更新 desktop 后重试");
+    }
+    Ok(script)
+}
+
+/// Attestation evidence captured earlier. Generating a new attestation key
+/// needs a diagnostic app on the phone, so only an existing capture is read.
+fn captured_attestation_chain() -> Option<PathBuf> {
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../backups/google-play-compat-20261023/key-attestation-validation");
+    let complete = ["leaf.pem", "intermediates.pem", "chain-provided-root.pem"]
+        .iter()
+        .all(|name| directory.join(name).is_file());
+    complete.then_some(directory)
+}
+
+fn play_protect_text(value: &serde_json::Value, key: &str) -> Result<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .with_context(|| format!("Play 保护机制认证结果缺少 {key}"))
+}
+
+/// Optional text: a missing key stays absent instead of becoming an empty string.
+fn optional_text(value: &serde_json::Value, key: &str) -> Option<String> {
+    match value.get(key) {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(text)) => Some(text.clone()),
+        Some(other) => Some(other.to_string()),
+    }
+}
+
+/// Optional integer; a missing key stays absent.
+fn optional_number(value: &serde_json::Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(serde_json::Value::as_i64)
+}
+
+/// Optional booleans must survive as `None`; a missing key is not a failure.
+fn tri_state_flag(value: &serde_json::Value, key: &str) -> Option<bool> {
+    match value.get(key) {
+        None | Some(serde_json::Value::Null) => None,
+        Some(flag) => flag.as_bool(),
+    }
+}
+
+/// `value` and `expected` carry numbers and booleans as well as strings.
+fn play_protect_scalar(value: &serde_json::Value, key: &str) -> Result<String> {
+    let field = value
+        .get(key)
+        .with_context(|| format!("Play 保护机制认证结果缺少 {key}"))?;
+    match field {
+        serde_json::Value::String(text) => Ok(text.clone()),
+        serde_json::Value::Bool(flag) => Ok(flag.to_string()),
+        serde_json::Value::Number(number) => Ok(number.to_string()),
+        serde_json::Value::Null => Ok("空".into()),
+        _ => bail!("Play 保护机制认证字段 {key} 类型无效"),
+    }
+}
+
+/// Only the script's bounded JSON summary may reach the UI. Worker stderr and
+/// private rollback receipts are never displayed here.
+pub fn play_protect_from_value(value: &serde_json::Value) -> Result<PlayProtectReport> {
+    if value.get("schema").and_then(serde_json::Value::as_str) != Some(PLAY_PROTECT_SCHEMA) {
+        bail!("Play 保护机制认证组件版本不匹配");
+    }
+    let layers = value
+        .get("layers")
+        .and_then(serde_json::Value::as_array)
+        .context("Play 保护机制认证结果缺少分层证据")?;
+    let mut parsed = Vec::with_capacity(layers.len());
+    for layer in layers {
+        let checks = layer
+            .get("checks")
+            .and_then(serde_json::Value::as_array)
+            .context("Play 保护机制认证分层缺少检查项")?;
+        let mut entries = Vec::with_capacity(checks.len());
+        for entry in checks {
+            entries.push(PlayProtectCheck {
+                check: play_protect_text(entry, "check")?,
+                value: play_protect_scalar(entry, "value")?,
+                expected: play_protect_scalar(entry, "expected")?,
+                // A missing `ok` means the probe did not run; it is never a pass.
+                ok: entry.get("ok").and_then(serde_json::Value::as_bool),
+                detail: entry
+                    .get("detail")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+            });
+        }
+        parsed.push(PlayProtectLayer {
+            layer: play_protect_text(layer, "layer")?,
+            title: play_protect_text(layer, "title")?,
+            owner: play_protect_text(layer, "owner")?,
+            state: play_protect_text(layer, "state")?,
+            checks: entries,
+            note: play_protect_text(layer, "note")?,
+        });
+    }
+    let vendor_services = value.get("vendor_services").and_then(|item| {
+        if item.is_null() {
+            return None;
+        }
+        Some(PlayProtectVendorServices {
+            updater_installed: tri_state_flag(item, "updater_installed"),
+            updater_holds_dsid_permission: tri_state_flag(item, "updater_holds_dsid_permission"),
+            dsid_readable_from_host: tri_state_flag(item, "dsid_readable_from_host"),
+            dsid_host_error: play_protect_text(item, "dsid_host_error").unwrap_or_default(),
+            gsf_android_id: play_protect_text(item, "gsf_android_id").unwrap_or_default(),
+            note: play_protect_text(item, "note").unwrap_or_default(),
+        })
+    });
+    let leverage = value
+        .get("leverage")
+        .and_then(serde_json::Value::as_array)
+        .context("Play 保护机制认证结果缺少厂商动作排序")?
+        .iter()
+        .map(|item| {
+            Ok(PlayProtectLeverage {
+                action: play_protect_text(item, "action")?,
+                clears: item
+                    .get("clears")
+                    .and_then(serde_json::Value::as_array)
+                    .context("Play 保护机制认证动作缺少可解除的层")?
+                    .iter()
+                    .map(|layer| {
+                        layer
+                            .as_str()
+                            .map(str::to_string)
+                            .context("Play 保护机制认证动作的层列表无效")
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                owner: play_protect_text(item, "owner")?,
+                reason: play_protect_text(item, "reason")?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let patch_freshness = value.get("patch_freshness").and_then(|item| {
+        if item.is_null() {
+            return None;
+        }
+        Some(PlayProtectPatchFreshness {
+            security_patch: optional_text(item, "security_patch"),
+            vendor_security_patch: optional_text(item, "vendor_security_patch"),
+            age_days: optional_number(item, "age_days"),
+            stale: tri_state_flag(item, "stale"),
+            note: play_protect_text(item, "note").unwrap_or_default(),
+        })
+    });
+    let firmware = value.get("firmware").and_then(|item| {
+        if item.is_null() {
+            return None;
+        }
+        Some(PlayProtectFirmware {
+            available: item
+                .get("available")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            http_code: optional_number(item, "http_code"),
+            new_version: optional_text(item, "new_version"),
+            latest_version: optional_text(item, "latest_version"),
+            current_build: optional_text(item, "current_build"),
+            current_incremental: optional_text(item, "current_incremental"),
+            same_as_current: item
+                .get("same_as_current")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            need_update: tri_state_flag(item, "need_update"),
+            release_date: optional_text(item, "release_date"),
+            note: play_protect_text(item, "note").unwrap_or_default(),
+        })
+    });
+    let blockers = value
+        .get("blockers")
+        .and_then(serde_json::Value::as_array)
+        .context("Play 保护机制认证结果缺少阻塞项")?;
+    let mut parsed_blockers = Vec::with_capacity(blockers.len());
+    for blocker in blockers {
+        parsed_blockers.push(PlayProtectBlocker {
+            layer: play_protect_text(blocker, "layer")?,
+            title: play_protect_text(blocker, "title")?,
+            owner: play_protect_text(blocker, "owner")?,
+            detail: play_protect_text(blocker, "detail")?,
+            required_action: play_protect_text(blocker, "required_action")?,
+        });
+    }
+    Ok(PlayProtectReport {
+        checked: true,
+        certified: value
+            .get("certified")
+            .and_then(serde_json::Value::as_bool)
+            .context("Play 保护机制认证结果缺少认证判定")?,
+        verdict: play_protect_text(value, "verdict")?,
+        layers: parsed,
+        blockers: parsed_blockers,
+        vendor_services,
+        patch_freshness,
+        firmware,
+        leverage,
+        note: String::new(),
+    })
+}
+
+/// Runs the read-only four-layer certification model. Nothing here changes the
+/// device, requests a certificate from Google, or reports a certification the
+/// phone does not actually hold.
+pub fn inspect_play_protect(device: &Device, adb: &Adb) -> Result<PlayProtectReport> {
+    device.verify(adb)?;
+    let script = play_protect_script()?;
+    let mut command = crate::resources::python_command();
+    command
+        .arg(&script)
+        .arg("status")
+        .arg("--serial")
+        .arg(&device.transport)
+        .current_dir(script.parent().context("认证组件目录无效")?)
+        .env("STEPX_SERIAL", &device.transport)
+        .env("STEPX_DEVICE_SERIAL", &device.serial)
+        .env("STEPX_ADB", &adb.path)
+        .env_remove("PYTHONOPTIMIZE");
+    if let Some(directory) = captured_attestation_chain() {
+        command.arg("--attestation-chain").arg(directory);
+    }
+    let output = command
+        .output()
+        .context("无法启动 Play 保护机制认证组件，请检查 Python 3 环境")?;
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .context("Play 保护机制认证组件未返回有效状态，请重新检测")?;
+    if !output.status.success() || value["ok"] == false {
+        bail!(
+            "{}",
+            value["message"]
+                .as_str()
+                .unwrap_or("Play 保护机制认证检测未完成，请重新检测")
+        );
+    }
+    let report = play_protect_from_value(&value)?;
+    if report.layers.len() != 4 {
+        bail!("Play 保护机制认证分层证据不完整");
+    }
+    Ok(report)
 }
 
 fn apply_compatibility_status(status: &mut GoogleSuiteStatus, value: &serde_json::Value) {
@@ -124,8 +375,8 @@ pub fn change_compatibility(
         bail!("{message}");
     }
     progress("重新读取 Google 服务与兼容补丁状态…");
-    let status = inspect(device, adb)
-        .with_context(|| format!("{message} 状态回读未完成，请重新检测"))?;
+    let status =
+        inspect(device, adb).with_context(|| format!("{message} 状态回读未完成，请重新检测"))?;
     if !status.compatibility_checked || status.compatibility_active == rollback {
         bail!(
             "兼容补丁状态回读与操作结果不一致，请点击检测状态：{}",
@@ -175,20 +426,41 @@ pub fn inspect(device: &Device, adb: &Adb) -> Result<GoogleSuiteStatus> {
         ..Default::default()
     };
     match run_script(device, adb, "certification.py", &[])
-        .and_then(|text| Ok(serde_json::from_str::<serde_json::Value>(&text)?)) {
+        .and_then(|text| Ok(serde_json::from_str::<serde_json::Value>(&text)?))
+    {
         Ok(value) => {
             status.certification_note = if value["certification_block_visible"] == true {
                 "已在手机发现“设备未认证”拦截页；Google 服务当前不可按正常可用验收。"
-            } else { "未读取到 Google 认证结果；请在手机 Play → 设置 → 关于核对。" }.into();
-            status.certification_catalog = value["catalog_note"].as_str().unwrap_or("机型列表未确认").into();
-            status.boot_security_note = format!("Bootloader：{} · Verified Boot：{}",
-                match value["bootloader_locked"].as_str() {Some("1")=>"已锁定",Some("0")=>"已解锁",_=>"未知"},
-                value["verified_boot"].as_str().unwrap_or("未知"));
-            if value["disabled_components"].as_array().is_some_and(|a| !a.is_empty()) {
-                status.certification_note.push_str(" 检测到 Google 组件被停用，请在手机应用设置中启用后重试。");
+            } else {
+                "未读取到 Google 认证结果；请在手机 Play → 设置 → 关于核对。"
+            }
+            .into();
+            status.certification_catalog = value["catalog_note"]
+                .as_str()
+                .unwrap_or("机型列表未确认")
+                .into();
+            status.boot_security_note = format!(
+                "Bootloader：{} · Verified Boot：{}",
+                match value["bootloader_locked"].as_str() {
+                    Some("1") => "已锁定",
+                    Some("0") => "已解锁",
+                    _ => "未知",
+                },
+                value["verified_boot"].as_str().unwrap_or("未知")
+            );
+            if value["disabled_components"]
+                .as_array()
+                .is_some_and(|a| !a.is_empty())
+            {
+                status
+                    .certification_note
+                    .push_str(" 检测到 Google 组件被停用，请在手机应用设置中启用后重试。");
             }
         }
-        Err(_) => status.certification_note = "认证诊断暂不可用；权限校验成功不代表 Google 认证通过。".into(),
+        Err(_) => {
+            status.certification_note =
+                "认证诊断暂不可用；权限校验成功不代表 Google 认证通过。".into()
+        }
     }
     for (package, target) in [
         ("com.google.android.gsf", &mut status.gsf_version),
@@ -234,6 +506,16 @@ pub fn inspect(device: &Device, adb: &Adb) -> Result<GoogleSuiteStatus> {
     match run_compatibility_script(device, adb, "status") {
         Ok(value) => apply_compatibility_status(&mut status, &value),
         Err(error) => status.compatibility_note = format!("兼容补丁暂未完成检测：{error}"),
+    }
+    // Certification is probed on its own: store usability never implies it.
+    match inspect_play_protect(device, adb) {
+        Ok(report) => {
+            status.certification_note = report.summary();
+            status.play_protect = report;
+        }
+        Err(error) => {
+            status.play_protect.note = format!("Play 保护机制认证检测未完成：{error}");
+        }
     }
     let verification = (|| -> Result<()> {
         run_script(device, adb, "manage.py", &["preflight"])?;
@@ -316,12 +598,14 @@ pub fn install(device: &Device, adb: &Adb, progress: impl Fn(&str)) -> Result<Go
     })
     .context("StepX伴侣未完成安装或权限校验；尚未改动 Google 安装")?;
     let google_message = match plan {
-        GoogleInstallPlan::Missing => {
-            install_fresh(device, adb, |label| progress(&format!("Google Play · {label}")))
-                .with_context(|| format!("{} Google Play 安装尚未完成", companion.message))?
-        }
+        GoogleInstallPlan::Missing => install_fresh(device, adb, |label| {
+            progress(&format!("Google Play · {label}"))
+        })
+        .with_context(|| format!("{} Google Play 安装尚未完成", companion.message))?,
         GoogleInstallPlan::Existing => "已有 Google 组件已保留，未重复安装。".into(),
-        GoogleInstallPlan::Partial => "Google 组件不完整，现有组件已保留；请按检测结果处理 Google 安装。".into(),
+        GoogleInstallPlan::Partial => {
+            "Google 组件不完整，现有组件已保留；请按检测结果处理 Google 安装。".into()
+        }
     };
     // Preserve a partial companion service failure in this combined entry point.
     let mut message = format!("{} {google_message}", companion.message);
@@ -419,11 +703,17 @@ mod tests {
 
     #[test]
     fn failed_patch_preserves_the_rollback_entry() {
-        let mut status = GoogleSuiteStatus { installed: true, ..Default::default() };
-        apply_compatibility_status(&mut status, &serde_json::json!({
-            "ok": false, "supported": false, "active": false,
-            "can_rollback": true, "message": "本次应用未完成，可撤销已修改的部分"
-        }));
+        let mut status = GoogleSuiteStatus {
+            installed: true,
+            ..Default::default()
+        };
+        apply_compatibility_status(
+            &mut status,
+            &serde_json::json!({
+                "ok": false, "supported": false, "active": false,
+                "can_rollback": true, "message": "本次应用未完成，可撤销已修改的部分"
+            }),
+        );
         assert!(status.compatibility_checked);
         assert!(!status.compatibility_active);
         assert!(status.compatibility_can_rollback);
@@ -438,22 +728,37 @@ mod tests {
             compatibility_supported: true,
             ..Default::default()
         };
-        assert!(should_apply_during_install(GoogleInstallPlan::Existing, &valid));
+        assert!(should_apply_during_install(
+            GoogleInstallPlan::Existing,
+            &valid
+        ));
         for plan in [GoogleInstallPlan::Missing, GoogleInstallPlan::Partial] {
             assert!(!should_apply_during_install(plan, &valid));
         }
         let mut status = valid.clone();
         status.compatibility_active = true;
-        assert!(!should_apply_during_install(GoogleInstallPlan::Existing, &status));
+        assert!(!should_apply_during_install(
+            GoogleInstallPlan::Existing,
+            &status
+        ));
         status = valid.clone();
         status.compatibility_checked = false;
-        assert!(!should_apply_during_install(GoogleInstallPlan::Existing, &status));
+        assert!(!should_apply_during_install(
+            GoogleInstallPlan::Existing,
+            &status
+        ));
         status = valid.clone();
         status.compatibility_supported = false;
-        assert!(!should_apply_during_install(GoogleInstallPlan::Existing, &status));
+        assert!(!should_apply_during_install(
+            GoogleInstallPlan::Existing,
+            &status
+        ));
         status = valid;
         status.installed = false;
-        assert!(!should_apply_during_install(GoogleInstallPlan::Existing, &status));
+        assert!(!should_apply_during_install(
+            GoogleInstallPlan::Existing,
+            &status
+        ));
     }
 
     #[test]
@@ -522,5 +827,340 @@ mod tests {
             &mut GoogleSuiteStatus::default(),
             &serde_json::json!({})
         ));
+    }
+
+    fn certification_payload() -> serde_json::Value {
+        serde_json::json!({
+            "schema": "stepx-play-protect-certification-v1",
+            "format": 1,
+            "checked_at": "2026-10-23T10:46:53+00:00",
+            "serial": "ZYPZ261A01M692000LP",
+            "identity": {"brand": "StepX", "manufacturer": "StepX", "model": "PZ261A",
+                         "device": "pandora", "name": "pandora"},
+            "fingerprint": "StepX/pandora/pandora:16/BQ2A.260122.002-BP2A.250705.008/172:user/release-keys",
+            "certified": false,
+            "verdict": "not_certified",
+            "store_access": {"usable": true, "note": "商店可用性与设备认证是两个独立结论"},
+            "layers": [
+                {"layer": "system_boot", "title": "第 2 层 · 系统与启动层", "owner": "oem",
+                 "state": "pass", "note": "启动链正常",
+                 "checks": [{"check": "ro.build.tags", "value": "release-keys",
+                             "expected": "release-keys", "ok": true}]},
+                {"layer": "client_admission", "title": "第 1 层 · 客户端准入层", "owner": "user",
+                 "state": "pass", "note": "商店可用", "store_usable": true,
+                 "checks": [{"check": "Play 兼容补丁", "value": true, "expected": true, "ok": true}]},
+                {"layer": "key_attestation", "title": "第 3 层 · 硬件密钥证明层", "owner": "oem",
+                 "state": "fail", "note": "根证书不匹配",
+                 "checks": [{"check": "链内签名与有效期", "value": true,
+                             "expected": true, "ok": true},
+                            {"check": "根证书匹配 Google 官方硬件根", "value": false,
+                             "expected": true, "ok": false,
+                             "detail": "verification failed"}]},
+                {"layer": "rkp_and_catalog", "title": "第 4 层 · 远程密钥配置与设备目录层",
+                 "owner": "oem", "state": "fail", "note": "后端未登记",
+                 "rkp_components": {"default": {"hwVersion": "3"}},
+                 "checks": [
+                     {"check": "RKP signCertificates", "value": 444, "expected": "200", "ok": false},
+                     {"check": "防火墙放行 IRemoteProvisioning", "value": false, "expected": true,
+                      "ok": null, "detail": "未取证"},
+                     {"check": "Google 认证设备目录收录", "value": false, "expected": true,
+                      "ok": false}
+                 ]}
+            ],
+            "blockers": [
+                {"layer": "key_attestation", "title": "第 3 层 · 硬件密钥证明层", "owner": "oem",
+                 "detail": "根证书匹配 Google 官方硬件根=False（期望 True）",
+                 "required_action": "只能由厂商在产线烧录 Google 签发的生产 Keybox"},
+                {"layer": "rkp_and_catalog", "title": "第 4 层 · 远程密钥配置与设备目录层",
+                 "owner": "oem", "detail": "RKP signCertificates=444",
+                 "required_action": "需要 SoC 厂商向 Google RKP 后台登记硬件公钥"}
+            ],
+            "sources": ["https://android.googleapis.com/attestation/root"],
+            "limitations": ["本工具只读取证"],
+            "vendor_services": {
+                "updater_installed": true,
+                "updater_holds_dsid_permission": true,
+                "dsid_readable_from_host": false,
+                "dsid_host_error": "需要 com.stepos.secureservice.permission.OPEN_DATA_PROVIDER",
+                "gsf_android_id": "23392eef6ce29cb0",
+                "note": "dsid 受 signature|privileged 权限保护。",
+            },
+            "patch_freshness": {
+                "security_patch": "2025-12-05", "vendor_security_patch": "2025-12-05",
+                "age_days": 322, "stale": true,
+                "note": "安全补丁 2025-12-05，距今 322 天。",
+            },
+            "firmware": {
+                "available": true, "http_code": 200, "new_version": null,
+                "latest_version": "Step AOS 1.0.0.2.26001_stable_user_20261004_131555",
+                "current_build": "Step AOS 1.0.0.2.26001_stable_user_20261004_131555",
+                "current_incremental": "172", "same_as_current": true,
+                "need_update": false, "release_date": "2026-10-16 17:37:46",
+                "note": "官方通道没有比设备当前版本更新的构建。",
+            },
+            "leverage": [
+                {"action": "向 Google RKP 后台登记硬件公钥",
+                 "clears": ["key_attestation", "rkp_and_catalog"],
+                 "owner": "soc_vendor_or_oem", "reason": "一步解两层"},
+                {"action": "移除防火墙拦截并配置 hostname", "clears": ["rkp_and_catalog"],
+                 "owner": "oem", "reason": "让系统能真正发起轮换"},
+                {"action": "CTS/VTS/GTS 备案", "clears": ["rkp_and_catalog"],
+                 "owner": "oem", "reason": "进入认证设备目录"},
+                {"action": "烧录生产 Keybox", "clears": ["key_attestation"],
+                 "owner": "oem", "reason": "传统工厂预置路径"},
+            ],
+        })
+    }
+
+    fn certification_payload_with_extras() -> serde_json::Value {
+        let mut payload = certification_payload();
+        // Layer 3 now carries a real revocation check that may be unprobed.
+        let revocation = serde_json::json!({
+            "check": "链上证书不在 Google 吊销列表", "value": null, "expected": false,
+            "ok": null, "detail": "离线模式未读取 Google 吊销列表",
+        });
+        payload["layers"][2]["checks"]
+            .as_array_mut()
+            .unwrap()
+            .push(revocation);
+        payload
+    }
+
+    #[test]
+    fn certification_report_carries_vendor_services_and_leverage() {
+        let report = play_protect_from_value(&certification_payload_with_extras()).unwrap();
+        let vendor = report.vendor_services.as_ref().expect("vendor services");
+        assert_eq!(vendor.updater_installed, Some(true));
+        assert_eq!(vendor.updater_holds_dsid_permission, Some(true));
+        assert_eq!(vendor.dsid_readable_from_host, Some(false));
+        assert_eq!(vendor.gsf_android_id, "23392eef6ce29cb0");
+        assert_eq!(report.leverage.len(), 4);
+        assert_eq!(
+            report.leverage[0].clears,
+            ["key_attestation", "rkp_and_catalog"]
+        );
+        assert_eq!(report.leverage[0].owner, "soc_vendor_or_oem");
+        assert!(report.leverage[1].clears.len() < report.leverage[0].clears.len());
+    }
+
+    #[test]
+    fn certification_unprobed_vendor_flag_stays_none() {
+        let mut payload = certification_payload_with_extras();
+        payload["vendor_services"]["dsid_readable_from_host"] = serde_json::json!(null);
+        let vendor = play_protect_from_value(&payload)
+            .unwrap()
+            .vendor_services
+            .unwrap();
+        // A probe that could not run stays None rather than becoming a failure.
+        assert_eq!(vendor.dsid_readable_from_host, None);
+    }
+
+    #[test]
+    fn certification_null_vendor_services_stay_absent() {
+        let mut payload = certification_payload_with_extras();
+        payload["vendor_services"] = serde_json::json!(null);
+        assert!(play_protect_from_value(&payload)
+            .unwrap()
+            .vendor_services
+            .is_none());
+    }
+
+    #[test]
+    fn certification_leverage_must_be_complete() {
+        for key in ["action", "clears", "owner", "reason"] {
+            let mut payload = certification_payload_with_extras();
+            payload["leverage"][0].as_object_mut().unwrap().remove(key);
+            assert!(play_protect_from_value(&payload).is_err(), "{key}");
+        }
+        let mut payload = certification_payload_with_extras();
+        payload["leverage"][0]["clears"] = serde_json::json!(["not_a_layer"]);
+        // Unknown layer ids are still parsed; the UI shows them verbatim.
+        assert_eq!(
+            play_protect_from_value(&payload).unwrap().leverage[0].clears,
+            vec!["not_a_layer".to_string()]
+        );
+    }
+
+    #[test]
+    fn certification_revocation_is_a_distinct_third_check() {
+        let report = play_protect_from_value(&certification_payload_with_extras()).unwrap();
+        let attestation = report
+            .layers
+            .iter()
+            .find(|l| l.layer == "key_attestation")
+            .unwrap();
+        assert_eq!(attestation.checks.len(), 3);
+        assert_eq!(attestation.checks[2].check, "链上证书不在 Google 吊销列表");
+        // An unprobed revocation check must stay None, never a silent failure.
+        assert_eq!(attestation.checks[2].ok, None);
+    }
+
+    #[test]
+    fn certification_report_parses_all_four_layers_and_blockers() {
+        let report = play_protect_from_value(&certification_payload()).unwrap();
+        assert!(report.checked);
+        assert!(!report.certified);
+        assert_eq!(report.verdict, "not_certified");
+        assert_eq!(report.layers.len(), 4);
+        assert_eq!(report.blockers.len(), 2);
+        assert_eq!(report.blockers[0].owner, "oem");
+        assert_eq!(report.layers[0].state, "pass");
+        assert_eq!(report.layers[2].state, "fail");
+        assert_eq!(report.state_label(), "未通过认证");
+        // Numbers and booleans must reach the UI as text, never be dropped.
+        let rkp = &report.layers[3];
+        assert_eq!(rkp.checks[0].value, "444");
+        assert_eq!(rkp.checks[1].value, "false");
+        assert_eq!(rkp.checks[1].expected, "true");
+    }
+
+    #[test]
+    fn certification_unprobed_check_stays_unknown_and_never_passes() {
+        let report = play_protect_from_value(&certification_payload()).unwrap();
+        let entry = &report.layers[3].checks[1];
+        assert_eq!(entry.ok, None);
+        assert_eq!(entry.detail.as_deref(), Some("未取证"));
+    }
+
+    #[test]
+    fn certification_summary_separates_store_access_from_the_verdict() {
+        let mut status = GoogleSuiteStatus::default();
+        status.play_protect = play_protect_from_value(&certification_payload()).unwrap();
+        let summary = status.play_protect.summary();
+        assert!(summary.contains("2 层通过"), "{summary}");
+        assert!(summary.contains("未通过"), "{summary}");
+        assert!(summary.contains("厂商侧"), "{summary}");
+        assert!(!summary.contains("已通过认证"));
+    }
+
+    #[test]
+    fn certification_schema_mismatch_is_rejected() {
+        let mut payload = certification_payload();
+        payload["schema"] = serde_json::json!("some-other-schema");
+        assert!(play_protect_from_value(&payload).is_err());
+    }
+
+    #[test]
+    fn certification_missing_fields_are_rejected() {
+        for key in ["schema", "certified", "verdict", "layers", "blockers"] {
+            let mut payload = certification_payload();
+            payload.as_object_mut().unwrap().remove(key);
+            assert!(play_protect_from_value(&payload).is_err(), "{key}");
+        }
+        for key in ["layer", "title", "owner", "state", "note", "checks"] {
+            let mut payload = certification_payload();
+            payload["layers"].as_array_mut().unwrap()[0]
+                .as_object_mut()
+                .unwrap()
+                .remove(key);
+            assert!(
+                play_protect_from_value(&payload).is_err(),
+                "layers[0].{key}"
+            );
+        }
+        for key in ["check", "value", "expected"] {
+            let mut payload = certification_payload();
+            payload["layers"][0]["checks"].as_array_mut().unwrap()[0]
+                .as_object_mut()
+                .unwrap()
+                .remove(key);
+            assert!(
+                play_protect_from_value(&payload).is_err(),
+                "checks[0].{key}"
+            );
+        }
+        for key in ["layer", "title", "owner", "detail", "required_action"] {
+            let mut payload = certification_payload();
+            payload["blockers"].as_array_mut().unwrap()[0]
+                .as_object_mut()
+                .unwrap()
+                .remove(key);
+            assert!(
+                play_protect_from_value(&payload).is_err(),
+                "blockers[0].{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn certification_non_scalar_check_value_is_rejected() {
+        let mut payload = certification_payload();
+        payload["layers"][0]["checks"][0]["value"] = serde_json::json!({"nested": true});
+        assert!(play_protect_from_value(&payload).is_err());
+    }
+
+    #[test]
+    fn certification_report_carries_patch_freshness_and_firmware() {
+        let report = play_protect_from_value(&certification_payload_with_extras()).unwrap();
+        let patch = report.patch_freshness.as_ref().expect("patch freshness");
+        assert_eq!(patch.security_patch.as_deref(), Some("2025-12-05"));
+        assert_eq!(patch.age_days, Some(322));
+        assert_eq!(patch.stale, Some(true));
+        assert!(patch.note.contains("322"));
+        let firmware = report.firmware.as_ref().expect("firmware");
+        assert!(firmware.available);
+        assert_eq!(firmware.http_code, Some(200));
+        assert!(firmware.new_version.is_none());
+        assert!(firmware.same_as_current);
+        assert_eq!(firmware.need_update, Some(false));
+        assert_eq!(firmware.current_incremental.as_deref(), Some("172"));
+    }
+
+    #[test]
+    fn certification_null_patch_and_firmware_stay_absent() {
+        let mut payload = certification_payload_with_extras();
+        payload["patch_freshness"] = serde_json::json!(null);
+        payload["firmware"] = serde_json::json!(null);
+        let report = play_protect_from_value(&payload).unwrap();
+        assert!(report.patch_freshness.is_none());
+        assert!(report.firmware.is_none());
+    }
+
+    #[test]
+    fn certification_unprobed_patch_fields_stay_none() {
+        let mut payload = certification_payload_with_extras();
+        payload["patch_freshness"] = serde_json::json!({
+            "security_patch": null, "vendor_security_patch": null,
+            "age_days": null, "stale": null, "note": "未能解析安全补丁日期",
+        });
+        let patch = play_protect_from_value(&payload)
+            .unwrap()
+            .patch_freshness
+            .unwrap();
+        // An unmeasured age must never be rendered as zero or as fresh.
+        assert_eq!(patch.age_days, None);
+        assert_eq!(patch.stale, None);
+        assert!(patch.security_patch.is_none());
+    }
+
+    #[test]
+    fn certification_firmware_defaults_to_not_available() {
+        let mut payload = certification_payload_with_extras();
+        payload["firmware"] = serde_json::json!({"note": "没有可用的固件元数据探针"});
+        let firmware = play_protect_from_value(&payload).unwrap().firmware.unwrap();
+        assert!(!firmware.available);
+        assert!(!firmware.same_as_current);
+        assert!(firmware.new_version.is_none());
+    }
+
+    #[test]
+    fn certification_firmware_a_newer_build_is_not_latest() {
+        let mut payload = certification_payload_with_extras();
+        payload["firmware"]["new_version"] = serde_json::json!("Step AOS 1.0.0.3.99999");
+        payload["firmware"]["same_as_current"] = serde_json::json!(false);
+        let firmware = play_protect_from_value(&payload).unwrap().firmware.unwrap();
+        assert_eq!(
+            firmware.new_version.as_deref(),
+            Some("Step AOS 1.0.0.3.99999")
+        );
+        assert!(!firmware.same_as_current);
+    }
+
+    #[test]
+    fn certification_layer_count_is_validated() {
+        let mut payload = certification_payload();
+        payload["layers"].as_array_mut().unwrap().pop();
+        let report = play_protect_from_value(&payload).unwrap();
+        assert_eq!(report.layers.len(), 3);
     }
 }

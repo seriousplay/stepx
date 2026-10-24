@@ -1,10 +1,7 @@
 use crate::{adb::Adb, mirror::MirrorSession};
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
-use std::{
-    path::PathBuf,
-    process::Command,
-};
+use std::{path::PathBuf, process::Command};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Transport {
@@ -41,6 +38,41 @@ pub struct Device {
     pub model: String,
     pub android: String,
     pub product: String,
+}
+
+fn validate_generic_apk_identity(value: &serde_json::Value) -> Result<()> {
+    if value["ok"] != true {
+        bail!(
+            "{}",
+            value["error"]
+                .as_str()
+                .unwrap_or("无法核对 APK 包名，尚未安装")
+        );
+    }
+    let package = value["package"]
+        .as_str()
+        .filter(|p| !p.is_empty())
+        .context("APK 包名校验未返回有效结果，尚未安装")?;
+    if package == "com.stepx.companion.app" {
+        bail!("StepX伴侣请通过“小工具 → 安装 StepX伴侣”更新；内置 GUI Agent 完整包请使用“小工具 → 内置 GUI Agent”安装。通用 APK 入口不会覆盖伴侣，现有功能和数据未改变。");
+    }
+    Ok(())
+}
+
+fn check_generic_apk(path: &std::path::Path) -> Result<()> {
+    let mut command = crate::resources::python_command();
+    command
+        .arg(crate::resources::root().join("scripts/companion_apk.py"))
+        .arg("--package")
+        .arg(path);
+    let output = crate::adb::run_process(command, None, std::time::Duration::from_secs(45))?;
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .context("无法核对 APK 包名，尚未安装；请重新解压完整客户端安装包")?;
+    validate_generic_apk_identity(&value)?;
+    if !output.status.success() {
+        bail!("APK 包名校验未完成，尚未安装");
+    }
+    Ok(())
 }
 
 impl Device {
@@ -352,15 +384,33 @@ impl Device {
         }
         Ok("已将17×23像素帧交给手机背屏，HAL已开启".into())
     }
-    pub fn push_backscreen_pattern(&self, adb: &Adb, pattern: BackScreenPattern, brightness: u8, invert: bool) -> Result<String> {
+    pub fn push_backscreen_pattern(
+        &self,
+        adb: &Adb,
+        pattern: BackScreenPattern,
+        brightness: u8,
+        invert: bool,
+    ) -> Result<String> {
         self.push_backscreen_frame(adb, &pattern.frame_391(brightness, invert))
     }
-    pub fn push_backscreen_image(&self, adb: &Adb, path: &std::path::Path, brightness: u8, invert: bool) -> Result<(Vec<u8>, String)> {
+    pub fn push_backscreen_image(
+        &self,
+        adb: &Adb,
+        path: &std::path::Path,
+        brightness: u8,
+        invert: bool,
+    ) -> Result<(Vec<u8>, String)> {
         let frame = image_to_backscreen_frame(path, brightness, invert)?;
         let message = self.push_backscreen_frame(adb, &frame)?;
         Ok((frame, message))
     }
-    pub fn set_backscreen_marquee(&self, adb: &Adb, text: &str, scroll: bool, reverse: bool) -> Result<String> {
+    pub fn set_backscreen_marquee(
+        &self,
+        adb: &Adb,
+        text: &str,
+        scroll: bool,
+        reverse: bool,
+    ) -> Result<String> {
         crate::backscreen::marquee(adb, self, text, scroll, reverse)
     }
     pub fn set_backscreen_mode(&self, adb: &Adb, mode: &str) -> Result<String> {
@@ -372,11 +422,31 @@ impl Device {
     pub fn trigger_backscreen_scene(&self, adb: &Adb, scene: &str) -> Result<String> {
         self.verify(adb)?;
         match scene {
-            "clock" => crate::backscreen::configure_native(adb, self, crate::backscreen::NativeFeature::Clock),
-            "notify" => crate::backscreen::configure_native(adb, self, crate::backscreen::NativeFeature::Notifications),
+            "clock" => crate::backscreen::configure_native(
+                adb,
+                self,
+                crate::backscreen::NativeFeature::Clock,
+            ),
+            "notify" => crate::backscreen::configure_native(
+                adb,
+                self,
+                crate::backscreen::NativeFeature::Notifications,
+            ),
             "countdown" => {
-                let output = adb.shell(&self.transport, &["dumpsys", "display_ext", "back_screen", "special", "countdown", "3"])?;
-                if output.to_ascii_lowercase().contains("error") { bail!("手机倒计时未启动：{output}") }
+                let output = adb.shell(
+                    &self.transport,
+                    &[
+                        "dumpsys",
+                        "display_ext",
+                        "back_screen",
+                        "special",
+                        "countdown",
+                        "3",
+                    ],
+                )?;
+                if output.to_ascii_lowercase().contains("error") {
+                    bail!("手机倒计时未启动：{output}")
+                }
                 Ok("已请求手机原生3秒倒计时".into())
             }
             "reset" => {
@@ -385,127 +455,6 @@ impl Device {
             }
             _ => bail!("请从背屏创作台选择对应动画后播放；当前功能不会模拟天气或系统通知"),
         }
-    }
-
-    pub fn setup_studio_proxy(&self, adb: &Adb) -> Result<StudioStatus> {
-        self.verify(adb)?;
-        let android_id = adb
-            .shell(
-                &self.transport,
-                &["settings", "get", "secure", "android_id"],
-            )
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let token = if android_id.is_empty() || android_id == "null" {
-            derive_openclaw_token("23392eef6ce29cb0")
-        } else {
-            derive_openclaw_token(&android_id)
-        };
-        let _ = adb.run(&["-s", &self.transport, "forward", "tcp:18789", "tcp:18789"]);
-        let _ = adb.run(&["-s", &self.transport, "forward", "tcp:18791", "tcp:18791"]);
-        let route_out = adb
-            .shell(&self.transport, &["ip", "route"])
-            .unwrap_or_default();
-        let lan_ip = route_out
-            .lines()
-            .find_map(|line| {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                parts
-                    .iter()
-                    .position(|&p| p == "src")
-                    .and_then(|i| parts.get(i + 1).copied())
-            })
-            .unwrap_or("192.168.1.108")
-            .to_string();
-        Ok(StudioStatus {
-            android_id,
-            token,
-            gateway_port: 18789,
-            model_proxy_port: 18791,
-            lan_ip,
-        })
-    }
-
-    pub fn deploy_studio_app(
-        &self,
-        adb: &Adb,
-        name: &str,
-        url_or_skill: &str,
-        create_icon: bool,
-        sync_skill: bool,
-        open_now: bool,
-    ) -> Result<String> {
-        let app_name = name.trim();
-        let target = url_or_skill.trim();
-        if app_name.is_empty() || target.is_empty() {
-            bail!("请填写手机桌面图标名称与 Studio 地址");
-        }
-        self.verify(adb)?;
-        let slug: String = app_name
-            .chars()
-            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-            .collect();
-        let slug = if slug.is_empty() {
-            "studio-app".to_string()
-        } else {
-            slug.to_lowercase()
-        };
-        if sync_skill {
-            let skill_dir = format!("/sdcard/StepClaw/skills/{slug}");
-            let _ = adb.shell(&self.transport, &["mkdir", "-p", &skill_dir]);
-            let skill_md = format!(
-                "---\nname: {app_name}\nendpoint: {target}\ncreated_by: stepx-desktop-studio\n---\n\n# {app_name}\n\nStudio 桌面工坊一键部署技能 (`{target}`)。\n"
-            );
-            let tmp = tempfile::NamedTempFile::new()?;
-            std::fs::write(tmp.path(), skill_md.as_bytes())?;
-            let _ = crate::storage::push(adb, self, tmp.path(), &skill_dir);
-        }
-        if create_icon {
-            let shortcut_dir = "/sdcard/StepClaw/shortcuts";
-            let _ = adb.shell(&self.transport, &["mkdir", "-p", shortcut_dir]);
-            let _ = adb.shell(
-                &self.transport,
-                &[
-                    "am",
-                    "broadcast",
-                    "-a",
-                    "com.stepos.ailauncher.action.INSTALL_STUDIO_SHORTCUT",
-                    "--es",
-                    "name",
-                    app_name,
-                    "--es",
-                    "url",
-                    target,
-                ],
-            );
-        }
-        if open_now {
-            let open_url = if target.starts_with("http://") || target.starts_with("https://") {
-                target.to_string()
-            } else {
-                "https://studio.stepx.com/".to_string()
-            };
-            let _ = adb.shell(
-                &self.transport,
-                &[
-                    "am",
-                    "start",
-                    "-a",
-                    "android.intent.action.VIEW",
-                    "-d",
-                    &open_url,
-                ],
-            );
-        }
-        Ok(format!(
-            "已将「{app_name}」部署到手机技能库{}",
-            if create_icon {
-                "并生成手机桌面图标"
-            } else {
-                ""
-            }
-        ))
     }
 
     pub fn call_logs(&self, adb: &Adb) -> Result<Vec<CallRecord>> {
@@ -657,8 +606,16 @@ impl Device {
         if !is_apk {
             bail!("仅支持安装 .apk 格式的 Android 应用包");
         }
+        // Inspect and install the same immutable snapshot. The general application
+        // picker must not bypass Companion's signed, feature-preserving updater.
+        let mut snapshot = tempfile::Builder::new().suffix(".apk").tempfile()?;
+        let mut source = std::fs::File::open(local_apk).context("无法读取 APK 安装包")?;
+        std::io::copy(&mut source, &mut snapshot).context("无法准备 APK 安装包")?;
+        snapshot.as_file().sync_all()?;
+        check_generic_apk(snapshot.path())?;
         self.verify(adb)?;
-        let path_str = local_apk
+        let path_str = snapshot
+            .path()
             .to_str()
             .context("APK 文件路径必须是有效的 UTF-8")?;
         let out = adb.run_timeout(
@@ -733,8 +690,7 @@ impl Device {
     }
 
     pub fn run_google_handoff_manage(&self, subcmd: &str) -> Result<serde_json::Value> {
-        let script =
-            crate::resources::root().join("handoff/google-play-stepx/tools/manage.py");
+        let script = crate::resources::root().join("handoff/google-play-stepx/tools/manage.py");
         if !script.is_file() {
             bail!("未找到 Google Play 特权工程脚本：{}", script.display());
         }
@@ -753,7 +709,8 @@ impl Device {
     }
 
     pub fn run_root_bridge_python(&self, py_code: &str) -> Result<String> {
-        let script = crate::resources::root().join("handoff/google-play-stepx/tools/root_bridge.py");
+        let script =
+            crate::resources::root().join("handoff/google-play-stepx/tools/root_bridge.py");
         if !script.is_file() {
             bail!("未找到 root_bridge.py：{}", script.display());
         }
@@ -785,34 +742,30 @@ impl Device {
     pub fn prepare_google_snapshot(&self, adb: &Adb) -> Result<String> {
         self.verify(adb)?;
         let key_path = crate::resources::user_config().join("stepx-gms/backup.key");
-        let snap_dir = crate::resources::root().join("handoff/google-play-stepx/backups");
+        let snap_dir = crate::resources::user_state().join("google-play/backups");
         let has_key = key_path.is_file();
         let has_snap = snap_dir.is_dir();
         Ok(format!(
             "安全快照校验完成：本地备份目录 {} ({}) · 加密密钥 {} · 手机还原点需要另行核验",
             snap_dir.display(),
             if has_snap { "已就绪" } else { "待创建" },
-            if has_key { "AES-GCM 已配置" } else { "未配置备份密钥" }
+            if has_key {
+                "AES-GCM 已配置"
+            } else {
+                "未配置备份密钥"
+            }
         ))
     }
 
     pub fn inspect_system_services(&self, adb: &Adb) -> Result<Vec<SystemServiceInfo>> {
         self.verify(adb)?;
-        let disabled_raw = adb
-            .shell(&self.transport, &["pm", "list", "packages", "-d"])
-            ?;
-        let all_raw = adb
-            .shell(&self.transport, &["pm", "list", "packages", "-u"])
-            ?;
-        let installed_raw = adb
-            .shell(&self.transport, &["pm", "list", "packages"])
-            ?;
-        let ime_raw = adb
-            .shell(
-                &self.transport,
-                &["settings", "get", "secure", "default_input_method"],
-            )
-            ?;
+        let disabled_raw = adb.shell(&self.transport, &["pm", "list", "packages", "-d"])?;
+        let all_raw = adb.shell(&self.transport, &["pm", "list", "packages", "-u"])?;
+        let installed_raw = adb.shell(&self.transport, &["pm", "list", "packages"])?;
+        let ime_raw = adb.shell(
+            &self.transport,
+            &["settings", "get", "secure", "default_input_method"],
+        )?;
 
         let mut list = default_system_services();
         for item in &mut list {
@@ -821,8 +774,14 @@ impl Device {
             let is_disabled = disabled_raw.lines().any(|l| l.trim() == pkg_tag);
             let exists_uninstalled = all_raw.lines().any(|l| l.trim() == pkg_tag);
             item.enabled = is_installed && !is_disabled;
-            if !exists_uninstalled && !is_installed { item.status_note = "未安装".into(); continue; }
-            if ime_raw.starts_with(&format!("{}/", item.package)) { item.status_note = "当前默认输入法".into(); continue; }
+            if !exists_uninstalled && !is_installed {
+                item.status_note = "未安装".into();
+                continue;
+            }
+            if ime_raw.starts_with(&format!("{}/", item.package)) {
+                item.status_note = "当前默认输入法".into();
+                continue;
+            }
             if item.package == "org.fcitx.fcitx5.android" {
                 item.status_note = if ime_raw.contains("fcitx5") {
                     "当前默认输入法 · 开源零遥测".into()
@@ -844,21 +803,42 @@ impl Device {
 
     pub fn toggle_system_service(&self, adb: &Adb, package: &str, enable: bool) -> Result<String> {
         self.verify(adb)?;
-        let known = default_system_services().into_iter().any(|s| s.package == package && s.safe_to_remove);
-        if !known { bail!("此服务不在可管理范围内"); }
-        let ime = adb.shell(&self.transport, &["settings", "get", "secure", "default_input_method"])?;
-        if !enable && ime.starts_with(&format!("{package}/")) { bail!("不能停用当前输入法，请先在手机设置中切换输入法"); }
+        let known = default_system_services()
+            .into_iter()
+            .any(|s| s.package == package && s.safe_to_remove);
+        if !known {
+            bail!("此服务不在可管理范围内");
+        }
+        let ime = adb.shell(
+            &self.transport,
+            &["settings", "get", "secure", "default_input_method"],
+        )?;
+        if !enable && ime.starts_with(&format!("{package}/")) {
+            bail!("不能停用当前输入法，请先在手机设置中切换输入法");
+        }
         if enable {
-            adb.shell(&self.transport, &["cmd", "package", "install-existing", "--user", "0", package])?;
+            adb.shell(
+                &self.transport,
+                &["cmd", "package", "install-existing", "--user", "0", package],
+            )?;
             adb.shell(&self.transport, &["pm", "enable", "--user", "0", package])?;
         } else {
-            adb.shell(&self.transport, &["pm", "disable-user", "--user", "0", package])?;
+            adb.shell(
+                &self.transport,
+                &["pm", "disable-user", "--user", "0", package],
+            )?;
         }
         let status = self.inspect_system_services(adb)?;
-        if !status.iter().any(|s| s.package == package && s.status_note != "未安装" && s.enabled == enable) {
+        if !status
+            .iter()
+            .any(|s| s.package == package && s.status_note != "未安装" && s.enabled == enable)
+        {
             bail!("手机未确认服务状态变更，请刷新后重试");
         }
-        Ok(format!("已{}服务：{package}", if enable { "启用" } else { "停用" }))
+        Ok(format!(
+            "已{}服务：{package}",
+            if enable { "启用" } else { "停用" }
+        ))
     }
 
     pub fn debloat_preset_services(&self, adb: &Adb) -> Result<String> {
@@ -899,60 +879,12 @@ impl Device {
     }
 
     pub fn switch_input_method_fcitx5(&self, adb: &Adb, use_fcitx5: bool) -> Result<String> {
-        self.verify(adb)?;
         if use_fcitx5 {
-            let _ = adb.shell(
-                &self.transport,
-                &[
-                    "ime",
-                    "enable",
-                    "org.fcitx.fcitx5.android/.inputmethod.FcitxInputMethodService",
-                ],
-            );
-            let _ = adb.shell(
-                &self.transport,
-                &[
-                    "ime",
-                    "set",
-                    "org.fcitx.fcitx5.android/.inputmethod.FcitxInputMethodService",
-                ],
-            );
-            let _ = adb.shell(
-                &self.transport,
-                &[
-                    "pm",
-                    "disable-user",
-                    "--user",
-                    "0",
-                    "com.sohu.inputmethod.sogou.oem",
-                ],
-            );
-            Ok("已切换为 Fcitx5 开源输入法，并停用原厂搜狗定制版输入法".into())
+            crate::input_method::install_and_enable(adb, self)?;
+            Ok("已核验小企鹅为默认输入法，搜狗已停用；安全输入法保留".into())
         } else {
-            let _ = adb.shell(
-                &self.transport,
-                &[
-                    "cmd",
-                    "package",
-                    "install-existing",
-                    "--user",
-                    "0",
-                    "com.sohu.inputmethod.sogou.oem",
-                ],
-            );
-            let _ = adb.shell(
-                &self.transport,
-                &["pm", "enable", "com.sohu.inputmethod.sogou.oem"],
-            );
-            let _ = adb.shell(
-                &self.transport,
-                &["ime", "enable", "com.sohu.inputmethod.sogou.oem/.SogouIME"],
-            );
-            let _ = adb.shell(
-                &self.transport,
-                &["ime", "set", "com.sohu.inputmethod.sogou.oem/.SogouIME"],
-            );
-            Ok("已恢复并切换回原厂搜狗输入法".into())
+            crate::input_method::restore_sogou(adb, self)?;
+            Ok("已核验恢复搜狗输入法，小企鹅与词库保留".into())
         }
     }
 
@@ -1072,9 +1004,23 @@ if not unlocked:
     raise RuntimeError('未找到可授权的背屏硬件节点')
 print(','.join(unlocked))
 "#;
-        let unlocked = self.run_root_bridge_python(py)
+        let unlocked = self
+            .run_root_bridge_python(py)
             .context("背屏硬件权限设置失败")?;
-        if unlocked.trim().is_empty() || !unlocked.trim().split(',').all(|node| ["breath", "dim_brightness", "frame_brightness", "brightness", "reg"].contains(&node)) { bail!("手机未确认背屏硬件权限，未标记为已解锁"); }
+        if unlocked.trim().is_empty()
+            || !unlocked.trim().split(',').all(|node| {
+                [
+                    "breath",
+                    "dim_brightness",
+                    "frame_brightness",
+                    "brightness",
+                    "reg",
+                ]
+                .contains(&node)
+            })
+        {
+            bail!("手机未确认背屏硬件权限，未标记为已解锁");
+        }
         Ok(format!(
             "已设置背屏硬件节点权限：/sys/class/leds/aw20072_led/{{{}}}",
             unlocked.trim()
@@ -1115,21 +1061,35 @@ print('ok')
         match cmd_key {
             "screenshot_to_phone" => {
                 let tmp_path = std::env::temp_dir().join("stepx_pc_capture.png");
-                // Create or capture a real PC screenshot and push it to /sdcard/Download/StepX_PC_Screen.png
-                let captured = Command::new("import")
-                    .args(["-window", "root", tmp_path.to_str().unwrap_or("/tmp/stepx_pc_capture.png")])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
-                if !captured {
-                    let fallback = crate::resources::root().join("desktop/assets/stepx_home_screen.png");
-                    if fallback.is_file() {
-                        let _ = std::fs::copy(&fallback, &tmp_path);
-                    }
-                }
-                if self.verify(adb).is_ok() && tmp_path.is_file() {
+                // Never substitute an old image when capture is unsupported or denied.
+                let _ = std::fs::remove_file(&tmp_path);
+                #[cfg(target_os = "macos")]
+                let mut capture = {
+                    let mut command = Command::new("/usr/sbin/screencapture");
+                    command.arg("-x").arg(&tmp_path);
+                    command
+                };
+                #[cfg(target_os = "linux")]
+                let mut capture = {
+                    let mut command = Command::new("import");
+                    command.args(["-window", "root"]).arg(&tmp_path);
+                    command
+                };
+                #[cfg(windows)]
+                let mut capture = {
+                    let mut command = Command::new("powershell.exe");
+                    command.args(["-NoProfile", "-NonInteractive", "-Command",
+                        "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $r=[Windows.Forms.SystemInformation]::VirtualScreen; $b=New-Object Drawing.Bitmap($r.Width,$r.Height); $g=[Drawing.Graphics]::FromImage($b); try {$g.CopyFromScreen($r.Location,[Drawing.Point]::Empty,$r.Size); $b.Save($env:STEPX_CAPTURE_PATH,[Drawing.Imaging.ImageFormat]::Png)} finally {$g.Dispose(); $b.Dispose()}"]);
+                    command.env("STEPX_CAPTURE_PATH", &tmp_path);
+                    command
+                };
+                crate::resources::quiet_command(&mut capture);
+                let result = crate::adb::run_process(capture, None, std::time::Duration::from_secs(20))?;
+                anyhow::ensure!(result.status.success() && tmp_path.is_file(), "电脑截屏未完成，请检查系统屏幕录制权限；未发送图片");
+                self.verify(adb)?;
+                if tmp_path.is_file() {
                     if let Some(src_str) = tmp_path.to_str() {
-                        let _ = adb.run_timeout(
+                        adb.run_timeout(
                             &[
                                 "-s",
                                 &self.transport,
@@ -1138,7 +1098,7 @@ print('ok')
                                 "/sdcard/Download/StepX_PC_Screen.png",
                             ],
                             std::time::Duration::from_secs(20),
-                        );
+                        )?;
                     }
                 }
                 Ok("已截取当前电脑屏幕并推送至手机 /sdcard/Download/StepX_PC_Screen.png，Amoo 可直接识图分析".into())
@@ -1160,6 +1120,268 @@ print('ok')
             }
             _ => Ok(format!("已执行手机控电脑指令：{cmd_key}")),
         }
+    }
+}
+
+/// A blocking layer result, with the party that alone can clear it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PlayProtectBlocker {
+    pub layer: String,
+    pub title: String,
+    pub owner: String,
+    pub detail: String,
+    pub required_action: String,
+}
+
+/// One read-only certification check. `ok == None` means the probe could not
+/// run on this device; it must never be presented as a failure.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PlayProtectCheck {
+    pub check: String,
+    pub value: String,
+    pub expected: String,
+    pub ok: Option<bool>,
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PlayProtectLayer {
+    pub layer: String,
+    pub title: String,
+    pub owner: String,
+    /// pass | fail | unknown
+    pub state: String,
+    pub checks: Vec<PlayProtectCheck>,
+    pub note: String,
+}
+
+/// What the phone's own vendor services can identify. Never part of the
+/// certification verdict: Google never sees it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PlayProtectVendorServices {
+    pub updater_installed: Option<bool>,
+    pub updater_holds_dsid_permission: Option<bool>,
+    pub dsid_readable_from_host: Option<bool>,
+    pub dsid_host_error: String,
+    pub gsf_android_id: String,
+    pub note: String,
+}
+
+/// How old the device's security patch level is. Never part of the
+/// certification verdict: Google publishes no threshold, so only the measured
+/// age is reported.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PlayProtectPatchFreshness {
+    pub security_patch: Option<String>,
+    pub vendor_security_patch: Option<String>,
+    pub age_days: Option<i64>,
+    pub stale: Option<bool>,
+    pub note: String,
+}
+
+/// What the official firmware channel offers. Read-only evidence only.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PlayProtectFirmware {
+    pub available: bool,
+    pub http_code: Option<i64>,
+    pub new_version: Option<String>,
+    pub latest_version: Option<String>,
+    pub current_build: Option<String>,
+    pub current_incremental: Option<String>,
+    pub same_as_current: bool,
+    pub need_update: Option<bool>,
+    pub release_date: Option<String>,
+    pub note: String,
+}
+
+/// One OEM action and the layers it can clear, highest leverage first.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PlayProtectLeverage {
+    pub action: String,
+    pub clears: Vec<String>,
+    pub owner: String,
+    pub reason: String,
+}
+
+/// The four-layer model behind Play's "设备已通过认证" verdict. Every field is
+/// read-only evidence: no client-side change, including the Play compatibility
+/// patch, can turn `certified` true.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PlayProtectReport {
+    pub checked: bool,
+    pub certified: bool,
+    pub verdict: String,
+    pub layers: Vec<PlayProtectLayer>,
+    pub blockers: Vec<PlayProtectBlocker>,
+    pub vendor_services: Option<PlayProtectVendorServices>,
+    pub patch_freshness: Option<PlayProtectPatchFreshness>,
+    pub firmware: Option<PlayProtectFirmware>,
+    pub leverage: Vec<PlayProtectLeverage>,
+    pub note: String,
+}
+
+impl PlayProtectReport {
+    /// Demo data mirroring the real StepX finding, so the certification panel
+    /// can be exercised without a phone attached.
+    pub fn demo() -> Self {
+        let layer = |id: &str,
+                     title: &str,
+                     owner: &str,
+                     state: &str,
+                     note: &str,
+                     checks: Vec<PlayProtectCheck>| PlayProtectLayer {
+            layer: id.into(),
+            title: title.into(),
+            owner: owner.into(),
+            state: state.into(),
+            checks,
+            note: note.into(),
+        };
+        let check = |name: &str, value: &str, expected: &str, ok: Option<bool>| PlayProtectCheck {
+            check: name.into(),
+            value: value.into(),
+            expected: expected.into(),
+            ok,
+            detail: None,
+        };
+        Self {
+            checked: true,
+            certified: false,
+            verdict: "not_certified".into(),
+            layers: vec![
+                layer("client_admission", "第 1 层 · 客户端准入层", "user", "pass",
+                      "商店可用性已恢复或本就可用；这不构成认证通过。",
+                      vec![check("Google 三件套已安装", "3/3", "3/3", Some(true)),
+                           check("组件被停用", "无", "无", Some(true)),
+                           check("当前前台为未认证拦截页", "false", "false", Some(true)),
+                           check("Play 兼容补丁生效", "true", "true", Some(true)),
+                           check("兼容补丁未改动设备认证", "false", "false", Some(true))]),
+                layer("system_boot", "第 2 层 · 系统与启动层", "oem", "pass",
+                      "启动链与构建标签处于正式版状态；这是必要条件，不证明认证通过。",
+                      vec![check("ro.build.tags", "release-keys", "release-keys", Some(true)),
+                           check("ro.build.type", "user", "user", Some(true)),
+                           check("ro.boot.flash.locked", "1", "1", Some(true)),
+                           check("ro.boot.verifiedbootstate", "green", "green", Some(true)),
+                           check("SELinux", "Enforcing", "Enforcing", Some(true)),
+                           check("指纹与品牌/机型一致",
+                                 "StepX/pandora/pandora:16/…", "StepX/…/pandora:…",
+                                 Some(true))]),
+                layer("key_attestation", "第 3 层 · 硬件密钥证明层", "oem", "fail",
+                      "证明链内部有效，但根证书不是 Google 官方硬件证明根，服务端不会接受。",
+                      vec![check("链内签名与有效期", "true", "true", Some(true)),
+                           check("根证书匹配 Google 官方硬件根", "false", "true", Some(false)),
+                           check("链上证书不在 Google 吊销列表", "false", "false", Some(true))]),
+                layer("rkp_and_catalog", "第 4 层 · 远程密钥配置与设备目录层", "oem", "fail",
+                      "RKP 与目录层至少一项未就绪；这些都不能由本机客户端补齐。",
+                      vec![check("com.android.rkpdapp 已安装", "true", "true", Some(true)),
+                           check("RKP HAL hwVersion", "3", "3", Some(true)),
+                           check("RKP HAL rpcAuthorName", "Qualcomm", "非空", Some(true)),
+                           check("RKP HAL uniqueId", "fae4f65f…", "非空", Some(true)),
+                           check("remote_provisioning.hostname", "空", "官方主机名", Some(false)),
+                           check("防火墙放行 IRemoteProvisioning", "false", "true", Some(false)),
+                           check("RKP signCertificates", "444", "200", Some(false)),
+                           check("Google 认证设备目录收录", "false", "true", Some(false))]),
+            ],
+            blockers: vec![
+                PlayProtectBlocker {
+                    layer: "key_attestation".into(),
+                    title: "第 3 层 · 硬件密钥证明层".into(),
+                    owner: "oem".into(),
+                    detail: "根证书匹配 Google 官方硬件根=False（期望 True）".into(),
+                    required_action: "只能由厂商在产线烧录 Google 签发的生产 Keybox；本机无法自行补齐。"
+                        .into(),
+                },
+                PlayProtectBlocker {
+                    layer: "rkp_and_catalog".into(),
+                    title: "第 4 层 · 远程密钥配置与设备目录层".into(),
+                    owner: "oem".into(),
+                    detail: "remote_provisioning.hostname=空；防火墙放行=False；signCertificates=444；目录未收录"
+                        .into(),
+                    required_action: "需要 SoC 厂商 / 整机厂商向 Google RKP 后台登记硬件公钥，并通过 CTS/VTS/GTS 备案。"
+                        .into(),
+                },
+            ],
+            vendor_services: Some(PlayProtectVendorServices {
+                updater_installed: Some(true),
+                updater_holds_dsid_permission: Some(true),
+                dsid_readable_from_host: Some(false),
+                dsid_host_error: "需要 com.stepos.secureservice.permission.OPEN_DATA_PROVIDER"
+                    .into(),
+                gsf_android_id: "23392eef6ce29cb0".into(),
+                note: "dsid 由 com.stepos.secureservice 的 DataProvider 提供，受 signature|privileged 权限保护。"
+                    .into(),
+            }),
+            patch_freshness: Some(PlayProtectPatchFreshness {
+                security_patch: Some("2025-12-05".into()),
+                vendor_security_patch: Some("2025-12-05".into()),
+                age_days: Some(322),
+                stale: Some(true),
+                note: "安全补丁 2025-12-05，距今 322 天。".into(),
+            }),
+            firmware: Some(PlayProtectFirmware {
+                available: true,
+                http_code: Some(200),
+                new_version: None,
+                latest_version: Some(
+                    "Step AOS 1.0.0.2.26001_stable_user_20261004_131555".into()),
+                current_build: Some(
+                    "Step AOS 1.0.0.2.26001_stable_user_20261004_131555".into()),
+                current_incremental: Some("172".into()),
+                same_as_current: true,
+                need_update: Some(false),
+                release_date: Some("2026-10-16 17:37:46".into()),
+                note: "官方固件通道没有比设备当前版本更新的构建。".into(),
+            }),
+            leverage: vec![
+                PlayProtectLeverage {
+                    action: "向 Google RKP 后台登记硬件公钥（第 2 步）".into(),
+                    clears: vec!["key_attestation".into(), "rkp_and_catalog".into()],
+                    owner: "soc_vendor_or_oem".into(),
+                    reason: "一步解两层。".into(),
+                },
+                PlayProtectLeverage {
+                    action: "移除固件防火墙拦截并配置 hostname（第 3 步）".into(),
+                    clears: vec!["rkp_and_catalog".into()],
+                    owner: "oem".into(),
+                    reason: "让系统能真正发起轮换。".into(),
+                },
+            ],
+            note: String::new(),
+        }
+    }
+}
+
+impl PlayProtectReport {
+    pub fn state_label(&self) -> &'static str {
+        if !self.checked {
+            "未检测"
+        } else if self.certified {
+            "已通过认证"
+        } else {
+            "未通过认证"
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        if !self.checked {
+            return "Play 保护机制认证尚未检测。".into();
+        }
+        if self.certified {
+            return "四层证据齐备，Play 显示设备已通过认证。".into();
+        }
+        let passed = self
+            .layers
+            .iter()
+            .filter(|layer| layer.state == "pass")
+            .count();
+        let blocker = self
+            .blockers
+            .first()
+            .map(|blocker| format!("最近阻塞项：{}（{}）", blocker.detail, blocker.owner))
+            .unwrap_or_default();
+        format!("四层校验中 {passed} 层通过；认证未通过，阻塞项需由厂商侧解决。{blocker}")
+            .trim()
+            .to_string()
     }
 }
 
@@ -1186,6 +1408,7 @@ pub struct GoogleSuiteStatus {
     pub compatibility_active: bool,
     pub compatibility_can_rollback: bool,
     pub compatibility_note: String,
+    pub play_protect: PlayProtectReport,
 }
 
 impl GoogleSuiteStatus {
@@ -1212,9 +1435,9 @@ impl GoogleSuiteStatus {
             compatibility_active: false,
             compatibility_can_rollback: false,
             compatibility_note: "兼容补丁尚未检测".into(),
+            play_protect: PlayProtectReport::demo(),
         }
     }
-
     pub fn gms_short(&self) -> String {
         self.gms_version
             .split_whitespace()
@@ -1232,15 +1455,97 @@ impl GoogleSuiteStatus {
     }
 }
 
+#[cfg(test)]
+mod play_protect_demo_tests {
+    use super::*;
+
+    #[test]
+    fn demo_report_exercises_every_panel_section() {
+        let report = PlayProtectReport::demo();
+        assert!(report.checked);
+        assert!(!report.certified);
+        assert_eq!(report.verdict, "not_certified");
+        assert_eq!(report.state_label(), "未通过认证");
+        // All four layers, with the two real blockers failing.
+        assert_eq!(report.layers.len(), 4);
+        assert_eq!(report.layers[0].state, "pass");
+        assert_eq!(report.layers[1].state, "pass");
+        assert_eq!(report.layers[2].state, "fail");
+        assert_eq!(report.layers[3].state, "fail");
+        // The failed checks must carry a value and an expectation, or the panel
+        // would render an empty line.
+        for layer in &report.layers {
+            for entry in &layer.checks {
+                assert!(!entry.check.is_empty());
+                assert!(!entry.value.is_empty());
+                assert!(!entry.expected.is_empty());
+            }
+        }
+        assert_eq!(report.blockers.len(), 2);
+        assert!(report.blockers.iter().all(|b| b.owner == "oem"));
+        // The sections added after the first cut.
+        assert!(report.vendor_services.is_some());
+        assert!(report.patch_freshness.is_some());
+        assert!(report.firmware.is_some());
+        let patch = report.patch_freshness.as_ref().unwrap();
+        assert_eq!(patch.age_days, Some(322));
+        assert_eq!(patch.stale, Some(true));
+        let firmware = report.firmware.as_ref().unwrap();
+        assert!(firmware.available);
+        assert!(firmware.same_as_current);
+        assert!(firmware.new_version.is_none());
+        // Highest leverage first, clearing two layers.
+        assert_eq!(
+            report.leverage[0].clears,
+            vec!["key_attestation".to_string(), "rkp_and_catalog".to_string()]
+        );
+        assert!(report.summary().contains("未通过"));
+    }
+
+    #[test]
+    fn a_green_demo_would_read_as_certified() {
+        // Guards against the demo data drifting into a hardcoded "never certified".
+        let mut report = PlayProtectReport::demo();
+        for layer in &mut report.layers {
+            layer.state = "pass".into();
+            for entry in &mut layer.checks {
+                entry.ok = Some(true);
+            }
+        }
+        report.blockers.clear();
+        report.certified = true;
+        report.verdict = "certified".into();
+        assert_eq!(report.state_label(), "已通过认证");
+        assert!(report.summary().contains("已通过认证"));
+    }
+}
+
 impl Default for GoogleSuiteStatus {
     fn default() -> Self {
-        Self { checked: false, verification_note: "待检测".into(), installed: false,
-            gsf_version: String::new(), gms_version: String::new(), play_version: String::new(),
-            granted_count: 0, total_permissions: 0, system_server_pid: 0, pid_matches: false,
-            persistent_flags_clear: false, google_accounts: 0, boot_module_ready: false,
-            certification_note: "认证尚未核验".into(), certification_catalog: String::new(), boot_security_note: String::new(),
-            compatibility_checked: false, compatibility_supported: false, compatibility_active: false,
-            compatibility_can_rollback: false, compatibility_note: "兼容补丁尚未检测".into() }
+        Self {
+            checked: false,
+            verification_note: "待检测".into(),
+            installed: false,
+            gsf_version: String::new(),
+            gms_version: String::new(),
+            play_version: String::new(),
+            granted_count: 0,
+            total_permissions: 0,
+            system_server_pid: 0,
+            pid_matches: false,
+            persistent_flags_clear: false,
+            google_accounts: 0,
+            boot_module_ready: false,
+            certification_note: "认证尚未核验".into(),
+            certification_catalog: String::new(),
+            boot_security_note: String::new(),
+            compatibility_checked: false,
+            compatibility_supported: false,
+            compatibility_active: false,
+            compatibility_can_rollback: false,
+            compatibility_note: "兼容补丁尚未检测".into(),
+            play_protect: PlayProtectReport::default(),
+        }
     }
 }
 
@@ -1366,7 +1671,12 @@ impl DeviceMetrics {
         for line in summary.lines().map(str::trim) {
             if let Some(rest) = line.strip_prefix("电量") {
                 if let Some((lvl, state)) = rest.split_once('·') {
-                    metrics.battery_level = lvl.trim().trim_end_matches('%').parse::<u8>().ok().filter(|v| *v <= 100);
+                    metrics.battery_level = lvl
+                        .trim()
+                        .trim_end_matches('%')
+                        .parse::<u8>()
+                        .ok()
+                        .filter(|v| *v <= 100);
                     metrics.charging_state = state.trim().to_string();
                 }
             } else if let Some(temp) = line.strip_prefix("电池温度") {
@@ -1602,10 +1912,15 @@ pub fn format_summary(raw: &str) -> String {
             .map(str::trim)
             .unwrap_or("")
     };
-    let level = value("level:").parse::<u32>().ok().and_then(|level| {
-        let scale = value("scale:").parse::<u32>().ok().unwrap_or(100);
-        (scale > 0 && level <= scale).then(|| format!("{}%", u64::from(level) * 100 / u64::from(scale)))
-    }).unwrap_or_else(|| "未检测".into());
+    let level = value("level:")
+        .parse::<u32>()
+        .ok()
+        .and_then(|level| {
+            let scale = value("scale:").parse::<u32>().ok().unwrap_or(100);
+            (scale > 0 && level <= scale)
+                .then(|| format!("{}%", u64::from(level) * 100 / u64::from(scale)))
+        })
+        .unwrap_or_else(|| "未检测".into());
     let charging = match value("status:") {
         "2" => "正在充电",
         "5" => "电量已满",
@@ -1618,30 +1933,63 @@ pub fn format_summary(raw: &str) -> String {
         .map(|v| format!("{:.1} °C", v / 10.))
         .unwrap_or_else(|_| "未检测".into());
     let health = match value("health:") {
-        "2" => "良好", "3" => "过热", "4" => "失效", "5" => "过压",
-        "6" => "故障", "7" => "过冷", _ => "未检测",
+        "2" => "良好",
+        "3" => "过热",
+        "4" => "失效",
+        "5" => "过压",
+        "6" => "故障",
+        "7" => "过冷",
+        _ => "未检测",
     };
-    let voltage = value("voltage:").parse::<u32>().ok().filter(|v| *v > 0)
+    let voltage = value("voltage:")
+        .parse::<u32>()
+        .ok()
+        .filter(|v| *v > 0)
         .map(|v| format!("{:.2} V", f64::from(v) / 1000.))
         .unwrap_or_else(|| "未检测".into());
-    let resolution = [value("Override size:"), value("Physical size:")].into_iter()
-        .find(|size| size.split_once('x').map(|(w, h)| {
-            w.parse::<u32>().is_ok_and(|v| v > 0) && h.parse::<u32>().is_ok_and(|v| v > 0)
-        }).unwrap_or(false))
-        .map(|size| size.replace('x', " × ")).unwrap_or_else(|| "未检测".into());
-    let wifi_ipv4 = raw.lines().find_map(|line| {
-        let parts = line.split_whitespace().collect::<Vec<_>>();
-        if parts.get(1) != Some(&"wlan0") { return None; }
-        let index = parts.iter().position(|p| *p == "inet")?;
-        let ip = parts.get(index + 1)?.split('/').next()?;
-        ip.parse::<std::net::Ipv4Addr>().ok().map(|v| v.to_string())
-    }).unwrap_or_else(|| "未检测".into());
+    let resolution = [value("Override size:"), value("Physical size:")]
+        .into_iter()
+        .find(|size| {
+            size.split_once('x')
+                .map(|(w, h)| {
+                    w.parse::<u32>().is_ok_and(|v| v > 0) && h.parse::<u32>().is_ok_and(|v| v > 0)
+                })
+                .unwrap_or(false)
+        })
+        .map(|size| size.replace('x', " × "))
+        .unwrap_or_else(|| "未检测".into());
+    let wifi_ipv4 = raw
+        .lines()
+        .find_map(|line| {
+            let parts = line.split_whitespace().collect::<Vec<_>>();
+            if parts.get(1) != Some(&"wlan0") {
+                return None;
+            }
+            let index = parts.iter().position(|p| *p == "inet")?;
+            let ip = parts.get(index + 1)?.split('/').next()?;
+            ip.parse::<std::net::Ipv4Addr>().ok().map(|v| v.to_string())
+        })
+        .unwrap_or_else(|| "未检测".into());
     let mut result = format!("电量  {level}    ·    {charging}\n电池温度  {temperature}\n电池健康  {health}\n电池电压  {voltage}\n屏幕分辨率  {resolution}\n无线地址  {wifi_ipv4}");
     if let Some(parts) = raw
         .lines()
         .map(|s| s.split_whitespace().collect::<Vec<_>>())
-        .filter(|p| p.len() >= 6 && (p.last().is_some_and(|mount| *mount == "/data" || mount.starts_with("/data/")) || p[0] == "/dev/fuse"))
-        .min_by_key(|p| if p.last().is_some_and(|mount| *mount == "/data" || mount.starts_with("/data/")) { 0 } else { 1 })
+        .filter(|p| {
+            p.len() >= 6
+                && (p
+                    .last()
+                    .is_some_and(|mount| *mount == "/data" || mount.starts_with("/data/"))
+                    || p[0] == "/dev/fuse")
+        })
+        .min_by_key(|p| {
+            if p.last()
+                .is_some_and(|mount| *mount == "/data" || mount.starts_with("/data/"))
+            {
+                0
+            } else {
+                1
+            }
+        })
     {
         result.push_str(&format!(
             "\n\n手机存储  {}\n已用  {}    ·    可用  {}    ·    使用率  {}",
@@ -1841,18 +2189,22 @@ pub fn is_backscreen_corner(x: usize, y: usize) -> bool {
         || (x == 16 && y == 21)
 }
 
-pub fn image_to_backscreen_frame(path: &std::path::Path, brightness: u8, invert: bool) -> Result<Vec<u8>> {
+pub fn image_to_backscreen_frame(
+    path: &std::path::Path,
+    brightness: u8,
+    invert: bool,
+) -> Result<Vec<u8>> {
     let raw = crate::backscreen::image_frame(path, &Default::default())?;
-    Ok(crate::backscreen::frame(&crate::backscreen::Source::Image(raw), &crate::backscreen::PlaybackConfig { brightness, invert, ..Default::default() }, std::time::Duration::ZERO, &Default::default()))
-}
-
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct StudioStatus {
-    pub android_id: String,
-    pub token: String,
-    pub gateway_port: u16,
-    pub model_proxy_port: u16,
-    pub lan_ip: String,
+    Ok(crate::backscreen::frame(
+        &crate::backscreen::Source::Image(raw),
+        &crate::backscreen::PlaybackConfig {
+            brightness,
+            invert,
+            ..Default::default()
+        },
+        std::time::Duration::ZERO,
+        &Default::default(),
+    ))
 }
 
 /// Derives the OpenClaw Gateway token identically to `GatewayTokenDeriver` in `com.stepos.ailauncher`:
@@ -1972,4 +2324,41 @@ fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
     outer.extend_from_slice(&opad);
     outer.extend_from_slice(&inner_hash);
     sha256(&outer)
+}
+
+#[cfg(test)]
+mod generic_apk_install_tests {
+    use super::validate_generic_apk_identity;
+    use serde_json::json;
+
+    #[test]
+    fn companion_package_uses_dedicated_installation() {
+        let error =
+            validate_generic_apk_identity(&json!({"ok":true,"package":"com.stepx.companion.app"}))
+                .unwrap_err();
+        assert!(error.to_string().contains("通用 APK 入口不会覆盖伴侣"));
+    }
+
+    #[test]
+    fn unrelated_apps_remain_installable() {
+        for package in [
+            "com.jd.jrapp",
+            "com.example.game",
+            "com.stepx.companion.neo",
+            "android",
+        ] {
+            assert!(validate_generic_apk_identity(&json!({"ok":true,"package":package})).is_ok());
+        }
+    }
+
+    #[test]
+    fn missing_or_failed_identity_never_continues() {
+        for value in [
+            json!({"ok":true}),
+            json!({"ok":true,"package":""}),
+            json!({"ok":false,"package":"com.example.app","error":"元数据不可读"}),
+        ] {
+            assert!(validate_generic_apk_identity(&value).is_err());
+        }
+    }
 }

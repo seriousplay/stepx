@@ -255,7 +255,8 @@ fn background_waiting_for_task(state: &Value, uptime_ms: Option<u64>) -> bool {
     state["enabled"].as_bool() == Some(true)
         && state["active"].as_bool() == Some(false)
         && state["lastError"].as_str() == Some("")
-        && uptime_ms.zip(state["leaseExpiresElapsedMs"].as_u64())
+        && uptime_ms
+            .zip(state["leaseExpiresElapsedMs"].as_u64())
             .is_some_and(|(now, expires)| expires <= now)
 }
 
@@ -285,7 +286,11 @@ fn background_status(
     // An idle service intentionally exits after writing its final inactive
     // state. It need not keep a fresh heartbeat when there is no task lease.
     if background_waiting_for_task(state, uptime_ms) {
-        return (Some(true), Some(false), "已配置，任务时连接。当前没有后台任务租约；发送任务后再确认实际连接和回复。".into());
+        return (
+            Some(true),
+            Some(false),
+            "已配置，任务时连接。当前没有后台任务租约；发送任务后再确认实际连接和回复。".into(),
+        );
     }
     let fresh = uptime_ms
         .zip(state["uptimeMs"].as_u64())
@@ -305,8 +310,7 @@ fn background_status(
         && uptime_ms
             .zip(state["observedConnectedElapsedMs"].as_u64())
             .is_some_and(|(now, observed)| {
-                observed <= now.saturating_add(2_000)
-                    && now.saturating_sub(observed) <= 60_000
+                observed <= now.saturating_add(2_000) && now.saturating_sub(observed) <= 60_000
             });
     let message = if ready {
         "后台通道已确认可达，任务是否完成以实际回执为准。"
@@ -358,15 +362,22 @@ fn pairing_status(
 
 fn read_pairing_readiness(adb: &Adb, device: &Device) -> (bool, String) {
     let state = adb
-        .shell(&device.transport, &["cat", &format!("{FILES}/pairing.json")])
+        .shell(
+            &device.transport,
+            &["cat", &format!("{FILES}/pairing.json")],
+        )
         .ok()
         .filter(|s| s.len() <= 64 * 1024)
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .unwrap_or(Value::Null);
-    let alive = adb.shell(&device.transport, &["pidof", PACKAGE])
-        .map(|s| !s.trim().is_empty()).unwrap_or(false);
-    let phone_time = adb.shell(&device.transport, &["date", "+%s"])
-        .ok().and_then(|s| s.trim().parse::<u64>().ok())
+    let alive = adb
+        .shell(&device.transport, &["pidof", PACKAGE])
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    let phone_time = adb
+        .shell(&device.transport, &["date", "+%s"])
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
         .and_then(|seconds| seconds.checked_mul(1000));
     pairing_status(true, &state, alive, phone_time)
 }
@@ -395,7 +406,10 @@ fn background_capability(
         return (
             state["enabled"].as_bool(),
             Some(false),
-            capability["message"].as_str().unwrap_or("后台协作权限不完整，请安装／修复 StepX伴侣。").into(),
+            capability["message"]
+                .as_str()
+                .unwrap_or("后台协作权限不完整，请安装／修复 StepX伴侣。")
+                .into(),
         );
     }
     background_status(state, alive, uptime_ms)
@@ -602,11 +616,39 @@ pub fn inspect(adb: &Adb, device: &Device) -> Result<CompanionStatus> {
 fn permission_script() -> Result<PathBuf> {
     let path = std::env::var_os("STEPX_COMPANION_PERMISSIONS")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            crate::resources::root().join("scripts/companion-permissions.py")
-        });
+        .unwrap_or_else(|| crate::resources::root().join("scripts/companion-permissions.py"));
     ensure!(path.is_file(), "缺少 StepX伴侣权限适配组件");
     Ok(path)
+}
+
+// Keep a single immutable snapshot through preflight, install and permission setup.
+// Installed resource bundles may carry a locally merged runtime; the public
+// compile-time fallback intentionally contains no private Neo implementation.
+fn compiled_apk_snapshot() -> Result<tempfile::NamedTempFile> {
+    // Trust is anchored in this executable, never in the replaceable resource directory.
+    let mut snapshot = tempfile::Builder::new().suffix(".apk").tempfile()?;
+    snapshot.write_all(APK)?;
+    snapshot.as_file().sync_all()?;
+    Ok(snapshot)
+}
+
+fn installation_apk(resource_root: &Path) -> Result<tempfile::NamedTempFile> {
+    let candidate = resource_root.join("desktop/assets/stepx-companion.apk");
+    let mut snapshot = tempfile::Builder::new().suffix(".apk").tempfile()?;
+    match std::fs::File::open(&candidate) {
+        Ok(mut source) => {
+            let size = source.metadata()?.len();
+            ensure!(
+                size > 0 && size <= 200 * 1024 * 1024,
+                "伴侣资源 APK 大小异常，请使用完整安装包"
+            );
+            std::io::copy(&mut source, &mut snapshot).context("无法读取伴侣资源 APK")?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => snapshot.write_all(APK)?,
+        Err(error) => return Err(error).context("无法读取伴侣资源 APK，请检查安装目录权限"),
+    }
+    snapshot.as_file().sync_all()?;
+    Ok(snapshot)
 }
 
 pub fn install(
@@ -616,11 +658,9 @@ pub fn install(
 ) -> Result<CompanionStatus> {
     device.verify(adb)?;
     let script = permission_script()?;
-    let mut apk = tempfile::Builder::new().suffix(".apk").tempfile()?;
-    apk.write_all(APK)?;
-    apk.as_file().sync_all()?;
+    let apk = installation_apk(&crate::resources::root())?;
     let path = apk.path().to_str().context("安装包路径无效")?;
-    progress("正在检查设备、应用签名与伴侣权限适配条件…");
+    progress("正在检查设备、应用签名与内置功能保留条件…");
     run_adapter(adb, device, &script, apk.path(), "preflight")?;
     // Only this package's USB-install gate is temporarily opened. Restore it on
     // every normal error path, including a partially completed prepare step.
@@ -684,32 +724,57 @@ fn finish_installation_status(result: &mut CompanionStatus, service: Result<()>)
     if let Err(error) = service {
         result.pairing_ready = false;
         result.pairing_message = format!("扫码系统服务配置未完成：{error}。手机界面与权限已安装；请保持已授权的 USB 连接后更新／修复伴侣。当前也可使用系统配对码。");
-        result.message = format!("手机界面、权限和电池豁免配置完成，扫码服务部分失败。{} 熄屏任务：{}", result.pairing_message, result.background_message);
+        result.message = format!(
+            "手机界面、权限和电池豁免配置完成，扫码服务部分失败。{} 熄屏任务：{}",
+            result.pairing_message, result.background_message
+        );
     } else if !result.pairing_ready {
-        result.message = format!("手机界面、权限和电池豁免配置完成。扫码系统服务已启动，但手机尚未确认就绪：{}", result.pairing_message);
+        result.message = format!(
+            "手机界面、权限和电池豁免配置完成。扫码系统服务已启动，但手机尚未确认就绪：{}",
+            result.pairing_message
+        );
     } else {
-        result.message = format!("手机界面、权限和当前会话扫码服务配置完成。{}", result.message);
+        result.message = format!(
+            "手机界面、权限和当前会话扫码服务配置完成。{}",
+            result.message
+        );
     }
 }
 
 fn run_pairing_adapter(adb: &Adb, device: &Device, apk: &Path, operation: &str) -> Result<Value> {
-    ensure!(["status", "start", "stop"].contains(&operation), "不支持的扫码服务操作");
+    ensure!(
+        ["status", "start", "stop"].contains(&operation),
+        "不支持的扫码服务操作"
+    );
     let script = crate::resources::root().join("scripts/companion-system.py");
     ensure!(script.is_file(), "缺少 StepX伴侣扫码系统服务组件");
     let mut command = crate::resources::python_command();
-    command.arg(script).arg(operation).arg("--apk").arg(apk)
+    command
+        .arg(script)
+        .arg(operation)
+        .arg("--apk")
+        .arg(apk)
         .env("STEPX_SERIAL", &device.transport)
-        .env("STEPX_DEVICE_SERIAL", &device.serial).env("STEPX_ADB", &adb.path)
+        .env("STEPX_DEVICE_SERIAL", &device.serial)
+        .env("STEPX_ADB", &adb.path)
         .env_remove("PYTHONOPTIMIZE");
     let output = run_process(command, None, Duration::from_secs(90))?;
-    let result = serde_json::from_slice::<Value>(&output.stdout)
-        .context("扫码系统服务未返回有效状态")?;
-    ensure!(output.status.success() && result["status"] != "failed", "扫码系统服务操作失败：{}",
-        result["error"].as_str().unwrap_or("手机未确认服务状态"));
-    ensure!(result["service"] == "stepx-pairing-v1" && result["package"] == PACKAGE
-        && result["scope"] == "current_device_session" && result["reboot_verified"] == false
-        && result["native_injection"] == false && result["google_launcher_changed"] == false,
-        "扫码系统服务返回的身份或运行范围不符");
+    let result =
+        serde_json::from_slice::<Value>(&output.stdout).context("扫码系统服务未返回有效状态")?;
+    ensure!(
+        output.status.success() && result["status"] != "failed",
+        "扫码系统服务操作失败：{}",
+        result["error"].as_str().unwrap_or("手机未确认服务状态")
+    );
+    ensure!(
+        result["service"] == "stepx-pairing-v1"
+            && result["package"] == PACKAGE
+            && result["scope"] == "current_device_session"
+            && result["reboot_verified"] == false
+            && result["native_injection"] == false
+            && result["google_launcher_changed"] == false,
+        "扫码系统服务返回的身份或运行范围不符"
+    );
     Ok(result)
 }
 
@@ -718,21 +783,34 @@ fn configure_pairing_service(
     confirm_phone: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     let previous = run("status")?;
-    let running = previous["running"].as_bool().context("无法确认扫码服务是否运行")?;
+    let running = previous["running"]
+        .as_bool()
+        .context("无法确认扫码服务是否运行")?;
     if running {
-        let current = previous["artifact_current"].as_bool().context("无法确认扫码服务版本")?;
+        let current = previous["artifact_current"]
+            .as_bool()
+            .context("无法确认扫码服务版本")?;
         if !current {
             let stopped = run("stop")?;
-            ensure!(stopped["running"] == false && ["stopped", "not_running"].contains(&stopped["status"].as_str().unwrap_or("")),
-                "旧扫码服务尚未确认停止，未覆盖运行中的服务");
+            ensure!(
+                stopped["running"] == false
+                    && ["stopped", "not_running"]
+                        .contains(&stopped["status"].as_str().unwrap_or("")),
+                "旧扫码服务尚未确认停止，未覆盖运行中的服务"
+            );
         }
     }
     let started = run("start")?;
-    ensure!(started["running"] == true && ["ready", "already_running"].contains(&started["status"].as_str().unwrap_or("")),
-        "扫码系统服务未确认启动");
+    ensure!(
+        started["running"] == true
+            && ["ready", "already_running"].contains(&started["status"].as_str().unwrap_or("")),
+        "扫码系统服务未确认启动"
+    );
     let verified = run("status")?;
-    ensure!(verified["running"] == true && verified["artifact_current"] == true,
-        "扫码系统服务运行记录或版本未通过回读");
+    ensure!(
+        verified["running"] == true && verified["artifact_current"] == true,
+        "扫码系统服务运行记录或版本未通过回读"
+    );
     // In particular, already_running alone says nothing about the app's Binder.
     confirm_phone()
 }
@@ -744,8 +822,12 @@ fn start_pairing_service(adb: &Adb, device: &Device, apk: &Path) -> Result<()> {
             let deadline = Instant::now() + Duration::from_secs(12);
             loop {
                 let (ready, message) = read_pairing_readiness(adb, device);
-                if ready { return Ok(()); }
-                if Instant::now() >= deadline { bail!("{message}"); }
+                if ready {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    bail!("{message}");
+                }
                 thread::sleep(Duration::from_millis(500));
             }
         },
@@ -791,6 +873,11 @@ fn run_adapter(
     apk: &Path,
     operation: &str,
 ) -> Result<()> {
+    let trusted = if matches!(operation, "preflight" | "prepare-install") {
+        Some(compiled_apk_snapshot()?)
+    } else {
+        None
+    };
     let mut command = crate::resources::python_command();
     command
         .arg(script)
@@ -801,6 +888,9 @@ fn run_adapter(
         .env("STEPX_DEVICE_SERIAL", &device.serial)
         .env("STEPX_ADB", &adb.path)
         .env_remove("PYTHONOPTIMIZE");
+    if let Some(anchor) = &trusted {
+        command.arg("--trusted-apk").arg(anchor.path());
+    }
     let output = run_process(command, None, Duration::from_secs(180))?;
     if !output.status.success() {
         let reason = serde_json::from_slice::<Value>(&output.stdout)
@@ -868,9 +958,7 @@ fn require_ready(adb: &Adb, device: &Device) -> Result<()> {
     // This firmware freezes even a valid foreground service unless its package
     // is explicitly allowed. Recheck on each user action because that list lives
     // in system_server memory and may have reset after a phone restart.
-    let mut apk = tempfile::Builder::new().suffix(".apk").tempfile()?;
-    apk.write_all(APK)?;
-    apk.as_file().sync_all()?;
+    let apk = installation_apk(&crate::resources::root())?;
     run_adapter(adb, device, &permission_script()?, apk.path(), "runtime")?;
     Ok(())
 }
@@ -1051,6 +1139,45 @@ pub fn apply_preset(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installation_snapshot_prefers_resource_package_and_is_immutable() {
+        let root = tempfile::tempdir().unwrap();
+        let assets = root.path().join("desktop/assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        let candidate = assets.join("stepx-companion.apk");
+        std::fs::write(&candidate, b"local-complete-apk").unwrap();
+        let snapshot = installation_apk(root.path()).unwrap();
+        std::fs::write(&candidate, b"changed-after-snapshot").unwrap();
+        assert_eq!(
+            std::fs::read(snapshot.path()).unwrap(),
+            b"local-complete-apk"
+        );
+    }
+
+    #[test]
+    fn compiled_signature_anchor_does_not_read_replaceable_resources() {
+        let root = tempfile::tempdir().unwrap();
+        let candidate = root.path().join("desktop/assets/stepx-companion.apk");
+        std::fs::create_dir_all(candidate.parent().unwrap()).unwrap();
+        std::fs::write(&candidate, b"replacement-with-another-certificate").unwrap();
+        let selected = installation_apk(root.path()).unwrap();
+        let anchor = compiled_apk_snapshot().unwrap();
+        assert_ne!(std::fs::read(selected.path()).unwrap(), APK);
+        assert_eq!(std::fs::read(anchor.path()).unwrap(), APK);
+    }
+
+    #[test]
+    fn installation_snapshot_falls_back_only_when_resource_is_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let snapshot = installation_apk(root.path()).unwrap();
+        assert_eq!(std::fs::read(snapshot.path()).unwrap(), APK);
+        let candidate = root.path().join("desktop/assets/stepx-companion.apk");
+        std::fs::create_dir_all(candidate.parent().unwrap()).unwrap();
+        std::fs::write(&candidate, b"").unwrap();
+        assert!(installation_apk(root.path()).is_err());
+    }
+
     #[test]
     fn permission_status_requires_exact_granted_permission() {
         let dump = "android.permission.CAMERA
@@ -1062,7 +1189,13 @@ android.permission.CAMERA_EXTRA: granted=true";
         assert!(granted(dump, "android.permission.WRITE_SECURE_SETTINGS"));
         let permissions = permission_status(dump);
         assert_eq!(permissions.len(), 15);
-        assert!(!permissions.iter().find(|p| p.name == "com.stepos.cloud.push.permission.MESSAGE").unwrap().granted);
+        assert!(
+            !permissions
+                .iter()
+                .find(|p| p.name == "com.stepos.cloud.push.permission.MESSAGE")
+                .unwrap()
+                .granted
+        );
     }
     #[test]
     fn runtime_grants_are_scoped_to_user_zero() {
@@ -1126,9 +1259,16 @@ local freeze white apps:
             permission.granted = true;
         }
         assert!(verify_installation(&status).is_ok());
-        let wake_index = status.permissions.iter().position(|p| p.name == "com.stepos.cloud.push.permission.MESSAGE").unwrap();
+        let wake_index = status
+            .permissions
+            .iter()
+            .position(|p| p.name == "com.stepos.cloud.push.permission.MESSAGE")
+            .unwrap();
         status.permissions[wake_index].granted = false;
-        assert!(verify_installation(&status).unwrap_err().to_string().contains("原生任务唤醒"));
+        assert!(verify_installation(&status)
+            .unwrap_err()
+            .to_string()
+            .contains("原生任务唤醒"));
         status.permissions[wake_index].granted = true;
         status.permissions[3].granted = false;
         assert!(verify_installation(&status).is_err());
@@ -1166,24 +1306,44 @@ local freeze white apps:
                 |op| {
                     operations.push(op.to_string());
                     Ok(match op {
-                        "status" => json!({"running":true,"artifact_current":!outdated || operations.len()>1}),
+                        "status" => {
+                            json!({"running":true,"artifact_current":!outdated || operations.len()>1})
+                        }
                         "stop" => json!({"status":"stopped","running":false}),
                         "start" => json!({"status":"already_running","running":true}),
                         _ => unreachable!(),
                     })
                 },
-                || { confirmed = true; Ok(()) },
+                || {
+                    confirmed = true;
+                    Ok(())
+                },
             );
             assert!(result.is_ok());
             assert!(confirmed);
-            assert_eq!(operations, if outdated { vec!["status","stop","start","status"] } else { vec!["status","start","status"] });
+            assert_eq!(
+                operations,
+                if outdated {
+                    vec!["status", "stop", "start", "status"]
+                } else {
+                    vec!["status", "start", "status"]
+                }
+            );
         }
         let result = configure_pairing_service(
-            |op| Ok(if op=="start" { json!({"status":"already_running","running":true}) }
-                else { json!({"running":true,"artifact_current":true}) }),
+            |op| {
+                Ok(if op == "start" {
+                    json!({"status":"already_running","running":true})
+                } else {
+                    json!({"running":true,"artifact_current":true})
+                })
+            },
             || bail!("phone Binder has no fresh acknowledgement"),
         );
-        assert!(result.unwrap_err().to_string().contains("fresh acknowledgement"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("fresh acknowledgement"));
     }
     #[test]
     fn pairing_service_failed_stop_never_launches_replacement() {
@@ -1191,18 +1351,25 @@ local freeze white apps:
         let result = configure_pairing_service(
             |op| {
                 operations.push(op.to_string());
-                Ok(if op=="status" { json!({"running":true,"artifact_current":false}) }
-                    else { json!({"status":"failed","running":true}) })
+                Ok(if op == "status" {
+                    json!({"running":true,"artifact_current":false})
+                } else {
+                    json!({"status":"failed","running":true})
+                })
             },
             || panic!("must not confirm an unstarted replacement"),
         );
         assert!(result.is_err());
-        assert_eq!(operations, vec!["status","stop"]);
+        assert_eq!(operations, vec!["status", "stop"]);
     }
     #[test]
     fn pairing_service_partial_failure_cannot_report_old_ready_status() {
-        let mut status = CompanionStatus { installed:true, pairing_ready:true,
-            background_message:"尚未确认任务连接".into(), ..Default::default() };
+        let mut status = CompanionStatus {
+            installed: true,
+            pairing_ready: true,
+            background_message: "尚未确认任务连接".into(),
+            ..Default::default()
+        };
         finish_installation_status(&mut status, Err(anyhow::anyhow!("PID changed")));
         assert!(status.installed);
         assert!(!status.pairing_ready);
@@ -1264,13 +1431,21 @@ local freeze white apps:
             background_status(&denied, true, Some(101000)).1,
             Some(false)
         );
-        assert!(background_status(&denied, true, Some(101000)).2.contains("等待"));
+        assert!(background_status(&denied, true, Some(101000))
+            .2
+            .contains("等待"));
         denied = active.clone();
         denied["observedConnectedElapsedMs"] = json!(1000);
-        assert_eq!(background_status(&denied, true, Some(101000)).1, Some(false));
+        assert_eq!(
+            background_status(&denied, true, Some(101000)).1,
+            Some(false)
+        );
         denied = active.clone();
         denied["observedConnectionSource"] = json!("wakeRequested");
-        assert_eq!(background_status(&denied, true, Some(101000)).1, Some(false));
+        assert_eq!(
+            background_status(&denied, true, Some(101000)).1,
+            Some(false)
+        );
         assert_eq!(background_status(&Value::Null, true, Some(101000)).1, None);
     }
     #[test]
@@ -1283,12 +1458,16 @@ local freeze white apps:
         let mut failure = idle.clone();
         failure["lastError"] = json!("原生权限已撤销");
         assert!(!background_waiting_for_task(&failure, Some(100000)));
-        assert!(background_status(&failure, false, Some(100000)).2.contains("权限已撤销"));
+        assert!(background_status(&failure, false, Some(100000))
+            .2
+            .contains("权限已撤销"));
         let mut stale_active = idle.clone();
         stale_active["active"] = json!(true);
         stale_active["leaseExpiresElapsedMs"] = json!(150000);
         assert!(!background_waiting_for_task(&stale_active, Some(100000)));
-        assert!(background_status(&stale_active, false, Some(100000)).2.contains("服务状态未更新"));
+        assert!(background_status(&stale_active, false, Some(100000))
+            .2
+            .contains("服务状态未更新"));
         assert!(!background_waiting_for_task(&idle, None));
     }
     #[test]

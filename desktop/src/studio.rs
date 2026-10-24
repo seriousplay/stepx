@@ -256,6 +256,7 @@ pub fn open_phone(adb: &Adb, device: &Device, mode: &str, id: Option<&str>) -> R
     let mut args = vec!["am", "start", "-W", "-f", "0x14000000"];
     match mode {
         "library" => args.extend(["-n", "com.stepx.companion.app/.StudioActivity"]),
+        "website" => args.extend(["-n", "com.stepx.companion.app/.StudioWebActivity"]),
         "account" => args.extend(["-n", "com.stepx.companion.app/.StudioAccountActivity"]),
         "open" | "pin" => args.extend([
             "-n",
@@ -283,6 +284,7 @@ pub fn open_phone(adb: &Adb, device: &Device, mode: &str, id: Option<&str>) -> R
     );
     Ok(match mode {
         "account" => "已打开手机账号授权，完成后自动同步作品",
+        "website" => "已打开手机 Studio 官方登录，完成后自动同步官网项目",
         "pin" => "已打开手机桌面图标确认，请在手机上完成添加",
         "amoo" => "已打开 Amoo 我的作品，请查看测试产物并确认安装",
         "open" => "已发送打开请求；网页是否可用以手机画面为准",
@@ -301,6 +303,8 @@ pub struct CloudWork {
     pub version: String,
     pub installed: i64,
     pub updated: String,
+    #[serde(default)]
+    pub source: String,
 }
 impl CloudWork {
     pub fn experience(&self) -> Option<Work> {
@@ -308,9 +312,17 @@ impl CloudWork {
         work.shareable().then_some(work)
     }
     pub fn editor(&self) -> Option<String> {
-        if self.category != "应用" || !self.id.starts_with("p_") { return None; }
-        let url = format!("https://studio.stepx.com/builder/app/{}", self.id);
-        parse_link(&url).ok().map(|v|v.0)
+        if !self.id.starts_with("p_") {
+            return None;
+        }
+        let kind = match self.category.as_str() {
+            "应用" => "app",
+            "智能体" => "agent",
+            "技能" => "plugin",
+            _ => return None,
+        };
+        let url = format!("https://studio.stepx.com/builder/{kind}/{}", self.id);
+        parse_link(&url).ok().map(|v| v.0)
     }
 }
 #[derive(Clone, Debug, Default)]
@@ -320,36 +332,136 @@ pub struct CloudLibrary {
     pub items: Vec<CloudWork>,
     pub totals: [usize; 3],
     pub synced_at: i64,
+    pub name: String,
 }
+pub fn open_editor(adb: &Adb, device: &Device, target: &str) -> Result<String> {
+    let (url, kind) = parse_link(target)?;
+    ensure!(kind == LinkKind::Project, "请选择官网项目编辑入口");
+    let mut handoff = phone_call(adb, device, json!({"op":"web-session","url":url}))?;
+    let result = crate::studio_browser::open_editor(&url, &handoff);
+    // Do not retain session material in UI state, files, or receipts.
+    if let Some(cookies) = handoff.get_mut("cookies").and_then(Value::as_array_mut) {
+        for c in cookies {
+            c["value"] = json!("");
+        }
+    }
+    result?;
+    Ok("已验证手机账号并打开对应 Studio 项目".into())
+}
+
+pub fn sync_web(adb: &Adb, device: &Device) -> Result<CloudLibrary> {
+    parse_web_snapshot(phone_call(adb, device, json!({"op":"web-snapshot"}))?)
+}
+fn parse_web_snapshot(value: Value) -> Result<CloudLibrary> {
+    if value["authorized"] != true {
+        return Ok(CloudLibrary::default());
+    }
+    let scope = value["scope"]
+        .as_str()
+        .context("官网账号标识缺失")?
+        .to_owned();
+    ensure!(
+        scope.len() == 64 && scope.bytes().all(|b| b.is_ascii_hexdigit()),
+        "官网账号标识无效"
+    );
+    let items: Vec<CloudWork> =
+        serde_json::from_value(value["items"].clone()).context("官网项目格式无效")?;
+    ensure!(items.len() <= 500, "官网项目数量过大");
+    let mut totals = [0; 3];
+    let mut seen = std::collections::HashSet::new();
+    for item in &items {
+        let i = ["应用", "智能体", "技能"]
+            .iter()
+            .position(|c| *c == item.category)
+            .context("官网项目类型无效")?;
+        ensure!(
+            item.editor().is_some()
+                && item.source == "website"
+                && item.name.chars().count() <= 120
+                && item.description.len() <= 6000
+                && item.url.is_empty(),
+            "官网项目字段无效"
+        );
+        ensure!(seen.insert(&item.id), "官网返回重复项目");
+        totals[i] += 1;
+    }
+    Ok(CloudLibrary {
+        authorized: true,
+        scope,
+        items,
+        totals,
+        synced_at: chrono::Utc::now().timestamp(),
+        name: value["name"]
+            .as_str()
+            .unwrap_or("Studio 账号")
+            .chars()
+            .take(80)
+            .collect(),
+    })
+}
+
 pub fn sync_cloud(adb: &Adb, device: &Device) -> Result<CloudLibrary> {
     sync_cloud_with(|request| phone_call(adb, device, request))
 }
-fn sync_cloud_with(mut call: impl FnMut(Value)->Result<Value>) -> Result<CloudLibrary> {
+fn sync_cloud_with(mut call: impl FnMut(Value) -> Result<Value>) -> Result<CloudLibrary> {
     let status = call(json!({"op":"cloud-status"}))?;
-    if status["authorized"] != true { return Ok(CloudLibrary::default()); }
-    let scope = status["scope"].as_str().context("手机账号标识缺失")?.to_owned();
-    ensure!(scope.len()==64 && scope.bytes().all(|b|b.is_ascii_hexdigit()), "手机账号标识无效");
-    let mut library = CloudLibrary {authorized:true,scope:scope.clone(),..Default::default()};
+    if status["authorized"] != true {
+        return Ok(CloudLibrary::default());
+    }
+    let scope = status["scope"]
+        .as_str()
+        .context("手机账号标识缺失")?
+        .to_owned();
+    ensure!(
+        scope.len() == 64 && scope.bytes().all(|b| b.is_ascii_hexdigit()),
+        "手机账号标识无效"
+    );
+    let mut library = CloudLibrary {
+        authorized: true,
+        scope: scope.clone(),
+        ..Default::default()
+    };
     for (i, category) in ["应用", "智能体", "技能"].iter().enumerate() {
         let mut seen = std::collections::HashSet::new();
         for page in 1..=4 {
             let value = call(json!({"op":"cloud-page","category":category,"page":page}))?;
-            ensure!(value["scope"]==scope && value["page"]==page, "同步期间手机账号已变化，请重试");
-            let total=value["total"].as_u64().context("作品数量缺失")? as usize;
-            let items:Vec<CloudWork>=serde_json::from_value(value["items"].clone()).context("手机作品格式无效")?;
-            ensure!(items.len()<=50, "手机作品页过大");
-            library.totals[i]=total;
+            ensure!(
+                value["scope"] == scope && value["page"] == page,
+                "同步期间手机账号已变化，请重试"
+            );
+            let total = value["total"].as_u64().context("作品数量缺失")? as usize;
+            let items: Vec<CloudWork> =
+                serde_json::from_value(value["items"].clone()).context("手机作品格式无效")?;
+            ensure!(items.len() <= 50, "手机作品页过大");
+            library.totals[i] = total;
             for item in items {
-                ensure!(item.category==*category && !item.id.is_empty() && item.id.len()<=200 && item.name.chars().count()<=120 && item.description.len()<=6000, "作品字段无效");
-                if seen.insert(item.id.clone()) { library.items.push(item); }
+                ensure!(
+                    item.category == *category
+                        && !item.id.is_empty()
+                        && item.id.len() <= 200
+                        && item.name.chars().count() <= 120
+                        && item.description.len() <= 6000,
+                    "作品字段无效"
+                );
+                if seen.insert(item.id.clone()) {
+                    library.items.push(item);
+                }
             }
-            if seen.len()>=total {break;}
-            ensure!(seen.len()>=page as usize*50, "官网作品分页不完整，请刷新重试");
+            if seen.len() >= total {
+                break;
+            }
+            ensure!(
+                seen.len() >= page as usize * 50,
+                "官网作品分页不完整，请刷新重试"
+            );
         }
     }
-    let final_status=call(json!({"op":"cloud-status"}))?;
-    ensure!(final_status["authorized"]==true && final_status["scope"]==scope,"手机账号已断开或切换，未保留同步结果");
-    library.synced_at=chrono::Utc::now().timestamp();
+    let final_status = call(json!({"op":"cloud-status"}))?;
+    ensure!(
+        final_status["authorized"] == true && final_status["scope"] == scope,
+        "手机账号已断开或切换，未保留同步结果"
+    );
+    library.synced_at = chrono::Utc::now().timestamp();
     Ok(library)
 }
 
@@ -358,22 +470,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn website_sync_keeps_three_builders_and_rejects_invalid_catalogs() {
+        let item = |id: &str, category: &str| json!({"id":id,"name":"草稿","category":category,"url":"","description":"","version":"","installed":-1,"updated":"","source":"website"});
+        let snapshot = json!({"authorized":true,"scope":"a".repeat(64),"name":"测试","items":[item("p_app","应用"),item("p_agent","智能体"),item("p_skill","技能")]});
+        let library = parse_web_snapshot(snapshot.clone()).unwrap();
+        assert_eq!(library.totals, [1, 1, 1]);
+        assert!(library.items[1]
+            .editor()
+            .unwrap()
+            .contains("/builder/agent/"));
+        assert!(library.items[2]
+            .editor()
+            .unwrap()
+            .contains("/builder/plugin/"));
+        assert!(library.items.iter().all(|p| p.experience().is_none()));
+        let mut duplicate = snapshot.clone();
+        duplicate["items"][1] = duplicate["items"][0].clone();
+        assert!(parse_web_snapshot(duplicate).is_err());
+        let mut bad = snapshot.clone();
+        bad["items"][0]["id"] = json!("p_x/../../login");
+        assert!(parse_web_snapshot(bad).is_err());
+        let mut secret = snapshot;
+        secret["items"][0]["url"] = json!("https://studio.stepx.com/?token=secret");
+        assert!(parse_web_snapshot(secret).is_err());
+        let off = parse_web_snapshot(json!({"authorized":false})).unwrap();
+        assert!(!off.authorized && off.items.is_empty());
+    }
+
+    #[test]
     fn cloud_account_change_and_partial_catalog_fail_closed() {
-        let scope="a".repeat(64);
-        let mut n=0;
+        let scope = "a".repeat(64);
+        let mut n = 0;
         assert!(sync_cloud_with(|q| {
-            n+=1;
-            if q["op"]=="cloud-status" {return Ok(json!({"authorized":true,"scope":if n==1 {scope.clone()}else{"b".repeat(64)}}));}
+            n += 1;
+            if q["op"] == "cloud-status" {
+                return Ok(
+                    json!({"authorized":true,"scope":if n==1 {scope.clone()}else{"b".repeat(64)}}),
+                );
+            }
             Ok(json!({"scope":scope,"page":1,"total":0,"items":[]}))
-        }).is_err());
+        })
+        .is_err());
         assert!(sync_cloud_with(|q| {
-            if q["op"]=="cloud-status" {return Ok(json!({"authorized":true,"scope":scope}));}
+            if q["op"] == "cloud-status" {
+                return Ok(json!({"authorized":true,"scope":scope}));
+            }
             Ok(json!({"scope":scope,"page":1,"total":51,"items":[]}))
-        }).is_err());
+        })
+        .is_err());
     }
     #[test]
     fn cloud_sync_pages_and_preserves_real_empty_categories() {
-        let scope="a".repeat(64); let mut pages=vec![];
+        let scope = "a".repeat(64);
+        let mut pages = vec![];
         let result=sync_cloud_with(|q| {
             if q["op"]=="cloud-status" {return Ok(json!({"authorized":true,"scope":scope}));}
             let page=q["page"].as_u64().unwrap();let app=q["category"]=="应用";
@@ -381,10 +530,18 @@ mod tests {
             pages.push((q["category"].clone(),page));
             Ok(json!({"scope":scope,"page":page,"total":if app{51}else{0},"items":items}))
         }).unwrap();
-        assert_eq!(result.items.len(),51);assert_eq!(result.totals,[51,0,0]);assert_eq!(pages.len(),4);
-        let mut called=0;
-        let empty=sync_cloud_with(|_|{called+=1;Ok(json!({"authorized":false}))}).unwrap();
-        assert_eq!(called,1);assert!(!empty.authorized);assert!(empty.items.is_empty());
+        assert_eq!(result.items.len(), 51);
+        assert_eq!(result.totals, [51, 0, 0]);
+        assert_eq!(pages.len(), 4);
+        let mut called = 0;
+        let empty = sync_cloud_with(|_| {
+            called += 1;
+            Ok(json!({"authorized":false}))
+        })
+        .unwrap();
+        assert_eq!(called, 1);
+        assert!(!empty.authorized);
+        assert!(empty.items.is_empty());
     }
     #[test]
     fn official_link_boundary() {

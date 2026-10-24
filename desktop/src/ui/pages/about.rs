@@ -4,10 +4,19 @@ use facloud_ui::{elements::*, fonts::Weight};
 impl Companion {
     pub(in super::super) fn about_page(&self) -> El {
         let p = self.p();
-        let logo = ConstrainedBox::new(Image::new(
-            facloud_ui::assets::asset_cache::AssetSource::Bundled { path: "stepx_companion_icon.png" },
-            CacheOption::BySize,
-        ).contain().finish()).with_width(48.).with_height(48.).finish();
+        let logo = ConstrainedBox::new(
+            Image::new(
+                facloud_ui::assets::asset_cache::AssetSource::Bundled {
+                    path: "stepx_companion_icon.png",
+                },
+                CacheOption::BySize,
+            )
+            .contain()
+            .finish(),
+        )
+        .with_width(48.)
+        .with_height(48.)
+        .finish();
         let card = self.panel(vec![
             self.hstack(S3, vec![logo, self.vstack(S1, vec![
                 self.line_w("StepX Companion", 26., p.text, Weight::Bold),
@@ -25,9 +34,12 @@ impl Companion {
             self.hstack(S4, vec![
                 self.link_action("about-repository", "项目主页", Action::StudioOpenUrl("https://github.com/xydzf520/stepx".into())),
                 self.link_action("about-feedback", "反馈问题", Action::StudioOpenUrl("https://github.com/xydzf520/stepx/issues".into())),
+                self.link_action("about-changelog", "更新日志", Action::Settings(super::super::SettingsAction::Changelog)),
                 self.link_action("about-license", "开源许可", Action::StudioOpenUrl("https://github.com/xydzf520/stepx/blob/main/THIRD_PARTY_NOTICES.md".into())),
             ]),
         ]);
-        Align::new(ConstrainedBox::new(card).with_max_width(600.).finish()).top_center().finish()
+        Align::new(ConstrainedBox::new(card).with_max_width(800.).finish())
+            .top_left()
+            .finish()
     }
 }

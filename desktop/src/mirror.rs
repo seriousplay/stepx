@@ -190,9 +190,13 @@ impl MirrorSession {
     pub fn stop_in_background(mut self) {
         if !self.exited {
             #[cfg(unix)]
-            unsafe { libc::kill(self.child.id() as i32, libc::SIGTERM); }
+            unsafe {
+                libc::kill(self.child.id() as i32, libc::SIGTERM);
+            }
             #[cfg(windows)]
-            { let _=self.child.kill(); }
+            {
+                let _ = self.child.kill();
+            }
         }
         thread::spawn(move || self.stop());
     }
@@ -300,13 +304,20 @@ mod tests {
 
     #[test]
     fn slow_shutdown_never_blocks_caller_and_still_reaps_process() {
-        let session = MirrorSession::spawn(command("trap '' TERM; echo 'INFO: Texture: 718x1600'; exec sleep 30"), Duration::from_secs(2)).unwrap();
+        let session = MirrorSession::spawn(
+            command("trap '' TERM; echo 'INFO: Texture: 718x1600'; exec sleep 30"),
+            Duration::from_secs(2),
+        )
+        .unwrap();
         let pid = session.child.id() as i32;
         let start = Instant::now();
         session.stop_in_background();
         assert!(start.elapsed() < Duration::from_millis(200));
         while unsafe { libc::kill(pid, 0) } == 0 {
-            assert!(start.elapsed() < Duration::from_secs(4), "child was not reaped");
+            assert!(
+                start.elapsed() < Duration::from_secs(4),
+                "child was not reaped"
+            );
             thread::sleep(Duration::from_millis(20));
         }
     }

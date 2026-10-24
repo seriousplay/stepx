@@ -85,6 +85,25 @@ impl Companion {
         .finish()
     }
 
+    fn input_method_tool_page(&self) -> El {
+        let p=self.p();let r=&self.input_method;
+        self.panel(vec![
+            self.heading("小企鹅中文输入法"),
+            self.text("开源中文输入法，支持拼音、中文候选与中英文切换。",BODY,p.text2),
+            self.divider(),
+            self.line(if !r.checked {"尚未读取手机状态"} else if r.active {"默认输入法：小企鹅 Fcitx5"} else {"默认输入法：其他输入法"},BODY,p.text),
+            self.text(if !r.checked {"读取后显示真实安装与默认状态。"} else if !r.sogou_installed {"搜狗：当前用户未安装"} else if r.sogou_disabled {"搜狗：已停用"} else {"搜狗：已安装，可在切换后停用"},CAPTION,p.text2),
+            self.wrap(if self.busy {vec![self.disabled_button("正在处理，请稍候…")]} else {vec![
+                self.button("ime-install","一键安装并使用",Action::SwitchInputMethodFcitx5(true),Btn::Primary),
+                self.button("ime-refresh","刷新状态",Action::InspectInputMethod,Btn::Secondary),
+                self.button("ime-settings","手机输入法设置",Action::OpenInputSettings,Btn::Secondary),
+                self.button("ime-restore","恢复搜狗…",Action::SwitchInputMethodFcitx5(false),Btn::Ghost),
+            ]}),
+            self.text("确认后应用到当前手机：校验安装包 → 启用小企鹅 → 核对默认输入法 → 停用搜狗。已有输入法和词库不删除，系统安全输入法保留。",CAPTION,p.text2),
+            self.link_muted("ime-source","官方项目与开源说明",Action::StudioOpenUrl("https://github.com/fcitx5-android/fcitx5-android".into())),
+        ])
+    }
+
     fn storage_tool_page(&self) -> El {
         let p = self.p();
         let mut sections = Vec::new();
@@ -402,6 +421,9 @@ impl Companion {
                 Action::CompanionInspect,
                 Btn::Secondary,
             )],
+            Some(ToolPage::Neo) => {
+                vec![self.button("neo-check", "检测状态", Action::NeoInspect, Btn::Secondary)]
+            }
             Some(ToolPage::Services) => vec![self.button(
                 "services-check",
                 "刷新状态",
@@ -435,6 +457,7 @@ impl Companion {
     fn tool_card(&self, tool: ToolPage) -> El {
         let p = self.p();
         let (symbol, state) = match tool {
+            ToolPage::InputMethod => ("⌨",if self.input_method.active {"小企鹅已启用"} else {"安装中文输入法"}.into()),
             ToolPage::Storage => (
                 "▤",
                 self.storage_report
@@ -464,6 +487,17 @@ impl Companion {
                 } else {
                     "进入后检测".into()
                 },
+            ),
+            ToolPage::Neo => (
+                "✦",
+                if self.neo_status.selected {
+                    "手机执行已接入"
+                } else if self.neo_status.installed {
+                    "已安装 · 待配置"
+                } else {
+                    "更新伴侣即可使用"
+                }
+                .into(),
             ),
             ToolPage::Apk => ("⊞", "选择本地文件".into()),
             ToolPage::Services => (
@@ -550,7 +584,7 @@ impl Companion {
                 ),
             )]));
         }
-        if self.busy {
+        if self.busy && self.tool_page!=Some(ToolPage::InputMethod) {
             let progress = self
                 .google_progress
                 .try_lock()
@@ -563,7 +597,7 @@ impl Companion {
                 .unwrap_or_else(|| self.status.clone());
             parts.push(self.panel(vec![self.text(progress, CAPTION, p.accent)]));
         } else if let Some((tool, message, error)) = &self.tools_feedback {
-            if self.tool_page.is_none() || self.tool_page == *tool {
+            if self.tool_page!=Some(ToolPage::InputMethod) && (self.tool_page.is_none() || self.tool_page == *tool) {
                 let label = format!(
                     "{} · {}",
                     tool.map(ToolPage::title).unwrap_or("小工具"),
@@ -578,6 +612,7 @@ impl Companion {
         }
         if let Some(action) = self.tool_confirmation.as_deref() {
             let message = match action {
+                Action::NeoRestore => "将停用 GUI Agent 任务路由，撤销本模块添加的无障碍和可选输入法；保留伴侣其他服务、后台策略与数据。请先结束当前任务。",
                 Action::GoogleSuiteInstall => "将安装或修复 StepX伴侣，并保留已有 Google 组件。完整安装且版本已适配时，会备份并应用 Google Play 兼容补丁；首次安装后需按提示重启解锁。",
                 Action::GoogleSuiteMaintain => "将核对手机固件与 Google 组件版本，保存可恢复的备份，再应用兼容补丁并重新启动 Google 服务。用于恢复商店浏览和下载安装，不改变 Google 官方认证状态。请保持手机已解锁并连接电脑。",
                 Action::GoogleSuiteRollback => "将核对备份并恢复补丁修改的设置，重新启动 Google 服务。保留 Google 账号和已安装应用；设备未认证的拦截页可能恢复。",
@@ -585,13 +620,16 @@ impl Companion {
                 _ => "将停用此服务，相关功能会停止；可在此处重新启用。不会卸载应用或删除数据。",
             };
             let target = match action {
+                Action::NeoRestore => "伴侣内置 GUI Agent · 当前连接的手机".into(),
                 Action::ToggleSystemService(package, _) => self
                     .system_services
                     .iter()
                     .find(|s| &s.package == package)
                     .map(|s| format!("{} · {}", s.name, s.package))
                     .unwrap_or_else(|| package.clone()),
-                Action::GoogleSuiteMaintain | Action::GoogleSuiteRollback => "Google Play 兼容补丁 · 当前连接的手机".into(),
+                Action::GoogleSuiteMaintain | Action::GoogleSuiteRollback => {
+                    "Google Play 兼容补丁 · 当前连接的手机".into()
+                }
                 _ => "Google Play + StepX伴侣 · 当前连接的手机".into(),
             };
             parts.push(self.panel(vec![
@@ -620,8 +658,8 @@ impl Companion {
         match self.tool_page {
             None => {
                 parts.push(self.vstack(S2, vec![self.heading("工具集合"), self.text("按需要选择工具，检测和操作结果会留在这里。", BODY, p.text2)]));
-                parts.push(self.segmented("tool-categories", ["全部 · 8", "空间整理 · 1", "应用与服务 · 3", "设备协同 · 4"].into_iter().enumerate().map(|(i, title)|
-                    (title.into(), i as u8 == self.tool_category, Action::ToolCategory(i as u8))
+                parts.push(self.segmented("tool-categories", ["全部", "空间整理", "应用与服务", "设备协同"].into_iter().enumerate().map(|(i, title)|
+                    (format!("{title} · {}",ToolPage::ALL.iter().filter(|t|i==0 || t.category()==i as u8).count()), i as u8 == self.tool_category, Action::ToolCategory(i as u8))
                 ).collect()));
                 let tools: Vec<_> = ToolPage::ALL.into_iter().filter(|t| self.tool_category == 0 || t.category() == self.tool_category).collect();
                 for row in tools.chunks(2) {
@@ -632,7 +670,9 @@ impl Companion {
             }
             Some(ToolPage::Updates) => parts.push(self.updates_tool_page()),
             Some(ToolPage::Companion) => parts.push(self.companion_tool_page()),
+            Some(ToolPage::Neo) => parts.push(self.neo_tool_page()),
             Some(_) if self.selected.is_none() => {}
+            Some(ToolPage::InputMethod) => parts.push(self.input_method_tool_page()),
             Some(ToolPage::Storage) => parts.push(self.storage_tool_page()),
             Some(ToolPage::Google) => parts.push(self.google_tool_page()),
             Some(ToolPage::Apk) => parts.push(self.panel(vec![
@@ -1090,6 +1130,73 @@ impl Companion {
         self.vstack(S4, sections)
     }
 
+    fn neo_tool_page(&self) -> El {
+        let p = self.p();
+        let neo = &self.neo_status;
+        let mut rows = vec![self.panel(vec![
+            self.heading("StepX伴侣 · 内置 GUI Agent"),
+            self.text("GUI Agent 集成在 StepX伴侣内，在手机上看屏、规划与执行，断开电脑后也可使用。Amoo 可以委派任务，伴侣提供暂停、继续和停止控制。", BODY, p.text2),
+            self.text("选择内置 GUI Agent 的完整 StepX伴侣 APK。安装会核对签名与内置组件，保留伴侣数据，并启用本模块的无障碍服务；操作哪些应用由你在手机确认。", CAPTION, p.text3),
+            self.hstack(S2, vec![
+                self.utility_button("neo-install", if neo.companion_installed { "更新 StepX伴侣…" } else { "安装 StepX伴侣…" }, Action::NeoInstall, true),
+                self.button("neo-ime", if self.neo_enable_ime { "增强中文输入：开启" } else { "增强中文输入：可选" }, Action::NeoIme(!self.neo_enable_ime), Btn::Secondary),
+            ]),
+            self.text("增强中文输入会启用 Agent 输入法；任务结束恢复原键盘。普通文字输入仍可使用无障碍。", CAPTION, p.text3),
+        ])];
+        if neo.checked {
+            let state = |ready: bool| if ready { "已就绪" } else { "待配置" };
+            rows.push(self.panel(vec![
+                self.heading(if neo.installed {
+                    format!("伴侣内置版本 · {}", neo.version)
+                } else {
+                    "等待安装内置 GUI Agent 的伴侣版本".into()
+                }),
+                self.text(&neo.message, BODY, p.text2),
+                self.text(
+                    format!(
+                        "签名核验：{}   无障碍启用：{}   电池豁免：{}",
+                        state(neo.signature_verified),
+                        state(neo.accessibility_enabled),
+                        state(neo.doze_exempt)
+                    ),
+                    CAPTION,
+                    p.text2,
+                ),
+                self.text(
+                    format!(
+                        "任务路由：{}   增强输入法：{}",
+                        if neo.selected { "Neo" } else { "未启用" },
+                        if neo.ime_enabled {
+                            "已启用"
+                        } else {
+                            "未启用"
+                        }
+                    ),
+                    CAPTION,
+                    p.text2,
+                ),
+            ]));
+        }
+        if neo.installed {
+            rows.push(self.panel(vec![
+                self.heading("完成手机配置"),
+                self.text("在手机确认模型接口、图片输入能力与允许操作的应用，再从 Amoo 发起任务。锁屏或需要本人验证时，任务会等待你接管。", BODY, p.text2),
+                self.hstack(S2, vec![
+                    self.utility_button("neo-open", "打开手机配置", Action::NeoOpenPhone, true),
+                    self.utility_button("neo-enable", "启用任务路由", Action::NeoActivate, false),
+                    self.utility_button("neo-refresh", "重新检测", Action::NeoInspect, false),
+                ]),
+            ]));
+        }
+        if neo.recovery_available {
+            rows.push(self.panel(vec![self.heading("恢复设置"),
+                self.text("仅撤销本机添加的 GUI Agent 组件配置。伴侣原有无障碍、后台豁免、文件服务和数据保持原样。", CAPTION, p.text2),
+                self.utility_button("neo-restore", "撤销组件配置", Action::PrepareUtility(Box::new(Action::NeoRestore)), false),
+            ]));
+        }
+        self.vstack(S4, rows)
+    }
+
     fn companion_tool_page(&self) -> El {
         let p = self.p();
         let companion = &self.companion_status;
@@ -1375,19 +1482,176 @@ impl Companion {
                 p.text3,
             ),
         ];
+        if g.play_protect.checked {
+            certification.push(self.between(
+                self.line("认证四层校验", BODY, p.text),
+                self.line(
+                    g.play_protect.state_label(),
+                    CAPTION,
+                    if g.play_protect.certified {
+                        p.success
+                    } else {
+                        p.danger
+                    },
+                ),
+            ));
+            for layer in &g.play_protect.layers {
+                let (label, color) = match layer.state.as_str() {
+                    "pass" => ("通过", p.success),
+                    "fail" => ("未通过", p.danger),
+                    _ => ("未取证", p.warning),
+                };
+                certification.push(self.between(
+                    self.line(&layer.title, CAPTION, p.text),
+                    self.line(label, CAPTION, color),
+                ));
+                for entry in layer.checks.iter().filter(|entry| entry.ok == Some(false)) {
+                    certification.push(self.text(
+                        format!(
+                            "· {}：{}（期望 {}）",
+                            entry.check, entry.value, entry.expected
+                        ),
+                        CAPTION,
+                        p.text3,
+                    ));
+                }
+                if layer.state == "unknown" {
+                    certification.push(self.text(&layer.note, CAPTION, p.text3));
+                }
+            }
+            for blocker in &g.play_protect.blockers {
+                certification.push(self.text(
+                    format!("[{}] {}", blocker.owner, blocker.required_action),
+                    CAPTION,
+                    p.text3,
+                ));
+            }
+            // Highest-leverage OEM action first: the phone cannot do any of these.
+            if let Some(first) = g.play_protect.leverage.first() {
+                certification.push(self.between(
+                    self.line("最优先的厂商动作", BODY, p.text),
+                    self.line(&first.owner, CAPTION, p.text3),
+                ));
+                certification.push(self.text(&first.action, BODY, p.text2));
+                certification.push(self.text(
+                    format!("可解除：{}。{}", first.clears.join(" + "), first.reason),
+                    CAPTION,
+                    p.text3,
+                ));
+            }
+            if let Some(patch) = &g.play_protect.patch_freshness {
+                if let Some(age) = patch.age_days {
+                    certification.push(self.between(
+                        self.line("安全补丁新鲜度", BODY, p.text),
+                        self.line(
+                            format!("{age} 天"),
+                            CAPTION,
+                            if patch.stale == Some(true) {
+                                p.warning
+                            } else {
+                                p.success
+                            },
+                        ),
+                    ));
+                    certification.push(self.text(
+                        "Play Integrity 的 MEETS_DEVICE_INTEGRITY 会检查补丁新鲜度，\
+                         与 Play 商店的认证不是同一项；Google 未公布阈值，这里只报告实测天数。",
+                        CAPTION,
+                        p.text3,
+                    ));
+                }
+            }
+            if let Some(firmware) = &g.play_protect.firmware {
+                if firmware.available {
+                    certification.push(self.between(
+                        self.line("官方固件通道", BODY, p.text),
+                        self.line(
+                            if firmware.same_as_current {
+                                "已在最新"
+                            } else {
+                                "有更新构建"
+                            },
+                            CAPTION,
+                            p.text3,
+                        ),
+                    ));
+                    certification.push(self.text(
+                        match (&firmware.latest_version, &firmware.release_date) {
+                            (Some(version), Some(date)) => format!(
+                                "通道最新 {version}（{date}）；设备当前 {}。",
+                                firmware.current_build.as_deref().unwrap_or("未知")
+                            ),
+                            (Some(version), None) => format!(
+                                "通道最新 {version}；设备当前 {}。",
+                                firmware.current_build.as_deref().unwrap_or("未知")
+                            ),
+                            _ => "固件通道状态未完整取得。".into(),
+                        },
+                        CAPTION,
+                        p.text3,
+                    ));
+                }
+            }
+            if let Some(vendor) = &g.play_protect.vendor_services {
+                if !vendor.note.is_empty() {
+                    certification.push(self.text("厂商服务身份（不影响认证判定）", BODY, p.text));
+                    certification.push(self.text(&vendor.note, CAPTION, p.text3));
+                }
+                if let Some(readable) = vendor.dsid_readable_from_host {
+                    certification.push(self.text(
+                        format!(
+                            "固件更新查询：{}。GSF ID {}",
+                            if readable {
+                                "宿主可读 dsid"
+                            } else {
+                                "宿主读不到 dsid，请在手机设置 → 系统更新中检查"
+                            },
+                            if vendor.gsf_android_id.is_empty() {
+                                "未取到".to_string()
+                            } else {
+                                vendor.gsf_android_id.clone()
+                            }
+                        ),
+                        CAPTION,
+                        p.text3,
+                    ));
+                }
+            }
+        } else if !g.play_protect.note.is_empty() {
+            certification.push(self.text(&g.play_protect.note, CAPTION, p.text3));
+        }
         if !g.boot_security_note.is_empty() {
             certification.push(self.text(&g.boot_security_note, CAPTION, p.text2));
         }
         if !g.certification_catalog.is_empty() {
             certification.push(self.text(&g.certification_catalog, CAPTION, p.text2));
         }
-        certification.push(self.hstack(S2, vec![
-            self.button("google-cert-help", "官方排查说明", Action::StudioOpenUrl("https://support.google.com/googleplay/answer/7165974?hl=zh-Hans".into()), Btn::Secondary),
-            self.button("google-cert-register", "官方设备登记", Action::StudioOpenUrl("https://www.google.com/android/uncertified/".into()), Btn::Secondary),
-        ]));
+        certification.push(self.hstack(
+            S2,
+            vec![
+                self.button(
+                    "google-cert-help",
+                    "官方排查说明",
+                    Action::StudioOpenUrl(
+                        "https://support.google.com/googleplay/answer/7165974?hl=zh-Hans".into(),
+                    ),
+                    Btn::Secondary,
+                ),
+                self.button(
+                    "google-cert-register",
+                    "官方设备登记",
+                    Action::StudioOpenUrl("https://www.google.com/android/uncertified/".into()),
+                    Btn::Secondary,
+                ),
+            ],
+        ));
         self.vstack(
             S4,
-            vec![self.panel(rows), self.panel(compatibility), self.panel(certification)],
+            vec![
+                self.panel(rows),
+                self.panel(compatibility),
+                self.panel(certification),
+            ],
         )
     }
 }

@@ -94,7 +94,7 @@ pub(super) struct BackScreenUiState {
     pub companion_busy: bool,
     pub companion_mode: String,
     pub companion_permission: bool,
-    revision: u64,
+    pub(super) revision: u64,
     applied_revision: Option<u64>,
     pending_play: bool,
     companion_checked_device: Option<String>,
@@ -211,7 +211,9 @@ impl Drop for BackScreenUiState {
 
 impl BackScreenUiState {
     pub(super) fn set_preview_visible(&mut self, visible: bool) {
-        if self.preview_visible == visible { return; }
+        if self.preview_visible == visible {
+            return;
+        }
         if visible {
             if !self.preview_initialized {
                 self.refresh_frame();
@@ -227,17 +229,25 @@ impl BackScreenUiState {
     }
 
     pub(super) fn needs_poll(&self) -> bool {
-        self.preview_visible || self.playback.is_some() || self.generation.is_some()
-            || self.companion_rx.is_some() || self.native_rx.is_some()
-            || self.image_rx.is_some() || self.gallery_rx.is_some()
+        self.preview_visible
+            || self.playback.is_some()
+            || self.generation.is_some()
+            || self.companion_rx.is_some()
+            || self.native_rx.is_some()
+            || self.image_rx.is_some()
+            || self.gallery_rx.is_some()
     }
 
     fn load_gallery(&mut self) {
-        if self.gallery_rx.is_some() { return; }
+        if self.gallery_rx.is_some() {
+            return;
+        }
         let (tx, rx) = mpsc::channel();
         self.gallery_rx = Some(rx);
         self.gallery_loaded = true;
-        std::thread::spawn(move || { let _ = tx.send(recent_images()); });
+        std::thread::spawn(move || {
+            let _ = tx.send(recent_images());
+        });
     }
 
     pub fn has_unapplied_changes(&self) -> bool {
@@ -800,9 +810,15 @@ impl Companion {
         self.back_screen.status = "设备连接已切换；如已断开，停止后的硬件恢复结果无法读取".into();
     }
     pub(super) fn poll_backscreen(&mut self, preview_visible: bool) -> bool {
-        self.back_screen.set_preview_visible(preview_visible && self.selected.is_some() && !self.initializing);
-        if !self.back_screen.needs_poll() { return false; }
-        if self.page == Page::BackScreen && self.back_screen.tab == 2 && !self.back_screen.gallery_loaded {
+        self.back_screen
+            .set_preview_visible(preview_visible && self.selected.is_some() && !self.initializing);
+        if !self.back_screen.needs_poll() {
+            return false;
+        }
+        if self.page == Page::BackScreen
+            && self.back_screen.tab == 2
+            && !self.back_screen.gallery_loaded
+        {
             self.back_screen.load_gallery();
         }
         if self
@@ -819,7 +835,11 @@ impl Companion {
         let mut changed = false;
         if let Some(result) = self.back_screen.gallery_rx.as_ref().map(|rx| rx.try_recv()) {
             match result {
-                Ok(images) => { self.back_screen.recent_images = images; self.back_screen.gallery_rx = None; changed = true; }
+                Ok(images) => {
+                    self.back_screen.recent_images = images;
+                    self.back_screen.gallery_rx = None;
+                    changed = true;
+                }
                 Err(mpsc::TryRecvError::Disconnected) => self.back_screen.gallery_rx = None,
                 Err(mpsc::TryRecvError::Empty) => {}
             }
@@ -832,7 +852,8 @@ impl Companion {
             self.back_screen.applied_status = "手机连接已断开，运行状态待检测".into();
             changed = true;
         }
-        if !self.demo_mode && self.page == Page::BackScreen
+        if !self.demo_mode
+            && self.page == Page::BackScreen
             && !self.back_screen.companion_busy
             && !self.back_screen.playing
             && !self.back_screen.generating
@@ -905,6 +926,7 @@ impl Companion {
                     message,
                     mode,
                 } => {
+                    self.record_notice("背屏已应用",format!("{title} · {message}"));
                     self.back_screen.applied_title = title;
                     self.back_screen.applied_revision = Some(revision);
                     self.back_screen.applied_to_phone = true;
@@ -928,6 +950,7 @@ impl Companion {
                         self.selected.as_ref().map(|device| device.serial.clone());
                 }
                 CompanionEvent::Game { message, mode } => {
+                    self.record_notice("背屏游戏",message.clone());
                     self.back_screen.companion_status = message.clone();
                     self.back_screen.applied_status = message;
                     self.back_screen.applied_to_phone = true;
@@ -949,6 +972,7 @@ impl Companion {
                     self.back_screen.companion_mode.clear();
                 }
                 CompanionEvent::Failed(message) => {
+                    self.record_notice("背屏操作未完成",message.clone());
                     self.back_screen.error = Some(message.clone());
                     self.back_screen.status = message.clone();
                     self.back_screen.applied_status = "本次操作未完成，请检查连接后重试".into();
@@ -1221,7 +1245,10 @@ pub(super) fn native_description(feature: bs::NativeFeature) -> &'static str {
 fn recent_images() -> Vec<PathBuf> {
     let Some(base) = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .or_else(|| crate::resources::user_home().map(|home| PathBuf::from(home).join(".local/share")))
+        .or_else(|| {
+            stepx_companion::resources::user_home()
+                .map(|home| PathBuf::from(home).join(".local/share"))
+        })
     else {
         return Vec::new();
     };

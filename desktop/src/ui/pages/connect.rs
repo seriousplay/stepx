@@ -28,7 +28,12 @@ impl Companion {
             Action::ConnectGuide(Some(0)),
             Btn::Secondary,
         )];
-        actions.push(self.button("conn-adb-help", "如何开启 ADB", Action::AdbGuide(Some(0)), Btn::Secondary));
+        actions.push(self.button(
+            "conn-adb-help",
+            "如何开启 ADB",
+            Action::AdbGuide(Some(0)),
+            Btn::Secondary,
+        ));
         actions.push(if self.busy {
             self.disabled_button("检测中…")
         } else {

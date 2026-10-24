@@ -9,55 +9,47 @@ use super::{
 use facloud_ui::{color::ColorU, fonts::Weight, platform::Cursor};
 
 impl Companion {
+    #[track_caller]
     pub(super) fn scrollable(&self, state: ClippedScrollStateHandle, content: El) -> El {
         let p = self.p();
         let thumb = ColorU::new(p.text3.r, p.text3.g, p.text3.b, 90);
         let thumb_active = ColorU::new(p.text3.r, p.text3.g, p.text3.b, 160);
-        ClippedScrollable::vertical(
-            state,
+        self.ease_scroll(ClippedScrollable::vertical(
+            state.clone(),
             Container::new(content).with_uniform_padding(S5).finish(),
             ScrollbarWidth::Auto,
             thumb.into(),
             thumb_active.into(),
             Fill::None,
         )
-        .finish()
+        .finish(), state)
     }
 
     /// Same scroll container without page padding (for panes that draw their own).
+    #[track_caller]
     pub(super) fn pane_scroll(&self, state: ClippedScrollStateHandle, content: El) -> El {
         let p = self.p();
         let thumb = ColorU::new(p.text3.r, p.text3.g, p.text3.b, 90);
         let thumb_active = ColorU::new(p.text3.r, p.text3.g, p.text3.b, 160);
-        ClippedScrollable::vertical(
-            state,
+        self.ease_scroll(ClippedScrollable::vertical(
+            state.clone(),
             content,
             ScrollbarWidth::Auto,
             thumb.into(),
             thumb_active.into(),
             Fill::None,
         )
-        .finish()
+        .finish(), state)
     }
 
     pub(super) fn loading_page(&self) -> El {
         let p = self.p();
-        let dots = (0..4)
-            .map(|index| {
-                self.dot(if index == self.loading_frame {
-                    p.accent
-                } else {
-                    p.border
-                })
-            })
-            .collect();
         Align::new(self.vstack(
             S4,
             vec![
             Align::new(self.ui_icon(UiIcon::Smartphone, 36., p.text2)).finish(),
             Align::new(self.line_w("正在载入手机数据", TITLE, p.text, Weight::Semibold)).finish(),
             Align::new(self.line(&self.status, CAPTION, p.text2)).finish(),
-            Align::new(self.hstack(S2, dots)).finish(),
         ],
         ))
         .finish()
@@ -214,7 +206,7 @@ impl Companion {
         .finish()
     }
 
-    fn nav_item_badge(
+    pub(super) fn nav_item_badge(
         &self,
         id: &str,
         icon: &'static str,
@@ -254,18 +246,11 @@ impl Companion {
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_child(
                     ConstrainedBox::new(
-                        Align::new(if icon == "✦" {
-                            // Keep the original Amoo navigation mark.
-                            facloud_ui::elements::Text::new(icon, font, CAPTION)
-                                .with_color(icon_fg)
-                                .finish()
-                        } else {
-                            icons::draw_icon(
-                                icons::symbol(icon).unwrap_or(UiIcon::Apps),
-                                16.,
-                                icon_fg,
-                            )
-                        })
+                        Align::new(icons::draw_icon(
+                            if icon == "✦" { UiIcon::Star } else { icons::symbol(icon).unwrap_or(UiIcon::Apps) },
+                            if icon == "✦" { 18. } else { 16. },
+                            icon_fg,
+                        ))
                         .finish(),
                     )
                     .with_width(20.)
@@ -456,6 +441,22 @@ impl Companion {
         let p = self.p();
         let sms_badge =
             (self.sms_loaded && self.sms_error.is_none()).then(|| format!("{} 条", self.sms.len()));
+        let push_badge = if self.push.loaded {
+            let unread = self
+                .push
+                .snapshot
+                .notifications
+                .iter()
+                .filter(|n| !n.dismissed && !n.read && !n.is_ongoing)
+                .count();
+            if unread > 0 {
+                Some(format!("{unread} 未读"))
+            } else {
+                Some(format!("{} 条", self.push.snapshot.notifications.len()))
+            }
+        } else {
+            None
+        };
         let app_badge = (self.apps_loaded && self.apps_error.is_none()).then(|| {
             self.apps
                 .iter()
@@ -478,13 +479,23 @@ impl Companion {
         .with_height(28.)
         .finish();
 
-        let brand_row = Container::new(self.hstack(10., vec![
-            logo_box,
-            self.vstack(2., vec![
-                self.line_w("StepX Companion", 15., p.text, Weight::Semibold),
-                self.mono(format!("桌面伴侣 · {}", stepx_companion::build_info::VERSION), 11., p.text3),
-            ]),
-        ]))
+        let brand_row = Container::new(self.hstack(
+            10.,
+            vec![
+                logo_box,
+                self.vstack(
+                    2.,
+                    vec![
+                        self.line_w("StepX Companion", 15., p.text, Weight::Semibold),
+                        self.mono(
+                            format!("桌面伴侣 · {}", stepx_companion::build_info::VERSION),
+                            11.,
+                            p.text3,
+                        ),
+                    ],
+                ),
+            ],
+        ))
         .with_horizontal_padding(6.)
         .with_padding_top(2.)
         .finish();
@@ -525,26 +536,6 @@ impl Companion {
                             self.page == Page::Amoo,
                             Action::Page(Page::Amoo),
                         ),
-                        self.nav_item_badge(
-                            "work",
-                            Page::Work.icon(),
-                            Page::Work.title(),
-                            if self.work.running {
-                                Some("进行中".into())
-                            } else {
-                                None
-                            },
-                            self.page == Page::Work,
-                            Action::Page(Page::Work),
-                        ),
-                        self.nav_item_badge(
-                            "studio",
-                            Page::Studio.icon(),
-                            Page::Studio.title(),
-                            Some("上机".into()),
-                            self.page == Page::Studio,
-                            Action::Page(Page::Studio),
-                        ),
                         self.nav_group_title("通信与数据", false),
                         self.nav_item_badge(
                             "sms",
@@ -553,6 +544,14 @@ impl Companion {
                             sms_badge,
                             self.page == Page::Sms,
                             Action::Page(Page::Sms),
+                        ),
+                        self.nav_item_badge(
+                            "notifications",
+                            Page::Notifications.icon(),
+                            Page::Notifications.title(),
+                            push_badge,
+                            self.page == Page::Notifications,
+                            Action::Page(Page::Notifications),
                         ),
                         self.nav_item_badge(
                             "phone",
@@ -569,6 +568,14 @@ impl Companion {
                             None,
                             self.page == Page::Files,
                             Action::Page(Page::Files),
+                        ),
+                        self.nav_item_badge(
+                            "expansion",
+                            Page::Expansion.icon(),
+                            Page::Expansion.title(),
+                            None,
+                            self.page == Page::Expansion,
+                            Action::Page(Page::Expansion),
                         ),
                         self.nav_item_badge(
                             "apps",
@@ -607,11 +614,10 @@ impl Companion {
                     .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
                     .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                     .with_child(top_group)
-                    .with_child(self.vstack(
-                        S2,
-                        vec![
-                            self.button("sidebar-about", "关于 StepX Companion", Action::Page(Page::About), if self.page == Page::About { Btn::Secondary } else { Btn::Ghost }),
-                        ],
+                    .with_child(self.nav_item_badge(
+                        "sidebar-settings", "⚙", "设置", None,
+                        matches!(self.page, Page::Settings | Page::About),
+                        Action::Page(Page::Settings),
                     ))
                     .finish(),
             )
@@ -623,7 +629,7 @@ impl Companion {
         )
     }
 
-    fn window_control_btn(
+    pub(super) fn window_control_btn(
         &self,
         id: &str,
         symbol: &'static str,
@@ -700,29 +706,56 @@ impl Companion {
                 )
             }
             Page::BackScreen => "17 列 × 23 行 · 379 颗单色灯珠 · 创作与手机联动".into(),
-            Page::Amoo => "后台连接 · 会话与文字对话".into(),
+            Page::Amoo => "".into(),
             Page::Account => "手机账号 · 真实消息 Token 用量".into(),
-            Page::About => String::new(),
+            Page::About | Page::Settings => "更顺手的使用习惯".into(),
+            Page::Expansion => "电脑保存原件 · 手机保留入口".into(),
             Page::Work => "手机任务同步 · 本地文件协作".into(),
             Page::Studio => "电脑创作 · 手机体验 · 作品分享".into(),
             Page::Sms => {
-                if self.sms_error.is_some() {
+                let im_threads = self.push.snapshot.threads.len();
+                let im_unread: usize = self
+                    .push
+                    .snapshot
+                    .threads
+                    .iter()
+                    .map(|t| t.unread_count)
+                    .sum();
+                if self.sms_error.is_some() && im_threads == 0 {
                     "短信读取失败，请刷新重试".into()
-                } else if !self.sms_loaded {
-                    "正在读取手机短信…".into()
+                } else if !self.sms_loaded && !self.push.loaded {
+                    "正在读取手机聊天会话与短信…".into()
                 } else {
-                    let threads = self
+                    let sms_threads = self
                         .sms
                         .iter()
                         .map(|m| stepx_companion::sms::normalize_address(&m.address))
                         .collect::<std::collections::HashSet<_>>()
                         .len();
-                    let unread = self.sms.iter().filter(|m| m.kind == 1 && !m.read).count();
+                    let sms_unread = self.sms.iter().filter(|m| m.kind == 1 && !m.read).count();
                     format!(
-                        "{} 条短信 · {threads} 个会话 · {unread} 条未读",
+                        "{im_threads} 个聊天会话 ({im_unread} 未读) · {} 条短信 ({sms_threads} 会话 / {sms_unread} 未读)",
                         self.sms.len()
                     )
                 }
+            }
+            Page::Notifications => {
+                let total = self
+                    .push
+                    .snapshot
+                    .notifications
+                    .iter()
+                    .filter(|n| !n.dismissed)
+                    .count();
+                let unread = self
+                    .push
+                    .snapshot
+                    .notifications
+                    .iter()
+                    .filter(|n| !n.dismissed && !n.read && !n.is_ongoing)
+                    .count();
+                let otps = self.push.snapshot.otp_banners.len();
+                format!("来自手机全部应用的实时推送 · {total} 条通知 · {unread} 条未读 · {otps} 个验证码/取件码")
             }
             Page::Phone => "通话记录、手机通讯录与桌面直接拨号".into(),
             Page::Files => {
@@ -744,19 +777,34 @@ impl Companion {
 
     pub(super) fn header(&self) -> El {
         let p = self.p();
-        let mut actions = if self.selected.is_none() && self.page.needs_device() && self.page != Page::Overview {
-            vec![
-                self.button("hdr-rescan", "重新扫描", Action::Refresh, Btn::Secondary),
-                self.button(
-                    "hdr-connect",
-                    "⇄ 连接设备",
-                    Action::Page(Page::Connect),
-                    Btn::Primary,
-                ),
-            ]
-        } else {
-            self.page_actions()
-        };
+        let mut actions =
+            if self.selected.is_none() && self.page.needs_device() && self.page != Page::Overview {
+                vec![
+                    self.button("hdr-rescan", "重新扫描", Action::Refresh, Btn::Secondary),
+                    self.button(
+                        "hdr-connect",
+                        "⇄ 连接设备",
+                        Action::Page(Page::Connect),
+                        Btn::Primary,
+                    ),
+                ]
+            } else {
+                self.page_actions()
+            };
+        actions.push(self.button("operation-reminders", "操作提醒", Action::ReviewHistory, Btn::Ghost));
+        actions.push(self.button_icon(
+            "header-compact",
+            "简洁",
+            UiIcon::Restore,
+            Action::Push(PushAction::SetShellMode(
+                if matches!(self.page, Page::Sms | Page::Notifications) {
+                    ShellMode::MiniNotify
+                } else {
+                    ShellMode::MiniAi
+                },
+            )),
+            Btn::Ghost,
+        ));
         if !actions.is_empty() {
             actions.push(
                 ConstrainedBox::new(
@@ -831,19 +879,33 @@ impl Companion {
             Some(_) => "USB",
             None => "ADB",
         };
-        let detail = if self.status.is_empty() || self.status == "就绪" {
-            if self.initializing { "正在检测设备" }
-            else if self.selected.is_some() { "设备已连接" }
-            else { "等待设备连接" }
-        } else { &self.status };
+        let detail = self.footer_detail();
         let left = self.lead(
             S2,
-            self.dot(if self.error { p.danger } else if self.busy || self.initializing { p.warning }
-                else if self.selected.is_some() { p.success } else { p.text3 }),
-            self.line(format!("{transport} · {detail}"), CAPTION, if self.error { p.danger } else { p.text2 }),
+            self.fixed_w(18., Align::new(if self.footer_loading() { self.loading_line() } else { self.dot(if self.error {
+                p.danger
+            } else if self.busy || self.initializing {
+                p.warning
+            } else if self.selected.is_some() {
+                p.success
+            } else {
+                p.text3
+            }) }).finish()),
+            self.line(
+                format!("{transport} · {detail}"),
+                CAPTION,
+                if self.error { p.danger } else { p.text2 },
+            ),
         );
-        let right = self.mono(format!("v{} · {}", stepx_companion::build_info::VERSION,
-            stepx_companion::build_info::compiled_id()), CAPTION, p.text3);
+        let right = self.hstack(S3, vec![self.desktop_update_link(), self.stars_link(), self.mono(
+            format!(
+                "v{} · {}",
+                stepx_companion::build_info::VERSION,
+                stepx_companion::build_info::compiled_id()
+            ),
+            CAPTION,
+            p.text3,
+        )]);
         ConstrainedBox::new(
             Container::new(self.between(left, right))
                 .with_horizontal_padding(S4)

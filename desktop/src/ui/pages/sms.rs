@@ -1,8 +1,13 @@
 use super::super::{
-    theme::*, widgets::*, Action, Companion, Page, SmsFilter, F_SMS_BODY, F_SMS_SEARCH, F_SMS_TO,
+    theme::*, widgets::*, Action, Companion, Page, PushAction, SmsFilter, F_IM_REPLY, F_SMS_BODY,
+    F_SMS_SEARCH, F_SMS_TO,
 };
 use chrono::{Local, TimeZone};
 use facloud_ui::{color::ColorU, elements::*, fonts::Weight, platform::Cursor};
+use stepx_companion::push::{
+    demo_push_snapshot, extract_first_url, extract_otp_code, ImChannel, ImThread, PushSnapshot,
+    ReplyMode,
+};
 
 struct DisplaySmsThread {
     name: String,
@@ -49,26 +54,463 @@ fn resolve_sender_info(
     )
 }
 
+fn im_avatar_style(package_name: &str, app_name: &str) -> (String, ColorU, ColorU) {
+    match ImChannel::from_package(package_name) {
+        ImChannel::WeChat => ("微".into(), rgb(0x07, 0xC1, 0x60), ColorU::white()),
+        ImChannel::WeCom => ("企".into(), rgb(0x2B, 0x6C, 0xB0), ColorU::white()),
+        ImChannel::DingTalk => ("钉".into(), rgb(0x00, 0x89, 0xFF), ColorU::white()),
+        ImChannel::Feishu => ("飞".into(), rgb(0x33, 0x70, 0xFF), ColorU::white()),
+        ImChannel::QqTim => ("Q".into(), rgb(0x02, 0x84, 0xC7), ColorU::white()),
+        ImChannel::Sms => ("短".into(), rgb(0x10, 0xB9, 0x81), ColorU::white()),
+        ImChannel::SocialDm => ("私".into(), rgb(0xE1, 0x1D, 0x48), ColorU::white()),
+        _ => {
+            if package_name.contains("telegram") {
+                ("TG".into(), rgb(0x02, 0x84, 0xC7), ColorU::white())
+            } else if package_name.contains("whatsapp") {
+                ("WA".into(), rgb(0x16, 0xA3, 0x4A), ColorU::white())
+            } else {
+                let first = app_name
+                    .trim()
+                    .chars()
+                    .next()
+                    .unwrap_or('聊')
+                    .to_uppercase()
+                    .to_string();
+                (first, rgb(0x63, 0x66, 0xF1), ColorU::white())
+            }
+        }
+    }
+}
+
+fn reply_mode_short_label(mode: ReplyMode) -> &'static str {
+    match mode {
+        ReplyMode::Auto => "自动择优",
+        ReplyMode::RemoteInputOnly => "仅静默秒回",
+        ReplyMode::UiBridgeFallback => "看屏投递",
+    }
+}
+
 impl Companion {
     pub(in super::super) fn sms_actions(&self) -> Vec<El> {
         vec![
             self.button(
-                "sms-open-phone",
-                "📱 在手机打开短信",
-                Action::OpenSms,
+                "im-sync-chat-win",
+                "同步聊天屏",
+                Action::Push(PushAction::SyncActivePhoneChatWindow),
                 Btn::Secondary,
             ),
-            self.button("sms-sync", "刷新列表", Action::ReadSms, Btn::Secondary),
-            self.button("sms-new", "＋ 新建短信", Action::NewSms, Btn::Primary),
+            self.button(
+                "im-refresh-push",
+                "刷新",
+                Action::Push(PushAction::Refresh),
+                Btn::Secondary,
+            ),
+            self.button("sms-new", "新建短信", Action::NewSms, Btn::Primary),
         ]
+    }
+
+    fn im_channel_pill(
+        &self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        active: bool,
+        action: Action,
+    ) -> El {
+        let p = self.p();
+        let state = self.mouse_state(format!("im-ch-pill:{}", id.into()));
+        let label = label.into();
+        let font = self.font;
+        Hoverable::new(state, move |mouse| {
+            let hovered = mouse.is_mouse_over_element();
+            let (bg, border, fg, weight) = if active {
+                (p.accent_soft, p.accent, p.text, Weight::Semibold)
+            } else if hovered {
+                (p.hover, p.border_strong, p.text, Weight::Normal)
+            } else {
+                (p.surface, p.border, p.text2, Weight::Normal)
+            };
+            Container::new(
+                facloud_ui::elements::Text::new(label.clone(), font, MICRO)
+                    .with_color(fg)
+                    .with_style(facloud_ui::fonts::Properties::default().weight(weight))
+                    .soft_wrap(false)
+                    .finish(),
+            )
+            .with_horizontal_padding(8.)
+            .with_vertical_padding(3.)
+            .with_background_color(bg)
+            .with_border(Border::all(1.).with_border_color(border))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+            .finish()
+        })
+        .with_cursor(Cursor::PointingHand)
+        .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()))
+        .finish()
+    }
+
+    fn im_thread_dialog(&self, t: &ImThread, snapshot: &PushSnapshot) -> El {
+        let p = self.p();
+        let app_label = if t.app_name.is_empty() {
+            t.channel().label()
+        } else {
+            t.app_name.as_str()
+        };
+        let (badge_txt, badge_bg, badge_fg) = im_avatar_style(&t.package_name, app_label);
+        let header_avatar = ConstrainedBox::new(
+            Container::new(
+                Flex::row()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_main_axis_alignment(MainAxisAlignment::Center)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_child(self.line_w(badge_txt, CAPTION, badge_fg, Weight::Semibold))
+                    .finish(),
+            )
+            .with_background_color(badge_bg)
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(18.)))
+            .finish(),
+        )
+        .with_width(36.)
+        .with_height(36.)
+        .finish();
+
+        let channel_status = if t.can_remote_reply {
+            self.pill_badge("静默秒回", p.success_text, p.success_soft)
+        } else if t.can_ui_reply {
+            self.pill_badge("看屏投递", p.warning, p.warning_soft)
+        } else {
+            self.pill_badge("待激活", p.text2, p.tag_bg)
+        };
+
+        let title_row = self.hstack(
+            8.,
+            vec![
+                self.line_w(&t.title, SUBHEAD, p.text, Weight::Semibold),
+                self.pill_badge(
+                    format!(
+                        "{} · {}",
+                        app_label,
+                        if t.is_group { "群聊" } else { "私聊" }
+                    ),
+                    p.text2,
+                    p.tag_bg,
+                ),
+                channel_status,
+            ],
+        );
+
+        let reply_mode_pills: Vec<El> = ReplyMode::ALL
+            .into_iter()
+            .map(|mode| {
+                self.im_channel_pill(
+                    format!("rmode-{mode:?}"),
+                    reply_mode_short_label(mode),
+                    self.push.reply_mode == mode,
+                    Action::Push(PushAction::SetReplyMode(mode)),
+                )
+            })
+            .collect();
+
+        let header_actions = self.hstack(
+            6.,
+            vec![
+                self.hstack(4., reply_mode_pills),
+                self.button(
+                    "im-hdr-open-phone",
+                    "手机打开",
+                    Action::Push(PushAction::OpenOnPhone(t.notification_key.clone())),
+                    Btn::Secondary,
+                ),
+            ],
+        );
+
+        let dialog_header = Container::new(self.between(
+            self.hstack(
+                10.,
+                vec![
+                    header_avatar,
+                    self.vstack(
+                        2.,
+                        vec![
+                            title_row,
+                            self.line(
+                                if !snapshot.screen_interactive || snapshot.keyguard_locked {
+                                    format!("{} · 熄屏锁屏可后台无感秒回", t.package_name)
+                                } else {
+                                    format!("{} · 支持静默秒回与屏上气泡同步", t.package_name)
+                                },
+                                MICRO,
+                                p.text3,
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+            header_actions,
+        ))
+        .with_horizontal_padding(S4)
+        .with_vertical_padding(10.)
+        .with_background_color(p.bg)
+        .with_border(Border::bottom(1.).with_border_color(p.border))
+        .finish();
+
+        // Message Bubble Stream
+        let mut msg_items: Vec<El> = Vec::new();
+        msg_items.push(
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_main_axis_alignment(MainAxisAlignment::Center)
+                .with_child(
+                    Container::new(self.line(
+                        format!(
+                            "{}会话 · 共 {} 条已同步聊天气泡",
+                            app_label,
+                            t.messages.len()
+                        ),
+                        MICRO,
+                        p.text3,
+                    ))
+                    .with_horizontal_padding(10.)
+                    .with_vertical_padding(3.)
+                    .with_background_color(p.tag_bg)
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(10.)))
+                    .finish(),
+                )
+                .finish(),
+        );
+
+        for (idx, m) in t.messages.iter().enumerate() {
+            let ts = super::format_time(m.timestamp_ms);
+            let msg_text = if self.push.prefs.privacy_mask && !m.outgoing {
+                "[防窥模式已开启，已隐藏消息内容]".to_string()
+            } else {
+                m.text.clone()
+            };
+
+            if m.outgoing {
+                let status_txt = match m.delivery_status.as_str() {
+                    "sending" => "发送中",
+                    "failed" => "发送失败 · 草稿已保留",
+                    "unknown" => "发送状态未确认 · 请核对手机",
+                    _ if m.via == "remote_input" => "已提交给手机应用",
+                    _ if m.via == "ui_bridge" => "手机会话已显示",
+                    _ => "已发送",
+                };
+                let meta = if ts.is_empty() {
+                    format!("我 · {status_txt}")
+                } else {
+                    format!("{ts} · {status_txt}")
+                };
+                let bubble_box = Container::new(self.text(msg_text, BODY, p.accent_fg))
+                    .with_horizontal_padding(16.)
+                    .with_vertical_padding(10.)
+                    .with_background_color(p.accent)
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(16.)))
+                    .finish();
+                msg_items.push(
+                    Flex::row()
+                        .with_main_axis_size(MainAxisSize::Max)
+                        .with_main_axis_alignment(MainAxisAlignment::End)
+                        .with_child(
+                            Flex::column()
+                                .with_spacing(4.)
+                                .with_cross_axis_alignment(CrossAxisAlignment::End)
+                                .with_child(
+                                    ConstrainedBox::new(bubble_box)
+                                        .with_max_width(560.)
+                                        .finish(),
+                                )
+                                .with_child(
+                                    Container::new(self.mono(meta, MICRO, p.text3))
+                                        .with_padding_right(4.)
+                                        .finish(),
+                                )
+                                .finish(),
+                        )
+                        .finish(),
+                );
+            } else {
+                let sender_name = if m.sender.trim().is_empty() {
+                    t.title.as_str()
+                } else {
+                    m.sender.as_str()
+                };
+                let meta = if ts.is_empty() {
+                    sender_name.to_string()
+                } else {
+                    format!("{sender_name} · {ts}")
+                };
+
+                let mut bubble_children = vec![self.text(msg_text, BODY, p.text)];
+                if !self.push.prefs.privacy_mask {
+                    let mut inline_actions: Vec<El> = Vec::new();
+                    if let Some(code) = extract_otp_code(&m.text) {
+                        inline_actions.push(self.button(
+                            format!("im-msg-otp-{idx}"),
+                            format!("复制验证码 {code}"),
+                            Action::Push(PushAction::CopyOtp(code)),
+                            Btn::Primary,
+                        ));
+                    }
+                    if let Some(url) = extract_first_url(&m.text) {
+                        inline_actions.push(self.button(
+                            format!("im-msg-url-{idx}"),
+                            "打开链接",
+                            Action::Push(PushAction::OpenUrl(url)),
+                            Btn::Secondary,
+                        ));
+                    }
+                    if !inline_actions.is_empty() {
+                        bubble_children.push(self.wrap(inline_actions));
+                    }
+                }
+
+                let bubble_box = Container::new(self.vstack(S2, bubble_children))
+                    .with_horizontal_padding(16.)
+                    .with_vertical_padding(10.)
+                    .with_background_color(p.bg)
+                    .with_border(Border::all(1.).with_border_color(p.border))
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(16.)))
+                    .finish();
+
+                msg_items.push(
+                    Flex::column()
+                        .with_spacing(4.)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                        .with_child(
+                            Container::new(self.line_w(meta, MICRO, p.text2, Weight::Medium))
+                                .with_padding_left(4.)
+                                .finish(),
+                        )
+                        .with_child(
+                            ConstrainedBox::new(bubble_box)
+                                .with_max_width(560.)
+                                .finish(),
+                        )
+                        .finish(),
+                );
+            }
+        }
+
+        let stream_scroll = self.pane_scroll(
+            self.sms_messages_scroll.clone(),
+            Container::new(self.vstack(14., msg_items))
+                .with_uniform_padding(S4)
+                .finish(),
+        );
+
+        // Bottom Direct Reply Composer
+        let quick_phrases = [
+            ("收到", "收到"),
+            ("没问题", "没问题"),
+            ("谢谢", "谢谢"),
+            ("稍后回你", "稍后回你"),
+        ];
+        let mut quick_chips: Vec<El> = quick_phrases
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (btn_label, phrase))| {
+                self.button(
+                    format!("im-qreply-{idx}"),
+                    btn_label,
+                    Action::Push(PushAction::QuickReplyPhrase {
+                        thread_id: t.thread_id.clone(),
+                        package_name: t.package_name.clone(),
+                        title: t.title.clone(),
+                        text: phrase.to_string(),
+                    }),
+                    Btn::Secondary,
+                )
+            })
+            .collect();
+
+        quick_chips.push(self.button(
+            "im-qreply-ai",
+            "AI 帮回",
+            Action::Push(PushAction::AiDraftReply {
+                thread_id: t.thread_id.clone(),
+                package_name: t.package_name.clone(),
+                title: t.title.clone(),
+            }),
+            Btn::Secondary,
+        ));
+
+        let is_sending = self.push.sending_thread.as_deref() == Some(t.thread_id.as_str());
+        let status_node = if is_sending {
+            Some(self.hstack(
+                6.,
+                vec![
+                    self.dot(p.warning),
+                    self.line("正在发送回复…", MICRO, p.warning),
+                ],
+            ))
+        } else {
+            self.push.last_reply_status.as_ref().map(|st| {
+                self.line(
+                    st,
+                    MICRO,
+                    if st.starts_with("回复未完成") {
+                        p.danger
+                    } else {
+                        p.text2
+                    },
+                )
+            })
+        };
+
+        let quick_bar = match status_node {
+            Some(st) => self.between(self.wrap(quick_chips), st),
+            None => self.wrap(quick_chips),
+        };
+
+        let composer_input_row = Container::new(
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_spacing(8.)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(
+                    Expanded::new(
+                        1.,
+                        self.input(F_IM_REPLY, "输入回复内容，按回车发送…", None),
+                    )
+                    .finish(),
+                )
+                .with_child(self.button(
+                    "im-send-reply",
+                    if is_sending { "发送中" } else { "发送" },
+                    Action::Push(PushAction::SendImReply),
+                    Btn::Primary,
+                ))
+                .finish(),
+        )
+        .with_uniform_padding(8.)
+        .with_background_color(p.bg)
+        .with_border(Border::all(1.).with_border_color(p.border))
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_PANEL)))
+        .finish();
+
+        let bottom_composer = Container::new(self.vstack(8., vec![quick_bar, composer_input_row]))
+            .with_horizontal_padding(S4)
+            .with_padding_bottom(S4)
+            .with_padding_top(S2)
+            .with_background_color(p.bg)
+            .with_border(Border::top(1.).with_border_color(p.border))
+            .finish();
+
+        Flex::column()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_child(dialog_header)
+            .with_child(Expanded::new(1., stream_scroll).finish())
+            .with_child(bottom_composer)
+            .finish()
     }
 
     pub(in super::super) fn sms_page(&self) -> El {
         let p = self.p();
         if !self.demo_mode && self.selected.is_none() {
             return self.empty(
-                "连接手机后查看短信",
-                "连接后将读取手机中的短信记录。",
+                "连接手机后查看消息与短信",
+                "连接后将同步微信、企业微信、钉钉、飞书会话以及手机原生短信。",
                 Some(self.button(
                     "sms-connect",
                     "连接设备",
@@ -77,11 +519,23 @@ impl Companion {
                 )),
             );
         }
-        let loaded = self.sms_loaded || self.demo_mode;
-        let filtered =
-            self.sms_filter != SmsFilter::All || !self.fields[F_SMS_SEARCH].text.trim().is_empty();
 
-        // Build threads exclusively from the phone provider snapshot.
+        let demo_fallback: PushSnapshot;
+        let snapshot: &PushSnapshot = if self.demo_mode
+            && self.push.snapshot.threads.is_empty()
+            && self.push.snapshot.notifications.is_empty()
+        {
+            demo_fallback = demo_push_snapshot();
+            &demo_fallback
+        } else {
+            &self.push.snapshot
+        };
+
+        let loaded = self.sms_loaded || self.demo_mode;
+        let search_q = self.fields[F_SMS_SEARCH].text.trim().to_lowercase();
+        let filtered = self.sms_filter != SmsFilter::All || !search_q.is_empty();
+
+        // Build native SMS threads from the phone provider snapshot.
         let mut display_threads: Vec<DisplaySmsThread> = Vec::new();
         for rt in self.sms_threads() {
             let (name, badge) = resolve_sender_info(&rt.address, &self.contacts);
@@ -108,9 +562,57 @@ impl Companion {
             });
         }
 
+        // Filter IM threads from `snapshot.threads`
+        let matching_im_threads: Vec<&ImThread> = if self.push.im_channel == ImChannel::Sms {
+            Vec::new()
+        } else {
+            snapshot
+                .threads
+                .iter()
+                .filter(|t| self.push.im_channel.matches_package(&t.package_name))
+                .filter(|t| {
+                    if search_q.is_empty() {
+                        return true;
+                    }
+                    t.title.to_lowercase().contains(&search_q)
+                        || t.app_name.to_lowercase().contains(&search_q)
+                        || t.last_sender.to_lowercase().contains(&search_q)
+                        || t.last_message.to_lowercase().contains(&search_q)
+                        || t.messages
+                            .iter()
+                            .any(|m| m.text.to_lowercase().contains(&search_q))
+                })
+                .collect()
+        };
+
         let is_new_sms = self.selected_thread.as_deref() == Some("__new__");
+
+        // Determine whether an IM thread or a native SMS thread is currently active in the right pane
+        let active_im_thread: Option<&ImThread> =
+            if is_new_sms || self.push.im_channel == ImChannel::Sms {
+                None
+            } else if let Some(sel_id) = self.push.selected_im_thread.as_deref() {
+                if sel_id.is_empty() {
+                    None
+                } else {
+                    matching_im_threads
+                        .iter()
+                        .copied()
+                        .find(|t| t.thread_id == sel_id)
+                        .or_else(|| snapshot.threads.iter().find(|t| t.thread_id == sel_id))
+                }
+            } else if self.selected_thread.is_none() || self.push.im_channel != ImChannel::All {
+                matching_im_threads.first().copied()
+            } else {
+                None
+            };
+
+        let active_im_id = active_im_thread.map(|t| t.thread_id.as_str()).unwrap_or("");
+
         let active_addr = if is_new_sms {
             "__new__".to_string()
+        } else if active_im_thread.is_some() {
+            String::new()
         } else if let Some(sel) = &self.selected_thread {
             sel.clone()
         } else if let Some(first) = display_threads.first() {
@@ -118,6 +620,29 @@ impl Companion {
         } else {
             String::new()
         };
+
+        // Top Channel Bar (`ImChannel`)
+        let channel_tabs = [
+            (ImChannel::All, "全部消息"),
+            (ImChannel::WeChat, "微信"),
+            (ImChannel::WeCom, "企微"),
+            (ImChannel::DingTalk, "钉钉"),
+            (ImChannel::Feishu, "飞书"),
+            (ImChannel::QqTim, "QQ/TIM"),
+            (ImChannel::GlobalIm, "国际IM"),
+            (ImChannel::Sms, "原生短信"),
+        ];
+        let channel_pills: Vec<El> = channel_tabs
+            .into_iter()
+            .map(|(ch, label)| {
+                self.im_channel_pill(
+                    format!("ch-{ch:?}"),
+                    label,
+                    self.push.im_channel == ch,
+                    Action::Push(PushAction::SelectImChannel(ch)),
+                )
+            })
+            .collect();
 
         let filter_bar = self.segmented(
             "sms-filter-seg",
@@ -153,35 +678,29 @@ impl Companion {
         );
 
         let mut thread_rows: Vec<El> = Vec::new();
-        for (i, t) in display_threads.iter().enumerate() {
+
+        // 1. Render matching IM threads first when channel != ImChannel::Sms
+        for (i, t) in matching_im_threads.iter().enumerate() {
             if !thread_rows.is_empty() {
                 thread_rows.push(self.divider());
             }
-            let active = !is_new_sms && norm_addr(&active_addr) == norm_addr(&t.num);
-            let avatar_bg = if active {
-                p.accent
-            } else if p.dark {
-                rgb(0x27, 0x27, 0x2A)
+            let active = !is_new_sms && t.thread_id == active_im_id;
+            let app_label = if t.app_name.is_empty() {
+                t.channel().label()
             } else {
-                rgb(0xEF, 0xEF, 0xF2)
+                t.app_name.as_str()
             };
-            let avatar_fg = if active {
-                p.accent_fg
-            } else if p.dark {
-                p.text2
-            } else {
-                rgb(0x52, 0x52, 0x5B)
-            };
+            let (badge_txt, badge_bg, badge_fg) = im_avatar_style(&t.package_name, app_label);
             let avatar = ConstrainedBox::new(
                 Container::new(
                     Flex::row()
                         .with_main_axis_size(MainAxisSize::Max)
                         .with_main_axis_alignment(MainAxisAlignment::Center)
                         .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                        .with_child(self.line_w(&t.badge, CAPTION, avatar_fg, Weight::Semibold))
+                        .with_child(self.line_w(badge_txt, CAPTION, badge_fg, Weight::Semibold))
                         .finish(),
                 )
-                .with_background_color(avatar_bg)
+                .with_background_color(badge_bg)
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(18.)))
                 .finish(),
             )
@@ -189,43 +708,65 @@ impl Companion {
             .with_height(36.)
             .finish();
 
-            let preview_line = self.line_w(
-                &t.preview,
+            let mut title_badges = vec![
+                self.line_w(&t.title, CAPTION, p.text, Weight::Semibold),
+                self.pill_badge(app_label, p.text2, p.tag_bg),
+            ];
+            if t.can_remote_reply {
+                title_badges.push(self.pill_badge("可秒回", p.success_text, p.success_soft));
+            } else if t.can_ui_reply {
+                title_badges.push(self.pill_badge("看屏回", p.text2, p.tag_bg));
+            }
+
+            let raw_preview = if self.push.prefs.privacy_mask {
+                "[防窥保护已开启]".to_string()
+            } else if !t.last_sender.is_empty()
+                && t.last_sender != t.title
+                && !t.last_message.starts_with(&t.last_sender)
+            {
+                format!("{}: {}", t.last_sender, t.last_message)
+            } else {
+                t.last_message.clone()
+            };
+            let single_line: String = raw_preview
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let preview_str = if single_line.chars().count() > 36 {
+                format!("{}…", single_line.chars().take(36).collect::<String>())
+            } else {
+                single_line
+            };
+
+            let has_unread = t.unread_count > 0;
+            let preview_el = self.line_w(
+                preview_str,
                 CAPTION,
-                if t.unread { p.text } else { p.text2 },
-                if t.unread {
+                if has_unread { p.text } else { p.text2 },
+                if has_unread {
                     Weight::Medium
                 } else {
                     Weight::Normal
                 },
             );
-            let bottom_row = if t.unread {
-                self.between(preview_line, self.dot(rgb(0x25, 0x63, 0xEB)))
+
+            let bottom_row = if has_unread {
+                let unread_pill =
+                    self.pill_badge(format!("{}", t.unread_count), ColorU::white(), p.danger);
+                self.between(preview_el, unread_pill)
             } else {
-                preview_line
+                preview_el
             };
 
-            let title_items = vec![
-                self.line_w(&t.name, CAPTION, p.text, Weight::Semibold),
-                self.pill_badge(
-                    if filtered {
-                        format!("匹配 {} 条", t.count)
-                    } else {
-                        format!("{} 条", t.count)
-                    },
-                    p.text2,
-                    p.tag_bg,
-                ),
-            ];
-
             let right_col = Flex::column()
-                .with_spacing(3.)
+                .with_spacing(4.)
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .with_child(self.between(
-                    self.hstack(6., title_items),
-                    self.mono(&t.time, CAPTION, p.text2),
+                    self.wrap(title_badges),
+                    self.mono(super::format_time(t.last_timestamp_ms), MICRO, p.text3),
                 ))
-                .with_child(self.mono(&t.num, CAPTION, p.text2))
                 .with_child(bottom_row)
                 .finish();
 
@@ -237,16 +778,12 @@ impl Companion {
                 .with_child(Expanded::new(1., right_col).finish())
                 .finish();
 
-            let state = self.mouse_state(format!("sms-th:{i}"));
-            let num_str = t.num.clone();
+            let state = self.mouse_state(format!("im-th:{i}"));
+            let tid = t.thread_id.clone();
             let row_el = Hoverable::new(state, move |mouse| {
                 let hovered = mouse.is_mouse_over_element();
                 let bg = if active {
-                    if p.dark {
-                        rgb(0x22, 0x22, 0x28)
-                    } else {
-                        rgb(0xF4, 0xF4, 0xF7)
-                    }
+                    p.selected
                 } else if hovered {
                     p.hover
                 } else {
@@ -259,93 +796,237 @@ impl Companion {
             })
             .with_cursor(Cursor::PointingHand)
             .on_click(move |ctx, _, _| {
-                ctx.dispatch_typed_action(Action::SelectSmsThread(Some(num_str.clone())))
+                ctx.dispatch_typed_action(Action::Push(PushAction::SelectImThread(tid.clone())))
             })
             .finish();
+
             thread_rows.push(row_el);
         }
 
-        if let Some(error) = &self.sms_error {
-            thread_rows.insert(
-                0,
-                self.empty(
-                    "短信读取失败",
-                    error.clone(),
-                    Some(self.button(
-                        "sms-read-retry",
-                        "重试读取",
-                        Action::ReadSms,
-                        Btn::Secondary,
-                    )),
-                ),
-            );
-        } else if !loaded {
-            thread_rows.push(self.empty(
-                if self.busy {
-                    "正在读取手机短信…"
+        // 2. Render native SMS threads when channel is `All` or `Sms`
+        let show_native_sms = matches!(self.push.im_channel, ImChannel::All | ImChannel::Sms);
+        if show_native_sms {
+            for (i, t) in display_threads.iter().enumerate() {
+                if !thread_rows.is_empty() {
+                    thread_rows.push(self.divider());
+                }
+                let active = !is_new_sms
+                    && active_im_thread.is_none()
+                    && !active_addr.is_empty()
+                    && norm_addr(&active_addr) == norm_addr(&t.num);
+                let avatar_bg = if active {
+                    p.accent
+                } else if p.dark {
+                    rgb(0x27, 0x27, 0x2A)
                 } else {
-                    "尚未读取短信"
-                },
-                "读取完成后显示会话与短信数量。",
-                if self.busy {
-                    None
+                    rgb(0xEF, 0xEF, 0xF2)
+                };
+                let avatar_fg = if active {
+                    p.accent_fg
+                } else if p.dark {
+                    p.text2
                 } else {
-                    Some(self.button(
-                        "sms-first-read",
-                        "读取短信",
-                        Action::ReadSms,
-                        Btn::Secondary,
+                    rgb(0x52, 0x52, 0x5B)
+                };
+                let avatar = ConstrainedBox::new(
+                    Container::new(
+                        Flex::row()
+                            .with_main_axis_size(MainAxisSize::Max)
+                            .with_main_axis_alignment(MainAxisAlignment::Center)
+                            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                            .with_child(self.line_w(&t.badge, CAPTION, avatar_fg, Weight::Semibold))
+                            .finish(),
+                    )
+                    .with_background_color(avatar_bg)
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(18.)))
+                    .finish(),
+                )
+                .with_width(36.)
+                .with_height(36.)
+                .finish();
+
+                let preview_line = self.line_w(
+                    &t.preview,
+                    CAPTION,
+                    if t.unread { p.text } else { p.text2 },
+                    if t.unread {
+                        Weight::Medium
+                    } else {
+                        Weight::Normal
+                    },
+                );
+                let bottom_row = if t.unread {
+                    self.between(preview_line, self.dot(rgb(0x25, 0x63, 0xEB)))
+                } else {
+                    preview_line
+                };
+
+                let title_items = vec![
+                    self.line_w(&t.name, CAPTION, p.text, Weight::Semibold),
+                    self.pill_badge(
+                        if filtered {
+                            format!("短信 · 匹配 {} 条", t.count)
+                        } else {
+                            format!("短信 · {} 条", t.count)
+                        },
+                        p.text2,
+                        p.tag_bg,
+                    ),
+                ];
+
+                let right_col = Flex::column()
+                    .with_spacing(3.)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_child(self.between(
+                        self.hstack(6., title_items),
+                        self.mono(&t.time, CAPTION, p.text2),
                     ))
-                },
-            ));
-        } else if thread_rows.is_empty() {
+                    .with_child(self.mono(&t.num, CAPTION, p.text2))
+                    .with_child(bottom_row)
+                    .finish();
+
+                let row_inner = Flex::row()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                    .with_spacing(12.)
+                    .with_child(avatar)
+                    .with_child(Expanded::new(1., right_col).finish())
+                    .finish();
+
+                let state = self.mouse_state(format!("sms-th:{i}"));
+                let num_str = t.num.clone();
+                let row_el = Hoverable::new(state, move |mouse| {
+                    let hovered = mouse.is_mouse_over_element();
+                    let bg = if active {
+                        if p.dark {
+                            rgb(0x22, 0x22, 0x28)
+                        } else {
+                            rgb(0xF4, 0xF4, 0xF7)
+                        }
+                    } else if hovered {
+                        p.hover
+                    } else {
+                        ColorU::transparent_black()
+                    };
+                    Container::new(row_inner)
+                        .with_uniform_padding(12.)
+                        .with_background_color(bg)
+                        .finish()
+                })
+                .with_cursor(Cursor::PointingHand)
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(Action::Push(PushAction::SelectImThread(
+                        String::new(),
+                    )));
+                    ctx.dispatch_typed_action(Action::SelectSmsThread(Some(num_str.clone())));
+                })
+                .finish();
+                thread_rows.push(row_el);
+            }
+        }
+
+        if show_native_sms {
+            if let Some(error) = &self.sms_error {
+                if thread_rows.is_empty() {
+                    thread_rows.insert(
+                        0,
+                        self.empty(
+                            "短信读取失败",
+                            error.clone(),
+                            Some(self.button(
+                                "sms-read-retry",
+                                "重试读取",
+                                Action::ReadSms,
+                                Btn::Secondary,
+                            )),
+                        ),
+                    );
+                }
+            } else if !loaded && thread_rows.is_empty() {
+                thread_rows.push(self.empty(
+                    if self.busy {
+                        "正在读取手机短信…"
+                    } else {
+                        "尚未读取短信"
+                    },
+                    "读取完成后显示会话与短信数量。",
+                    if self.busy {
+                        None
+                    } else {
+                        Some(self.button(
+                            "sms-first-read",
+                            "读取短信",
+                            Action::ReadSms,
+                            Btn::Secondary,
+                        ))
+                    },
+                ));
+            }
+        }
+
+        if thread_rows.is_empty() {
             thread_rows.push(self.empty(
-                if self.sms.is_empty() {
-                    "手机暂无短信"
+                if self.push.im_channel == ImChannel::Sms {
+                    if self.sms.is_empty() {
+                        "手机暂无短信"
+                    } else {
+                        "没有匹配的短信"
+                    }
                 } else {
-                    "没有匹配的短信"
+                    "暂无匹配的聊天会话"
                 },
-                if self.sms.is_empty() {
+                if self.push.im_channel == ImChannel::Sms {
                     "收到或发送短信后，刷新即可查看。"
                 } else {
-                    "请调整搜索内容或短信筛选条件。"
+                    "当手机收到微信、企微、钉钉、飞书或 QQ 消息时将自动生成会话并支持直接秒回。"
                 },
-                None,
+                Some(self.button(
+                    "im-empty-sync-win",
+                    "同步聊天屏",
+                    Action::Push(PushAction::SyncActivePhoneChatWindow),
+                    Btn::Secondary,
+                )),
             ));
         }
-        let left_scroll = self.pane_scroll(self.scroll.clone(), self.vstack(0., thread_rows));
+
+        let left_scroll = self.pane_scroll(
+            self.sms_threads_scroll.clone(),
+            self.vstack(0., thread_rows),
+        );
+
+        let mut left_top_controls = vec![
+            self.input(
+                F_SMS_SEARCH,
+                "搜索微信/钉钉/飞书会话、联系人、号码或验证码…",
+                None,
+            ),
+            self.wrap(channel_pills),
+        ];
+        if self.push.im_channel == ImChannel::Sms {
+            left_top_controls.push(filter_bar);
+        }
+        left_top_controls.push(self.line(
+            format!(
+                "{} 个即时通讯会话 · {} 个短信会话{}",
+                matching_im_threads.len(),
+                display_threads.len(),
+                if filtered { "（已筛选）" } else { "" }
+            ),
+            11.,
+            p.text3,
+        ));
 
         let left_pane = self.fixed_w(
-            LIST_PANE_W,
+            LIST_PANE_W + 24.,
             Container::new(
                 Flex::column()
                     .with_main_axis_size(MainAxisSize::Max)
                     .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                     .with_child(
-                        Container::new(self.vstack(
-                            8.,
-                            vec![
-                                self.input(F_SMS_SEARCH, "搜索联系人、号码、验证码或快递码…", None),
-                                filter_bar,
-                                self.line(
-                                    if loaded {
-                                        format!(
-                                            "{} 个会话 · {} 条{}短信",
-                                            display_threads.len(),
-                                            display_threads.iter().map(|t| t.count).sum::<usize>(),
-                                            if filtered { "匹配" } else { "" }
-                                        )
-                                    } else {
-                                        "短信数量待读取".into()
-                                    },
-                                    11.,
-                                    p.text3,
-                                ),
-                            ],
-                        ))
-                        .with_uniform_padding(12.)
-                        .with_border(Border::bottom(1.).with_border_color(p.border))
-                        .finish(),
+                        Container::new(self.vstack(8., left_top_controls))
+                            .with_uniform_padding(12.)
+                            .with_border(Border::bottom(1.).with_border_color(p.border))
+                            .finish(),
                     )
                     .with_child(Expanded::new(1., left_scroll).finish())
                     .finish(),
@@ -355,6 +1036,18 @@ impl Companion {
             .finish(),
         );
 
+        // If an IM thread is selected, render the IM chat bubble dialog & direct reply composer
+        if let Some(im_thread) = active_im_thread {
+            let right_pane = self.im_thread_dialog(im_thread, snapshot);
+            return Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_child(left_pane)
+                .with_child(Expanded::new(1., right_pane).finish())
+                .finish();
+        }
+
+        // Otherwise render the native SMS conversation & SMS composer unchanged
         let selected_thread_info = display_threads
             .iter()
             .find(|t| norm_addr(&t.num) == norm_addr(&active_addr));
@@ -550,7 +1243,7 @@ impl Companion {
             let timeline_inner = Container::new(self.vstack(14., timeline_children))
                 .with_uniform_padding(S4)
                 .finish();
-            self.pane_scroll(self.scroll_aux.clone(), timeline_inner)
+            self.pane_scroll(self.sms_messages_scroll.clone(), timeline_inner)
         };
 
         // Inline Send Safety Confirmation Bar + Composer

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real-phone lease lifecycle acceptance. Written for root coordination; never auto-run.
 
-Only STEPX_DEVICE_SERIAL, no chats, models, account data or arbitrary intents.
+Only ZYPZ261A01M692000LP, no chats, models, account data or arbitrary intents.
 Default requires the phone already noninteractive, and leaves it noninteractive.
 --screen-epochs adds true wake/sleep transitions. It never unlocks/dismisses the
 keyguard or changes lock/security settings; all checks work behind the keyguard.
@@ -21,7 +21,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 ADB = os.environ.get('STEPX_ADB', str(Path.home() / 'Android/Sdk/platform-tools/adb'))
-SERIAL = os.environ.get("STEPX_SERIAL", "")
+SERIAL = 'ZYPZ261A01M692000LP'
 SERVICE = 'com.stepx.companion.app/.AmooConnectionService'
 STATUS = '/sdcard/Android/data/com.stepx.companion.app/files/amoo-connection.json'
 REPORT = ROOT / 'diagnostics/companion-background-20261022/lease-lifecycle.json'

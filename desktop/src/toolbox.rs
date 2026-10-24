@@ -160,7 +160,7 @@ pub struct SystemCompression {
 pub fn probe_system(adb: &Adb, device: &Device) -> Result<SystemCompression> {
     device.verify(adb)?;
     let tools =
-        crate::resources::root().join("handoff/google-play-stepx/tools");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../handoff/google-play-stepx/tools");
     if !tools.join("root_bridge.py").is_file() {
         bail!("此安装未附带系统能力检测组件");
     }

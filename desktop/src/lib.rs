@@ -1,13 +1,13 @@
 pub mod adb;
 pub mod amoo;
+pub mod amoo_background;
 pub mod amoo_gui;
 pub mod amoo_screen;
-pub mod amoo_background;
-pub mod companion_link;
 pub mod apps;
 pub mod bridge;
-pub mod companion_app;
 pub mod build_info;
+pub mod companion_app;
+pub mod companion_link;
 pub mod device;
 pub mod discovery;
 pub mod google;
@@ -46,5 +46,30 @@ pub mod amoo_gui_chat;
 
 pub mod single_instance;
 pub mod studio;
+pub mod studio_delivery;
 
 pub mod resources;
+
+pub mod studio_browser;
+
+pub mod studio_lab;
+
+pub mod neo_agent;
+
+pub mod desktop_notify;
+pub mod push;
+
+pub mod window_preferences;
+
+pub mod storage_expansion;
+
+pub mod settings;
+
+pub mod work_sync;
+
+pub mod speech;
+
+pub mod input_method;
+
+pub mod desktop_update;
+pub mod amoo_workspace;

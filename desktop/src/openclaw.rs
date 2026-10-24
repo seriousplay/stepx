@@ -137,26 +137,86 @@ pub struct RealSkillInfo {
 // ============================================================================
 
 const SHA512_K: [u64; 80] = [
-    0x428a2f98d728ae22, 0x7137449123ef65cd, 0xb5c0fbcfec4d3b2f, 0xe9b5dba58189dbbc,
-    0x3956c25bf348b538, 0x59f111f1b605d019, 0x923f82a4af194f9b, 0xab1c5ed5da6d8118,
-    0xd807aa98a3030242, 0x12835b0145706fbe, 0x243185be4ee4b28c, 0x550c7dc3d5ffb4e2,
-    0x72be5d74f27b896f, 0x80deb1fe3b1696b1, 0x9bdc06a725c71235, 0xc19bf174cf692694,
-    0xe49b69c19ef14ad2, 0xefbe4786384f25e3, 0x0fc19dc68b8cd5b5, 0x240ca1cc77ac9c65,
-    0x2de92c6f592b0275, 0x4a7484aa6ea6e483, 0x5cb0a9dcbd41fbd4, 0x76f988da831153b5,
-    0x983e5152ee66dfab, 0xa831c66d2db43210, 0xb00327c898fb213f, 0xbf597fc7beef0ee4,
-    0xc6e00bf33da88fc2, 0xd5a79147930aa725, 0x06ca6351e003826f, 0x142929670a0e6e70,
-    0x27b70a8546d22ffc, 0x2e1b21385c26c926, 0x4d2c6dfc5ac42aed, 0x53380d139d95b3df,
-    0x650a73548baf63de, 0x766a0abb3c77b2a8, 0x81c2c92e47edaee6, 0x92722c851482353b,
-    0xa2bfe8a14cf10364, 0xa81a664bbc423001, 0xc24b8b70d0f89791, 0xc76c51a30654be30,
-    0xd192e819d6ef5218, 0xd69906245565a910, 0xf40e35855771202a, 0x106aa07032bbd1b8,
-    0x19a4c116b8d2d0c8, 0x1e376c085141ab53, 0x2748774cdf8eeb99, 0x34b0bcb5e19b48a8,
-    0x391c0cb3c5c95a63, 0x4ed8aa4ae3418acb, 0x5b9cca4f7763e373, 0x682e6ff3d6b2b8a3,
-    0x748f82ee5defb2fc, 0x78a5636f43172f60, 0x84c87814a1f0ab72, 0x8cc702081a6439ec,
-    0x90befffa23631e28, 0xa4506cebde82bde9, 0xbef9a3f7b2c67915, 0xc67178f2e372532b,
-    0xca273eceea26619c, 0xd186b8c721c0c207, 0xeada7dd6cde0eb1e, 0xf57d4f7fee6ed178,
-    0x06f067aa72176fba, 0x0a637dc5a2c898a6, 0x113f9804bef90dae, 0x1b710b35131c471b,
-    0x28db77f523047d84, 0x32caab7b40c72493, 0x3c9ebe0a15c9bebc, 0x431d67c49c100d4c,
-    0x4cc5d4becb3e42b6, 0x597f299cfc657e2a, 0x5fcb6fab3ad6faec, 0x6c44198c4a475817,
+    0x428a2f98d728ae22,
+    0x7137449123ef65cd,
+    0xb5c0fbcfec4d3b2f,
+    0xe9b5dba58189dbbc,
+    0x3956c25bf348b538,
+    0x59f111f1b605d019,
+    0x923f82a4af194f9b,
+    0xab1c5ed5da6d8118,
+    0xd807aa98a3030242,
+    0x12835b0145706fbe,
+    0x243185be4ee4b28c,
+    0x550c7dc3d5ffb4e2,
+    0x72be5d74f27b896f,
+    0x80deb1fe3b1696b1,
+    0x9bdc06a725c71235,
+    0xc19bf174cf692694,
+    0xe49b69c19ef14ad2,
+    0xefbe4786384f25e3,
+    0x0fc19dc68b8cd5b5,
+    0x240ca1cc77ac9c65,
+    0x2de92c6f592b0275,
+    0x4a7484aa6ea6e483,
+    0x5cb0a9dcbd41fbd4,
+    0x76f988da831153b5,
+    0x983e5152ee66dfab,
+    0xa831c66d2db43210,
+    0xb00327c898fb213f,
+    0xbf597fc7beef0ee4,
+    0xc6e00bf33da88fc2,
+    0xd5a79147930aa725,
+    0x06ca6351e003826f,
+    0x142929670a0e6e70,
+    0x27b70a8546d22ffc,
+    0x2e1b21385c26c926,
+    0x4d2c6dfc5ac42aed,
+    0x53380d139d95b3df,
+    0x650a73548baf63de,
+    0x766a0abb3c77b2a8,
+    0x81c2c92e47edaee6,
+    0x92722c851482353b,
+    0xa2bfe8a14cf10364,
+    0xa81a664bbc423001,
+    0xc24b8b70d0f89791,
+    0xc76c51a30654be30,
+    0xd192e819d6ef5218,
+    0xd69906245565a910,
+    0xf40e35855771202a,
+    0x106aa07032bbd1b8,
+    0x19a4c116b8d2d0c8,
+    0x1e376c085141ab53,
+    0x2748774cdf8eeb99,
+    0x34b0bcb5e19b48a8,
+    0x391c0cb3c5c95a63,
+    0x4ed8aa4ae3418acb,
+    0x5b9cca4f7763e373,
+    0x682e6ff3d6b2b8a3,
+    0x748f82ee5defb2fc,
+    0x78a5636f43172f60,
+    0x84c87814a1f0ab72,
+    0x8cc702081a6439ec,
+    0x90befffa23631e28,
+    0xa4506cebde82bde9,
+    0xbef9a3f7b2c67915,
+    0xc67178f2e372532b,
+    0xca273eceea26619c,
+    0xd186b8c721c0c207,
+    0xeada7dd6cde0eb1e,
+    0xf57d4f7fee6ed178,
+    0x06f067aa72176fba,
+    0x0a637dc5a2c898a6,
+    0x113f9804bef90dae,
+    0x1b710b35131c471b,
+    0x28db77f523047d84,
+    0x32caab7b40c72493,
+    0x3c9ebe0a15c9bebc,
+    0x431d67c49c100d4c,
+    0x4cc5d4becb3e42b6,
+    0x597f299cfc657e2a,
+    0x5fcb6fab3ad6faec,
+    0x6c44198c4a475817,
 ];
 
 pub fn sha512(data: &[u8]) -> [u8; 64] {
@@ -616,7 +676,8 @@ fn decode_ldb_blocks(raw: &[u8]) -> Vec<u8> {
                                         ib[ib.len() - 3],
                                         ib[ib.len() - 2],
                                         ib[ib.len() - 1],
-                                    ]) as usize;
+                                    ])
+                                        as usize;
                                     let limit = ib.len().saturating_sub(4 * (num_restarts + 1));
                                     let mut pos = 0usize;
                                     while pos < limit {
@@ -715,7 +776,7 @@ fn extract_json_objects_containing(haystack: &str, needle: &str) -> Vec<Value> {
 }
 
 pub fn load_openclaw_credentials() -> Option<OpenClawCredentials> {
-    let home = crate::resources::user_home().map(PathBuf::from)?;
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let cache_path = home.join(".config/stepx/openclaw_auth.json");
     if let Ok(text) = fs::read_to_string(&cache_path) {
         if let Ok(creds) = serde_json::from_str::<OpenClawCredentials>(&text) {
@@ -797,7 +858,11 @@ pub fn load_openclaw_credentials() -> Option<OpenClawCredentials> {
         }
     }
 
-    if !device_id.is_empty() && !public_key.is_empty() && !private_key.is_empty() && !device_token.is_empty() {
+    if !device_id.is_empty()
+        && !public_key.is_empty()
+        && !private_key.is_empty()
+        && !device_token.is_empty()
+    {
         let creds = OpenClawCredentials {
             device_id,
             public_key,
@@ -807,7 +872,10 @@ pub fn load_openclaw_credentials() -> Option<OpenClawCredentials> {
         if let Some(parent) = cache_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let _ = fs::write(&cache_path, serde_json::to_string_pretty(&creds).unwrap_or_default());
+        let _ = fs::write(
+            &cache_path,
+            serde_json::to_string_pretty(&creds).unwrap_or_default(),
+        );
         return Some(creds);
     }
     None
@@ -899,7 +967,10 @@ impl GatewayWs {
         };
         let header_str = String::from_utf8_lossy(&buf[..header_end]);
         if !header_str.contains("101") {
-            bail!("OpenClaw 网关拒绝升级 WebSocket: {}", header_str.lines().next().unwrap_or(""));
+            bail!(
+                "OpenClaw 网关拒绝升级 WebSocket: {}",
+                header_str.lines().next().unwrap_or("")
+            );
         }
         buf.drain(..header_end);
 
@@ -914,8 +985,8 @@ impl GatewayWs {
 
         // 1. Read connect.challenge
         let challenge_raw = ws.read_frame()?;
-        let challenge: Value = serde_json::from_str(&challenge_raw)
-            .context("无法解析 OpenClaw connect.challenge")?;
+        let challenge: Value =
+            serde_json::from_str(&challenge_raw).context("无法解析 OpenClaw connect.challenge")?;
         let nonce = challenge
             .get("payload")
             .and_then(|p| p.get("nonce"))
@@ -1034,7 +1105,12 @@ impl GatewayWs {
         self.call_with_timeout(method, params, Duration::from_secs(6))
     }
 
-    pub fn call_with_timeout(&mut self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
+    pub fn call_with_timeout(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value> {
         self.next_id += 1;
         let id = format!("req-{}", self.next_id);
         let req = json!({
@@ -1081,8 +1157,11 @@ impl GatewayWs {
         let mut tmp = [0u8; 4096];
         while self.buf.len() < n {
             if let Some(deadline) = self.request_deadline {
-                let remaining = deadline.checked_duration_since(Instant::now()).context("OpenClaw 请求超时，请刷新确认执行结果")?;
-                self.stream.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))?;
+                let remaining = deadline
+                    .checked_duration_since(Instant::now())
+                    .context("OpenClaw 请求超时，请刷新确认执行结果")?;
+                self.stream
+                    .set_read_timeout(Some(remaining.max(Duration::from_millis(1))))?;
             }
             let read_n = self.stream.read(&mut tmp)?;
             if read_n == 0 {
@@ -1109,7 +1188,9 @@ impl GatewayWs {
                     ext[0], ext[1], ext[2], ext[3], ext[4], ext[5], ext[6], ext[7],
                 ]) as usize;
             }
-            if len > 16 * 1024 * 1024 { bail!("OpenClaw WebSocket 数据帧过大"); }
+            if len > 16 * 1024 * 1024 {
+                bail!("OpenClaw WebSocket 数据帧过大");
+            }
             let mask_key = if masked {
                 let m = self.read_exact_buf(4)?;
                 Some([m[0], m[1], m[2], m[3]])
@@ -1256,10 +1337,7 @@ pub fn parse_chat_history_messages(messages_arr: &[Value]) -> Vec<RealChatMessag
                         }
                     }
                     "toolCall" | "tool_use" => {
-                        let name = item
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("tool");
+                        let name = item.get("name").and_then(Value::as_str).unwrap_or("tool");
                         tool_names.push(name.to_string());
                         thinking_steps.push(format!("调用工具：{name}"));
                     }
@@ -1281,9 +1359,7 @@ pub fn parse_chat_history_messages(messages_arr: &[Value]) -> Vec<RealChatMessag
         let mut text = text_parts.join("\n");
         if role != "user" && text.is_empty() {
             if let Some(err) = &error_message {
-                text = format!(
-                    "⚠ 手机 OpenClaw 模型请求返回错误：{err}\n模型：{provider}/{model}"
-                );
+                text = format!("⚠ 手机 OpenClaw 模型请求返回错误：{err}\n模型：{provider}/{model}");
             }
         }
 
@@ -1292,10 +1368,7 @@ pub fn parse_chat_history_messages(messages_arr: &[Value]) -> Vec<RealChatMessag
         }
 
         let tools_summary = if is_error {
-            format!(
-                "请求失败 · {}",
-                error_message.as_deref().unwrap_or("error")
-            )
+            format!("请求失败 · {}", error_message.as_deref().unwrap_or("error"))
         } else if !tool_names.is_empty() {
             tool_names.join(" · ")
         } else {
@@ -1414,17 +1487,24 @@ mod tests {
             let mut frame = vec![0x81, event.len() as u8];
             frame.extend_from_slice(event);
             for _ in 0..30 {
-                if stream.write_all(&frame).is_err() { break; }
+                if stream.write_all(&frame).is_err() {
+                    break;
+                }
                 std::thread::sleep(Duration::from_millis(10));
             }
         });
         let mut ws = GatewayWs {
-            stream: TcpStream::connect(addr).unwrap(), buf: vec![], next_id: 0,
-            gateway_version: String::new(), request_deadline: None,
+            stream: TcpStream::connect(addr).unwrap(),
+            buf: vec![],
+            next_id: 0,
+            gateway_version: String::new(),
+            request_deadline: None,
             _forward: None,
         };
         let start = Instant::now();
-        assert!(ws.call_with_timeout("read-only-test", json!({}), Duration::from_millis(70)).is_err());
+        assert!(ws
+            .call_with_timeout("read-only-test", json!({}), Duration::from_millis(70))
+            .is_err());
         assert!(start.elapsed() < Duration::from_millis(500));
         assert!(ws.request_deadline.is_none());
         drop(ws);
@@ -1471,15 +1551,24 @@ mod tests {
                 let raw = fs::read(&p).unwrap();
                 let dec = decode_ldb_blocks(&raw);
                 let txt = String::from_utf8_lossy(&dec);
-                println!("LDB {:?}: raw={} dec={} has_pk={} has_op={}", p.file_name(), raw.len(), dec.len(), txt.contains("privateKey"), txt.contains("operator"));
+                println!(
+                    "LDB {:?}: raw={} dec={} has_pk={} has_op={}",
+                    p.file_name(),
+                    raw.len(),
+                    dec.len(),
+                    txt.contains("privateKey"),
+                    txt.contains("operator")
+                );
             }
         }
-        let creds = load_openclaw_credentials().expect("should load OpenClaw credentials from leveldb/cache");
+        let creds = load_openclaw_credentials()
+            .expect("should load OpenClaw credentials from leveldb/cache");
         assert!(!creds.device_id.is_empty());
         assert!(!creds.device_token.is_empty());
         if let Ok(adb) = crate::adb::Adb::discover() {
-            if let Ok(device) = crate::device::Device::inspect(&adb, "STEPX_DEVICE_SERIAL") {
-                let data = fetch_real_amoo_data(&adb, &device).expect("should fetch real amoo data from phone");
+            if let Ok(device) = crate::device::Device::inspect(&adb, "ZYPZ261A01M692000LP") {
+                let data = fetch_real_amoo_data(&adb, &device)
+                    .expect("should fetch real amoo data from phone");
                 println!(
                     "LIVE_SYNC: version={} sessions={} skills={}/{} mem_init={}",
                     data.gateway_version,
@@ -1498,13 +1587,21 @@ mod tests {
                         s.messages.len()
                     );
                     for m in &s.messages {
-                        println!("  MSG [{}] ({}): {} (err={:?})", m.role, m.time_label, m.text, m.error_message);
+                        println!(
+                            "  MSG [{}] ({}): {} (err={:?})",
+                            m.role, m.time_label, m.text, m.error_message
+                        );
                     }
                 }
                 for sk in &data.skills {
                     println!(
                         "SKILL: key={} name={} display={} enabled={} eligible={} desc={}",
-                        sk.skill_key, sk.name, sk.display_name, sk.enabled, sk.eligible, sk.description
+                        sk.skill_key,
+                        sk.name,
+                        sk.display_name,
+                        sk.enabled,
+                        sk.eligible,
+                        sk.description
                     );
                 }
             }

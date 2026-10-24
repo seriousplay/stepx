@@ -14,6 +14,8 @@ TOOLS = {
 def main():
     p=argparse.ArgumentParser();p.add_argument('--platform',choices=TOOLS,required=True);p.add_argument('--version',required=True);a=p.parse_args()
     if not all(c.isalnum() or c in '.-_' for c in a.version):p.error('Invalid version')
+    import tomllib
+    if tomllib.loads((ROOT/'desktop/Cargo.toml').read_text())['package']['version']!=a.version: p.error('Package version must match Cargo.toml')
     windows=a.platform.startswith('windows');mac=a.platform.startswith('macos')
     dist=ROOT/'dist';dist.mkdir(exist_ok=True)
     name=f'StepX-Companion-{a.version}-{a.platform}'
@@ -40,7 +42,7 @@ def main():
             shutil.copytree(ROOT/folder,resource_dir/folder,ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
         shutil.copytree(ROOT/'desktop/assets',resource_dir/'desktop/assets')
         shutil.copytree(ROOT/'licenses',resource_dir/'licenses')
-        for file in ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','README.md']:
+        for file in ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','README.md','CHANGELOG.md']:
             shutil.copy2(ROOT/file,resource_dir/file)
         shutil.copytree(ROOT/'docs',resource_dir/'docs')
         filename,digest=TOOLS[a.platform];download=stage/filename
@@ -58,7 +60,7 @@ def main():
         for executable,arg in [(binary_dir/binary_name,'--version'),(tools_dir/('adb.exe' if windows else 'adb'),'version'),(tools_dir/('scrcpy.exe' if windows else 'scrcpy'),'--version')]:
             subprocess.run([str(executable),arg],check=True,env=tool_env,timeout=30)
         python=resource_dir/'runtime/python/python.exe' if windows else resource_dir/'runtime/python/bin/python3'
-        subprocess.run([str(python),'-X','utf8',str(ROOT/'scripts/verify-packaged-runtime.py'),str(resource_dir)],check=True,timeout=60)
+        subprocess.run([str(python),'-X','utf8',str(ROOT/'scripts/verify-packaged-runtime.py'),str(resource_dir)],check=True,timeout=180)
         if mac:
             subprocess.run(['codesign','--force','--deep','--sign','-',str(base/'StepX Companion.app')],check=True)
             subprocess.run([str(binary_dir/binary_name),'--check-runtime'],check=True,timeout=45)

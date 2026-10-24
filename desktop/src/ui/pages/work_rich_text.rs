@@ -30,7 +30,9 @@ impl RichTextCache {
         let result = parse_blocks(source);
         if source.len() <= 256 * 1024 {
             while self.entries.len() >= 64 || self.bytes + source.len() > 2 * 1024 * 1024 {
-                let Some((text, _)) = self.entries.pop_front() else { break; };
+                let Some((text, _)) = self.entries.pop_front() else {
+                    break;
+                };
                 self.bytes -= text.len();
             }
             self.bytes += source.len();
@@ -108,6 +110,37 @@ fn parse_blocks(source: &str) -> Vec<RichBlock> {
     blocks
 }
 
+/// Use exactly the same parser as the displayed reply, including quotes and code fences.
+pub(in super::super) fn markdown_images(
+    source: &str,
+) -> Vec<stepx_companion::openclaw::RealAttachment> {
+    let mut seen = std::collections::HashSet::new();
+    RICH_TEXT_CACHE
+        .with(|cache| cache.borrow_mut().get(source))
+        .into_iter()
+        .flat_map(|block| match block {
+            RichBlock::Markdown(text) | RichBlock::Quote(text) => text.lines,
+        })
+        .filter_map(|line| match line {
+            FormattedTextLine::Image(image)
+                if safe_link(&image.source) && seen.insert(image.source.clone()) =>
+            {
+                Some(stepx_companion::openclaw::RealAttachment {
+                    name: if image.alt_text.is_empty() {
+                        "图片".into()
+                    } else {
+                        image.alt_text
+                    },
+                    kind: "image".into(),
+                    url: image.source,
+                    ..Default::default()
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn sanitize_links(line: &mut FormattedTextLine) {
     let fragments = match line {
         FormattedTextLine::Line(text) => Some(text),
@@ -155,6 +188,7 @@ impl Companion {
             p.text,
             Default::default(),
         )
+        .set_selectable(true)
         .with_line_height_ratio(1.5)
         .with_heading_to_font_size_multipliers(HeadingFontSizeMultipliers {
             h1: 1.4,
@@ -343,11 +377,12 @@ impl Companion {
         self.vstack(S3, elements)
     }
 
-    pub(super) fn work_rich_text(&self, body: &str, id: &str) -> El {
+    pub(in super::super) fn work_rich_text(&self, body: &str, id: &str) -> El {
         let p = self.p();
         self.vstack(
             S3,
-            RICH_TEXT_CACHE.with(|cache| cache.borrow_mut().get(body))
+            RICH_TEXT_CACHE
+                .with(|cache| cache.borrow_mut().get(body))
                 .into_iter()
                 .enumerate()
                 .map(|(index, block)| match block {
@@ -371,6 +406,14 @@ impl Companion {
 mod tests {
     use super::*;
     #[test]
+    fn inline_images_match_rendering_and_ignore_code_or_unsafe_sources() {
+        let images=markdown_images("![首页](https://example.test/a.png?sig=abc)\n\n> ![引用](https://example.test/b)\n\n```md\n![示例](https://example.test/not-loaded)\n```\n\n![重复](https://example.test/a.png?sig=abc)\n\n![禁止](file:///tmp/private)");
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].name, "首页");
+        assert!(images[0].url.ends_with("?sig=abc"));
+        assert_eq!(images[1].name, "引用");
+    }
+    #[test]
     fn parsed_text_cache_is_bounded_and_separates_edits() {
         let mut cache = RichTextCache::default();
         cache.get("**中文**");
@@ -378,7 +421,9 @@ mod tests {
         assert_eq!(cache.entries.len(), 1);
         cache.get("**修改**");
         assert_eq!(cache.entries.len(), 2);
-        for i in 0..100 { cache.get(&format!("记录 {i}")); }
+        for i in 0..100 {
+            cache.get(&format!("记录 {i}"));
+        }
         assert_eq!(cache.entries.len(), 64);
         assert!(cache.bytes <= 2 * 1024 * 1024);
         cache.get(&"x".repeat(256 * 1024 + 1));

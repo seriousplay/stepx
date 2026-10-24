@@ -474,9 +474,14 @@ fn adb_onboarding_is_only_automatic_for_new_users_and_remembers_skip() {
     prefs.save_to(&path).unwrap();
     let restored: Preferences = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     assert!(!restored.should_show_adb_guide());
-    let legacy: Preferences = serde_json::from_str(r#"{"devices":[],"selected_serial":null,"first_connect_done":true}"#).unwrap();
+    let legacy: Preferences =
+        serde_json::from_str(r#"{"devices":[],"selected_serial":null,"first_connect_done":true}"#)
+            .unwrap();
     assert!(!legacy.should_show_adb_guide());
-    let legacy_device: Preferences = serde_json::from_str(r#"{"devices":[{"serial":"example","model":"StepX"}],"selected_serial":"example"}"#).unwrap();
+    let legacy_device: Preferences = serde_json::from_str(
+        r#"{"devices":[{"serial":"example","model":"StepX"}],"selected_serial":"example"}"#,
+    )
+    .unwrap();
     assert!(!legacy_device.should_show_adb_guide());
     let mut connected = Preferences::default();
     connected.remember("example".into(), "StepX".into());

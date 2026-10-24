@@ -305,6 +305,26 @@ class CliTests(unittest.TestCase):
             with self.assertRaises(compat.RepairError):
                 compat.worker_source(scope, action)
 
+    def test_play_committed_account_ignores_regenerated_null_account_cache(self):
+        import sys
+        namespace = {"scope": "play", "sys": sys}
+        exec(compat._module_loader("play") + compat.WORKER_COMMON, namespace)
+        storem = namespace["storem"]
+        filesm = namespace["filesm"]
+        raw_non_empty = b"\x01\x00\x01a\x00\x01b\x00\x01c\x06\x00=GmscoreCompliance__activities_to_block_on_uncertified_devices\x00\x00\x00\x03abc\x00"
+        raw_empty = storem.patch_cache(raw_non_empty)
+        entry = lambda name, raw: {
+            "path": "/data/user/0/com.android.vending/files/" + name,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "data_zlib_b64": filesm._compressed(raw),
+        }
+        baseline = {"entries": [
+            entry("experiment-flags-regular-account", raw_empty),
+            entry("experiment-flags-regular-null-account", raw_non_empty),
+        ]}
+        self.assertTrue(namespace["inspect_files"](baseline, {"state": {"account_id": 1}}))
+        self.assertFalse(namespace["inspect_files"](baseline, {"state": {"account_id": 0}}))
+
 
 if __name__ == "__main__":
     unittest.main()

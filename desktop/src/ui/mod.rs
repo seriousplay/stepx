@@ -8,28 +8,76 @@
 //! - `actions` input handling and background jobs
 
 mod actions;
+mod shortcuts;
+#[cfg(all(feature="ui-capture",target_os="linux"))]
+mod shell_details_check;
+mod github_stars;
+mod desktop_update_state;
+use desktop_update_state::{DesktopUpdateAction,DesktopUpdateState};
+mod text_interaction;
+mod context_menu;
+mod reply_motion;
+mod speech_state;
+mod connection_watch;
 mod adb_onboarding;
+mod amoo_composer;
 mod amoo_display;
+mod amoo_sync;
 mod amoo_ui_state;
+mod expansion_state;
 use amoo_ui_state::{AmooUiAction, AmooUiOutcome, AmooUiState};
 mod backscreen_state;
+#[cfg(feature = "ui-capture")]
+mod compact_live_check;
+#[cfg(feature = "ui-capture")]
+mod composer_check;
+#[cfg(feature = "ui-capture")]
+mod workspace_check;
+#[cfg(feature = "ui-capture")]
+mod chat_first_check;
+#[cfg(feature = "ui-capture")]
+mod responsive_check;
+#[cfg(feature = "ui-capture")]
+mod responsive_live_check;
+#[cfg(feature = "ui-capture")]
+mod enter_check;
+#[cfg(feature = "ui-capture")]
+mod scenario_check;
 #[cfg(feature = "ui-capture")]
 mod demo;
 mod icons;
 mod led_grid;
+mod mini_modes;
 mod mirror_controls;
 mod pages;
 #[cfg(feature = "ui-capture")]
 mod performance_check;
 mod preview_cache;
+mod push_state;
+mod push_toast;
 mod shell;
+mod settings_state;
+mod interaction;
+#[cfg(feature="ui-capture")]
+mod settings_check;
+mod motion;
+mod smooth_scroll;
+mod perf;
+use settings_state::{SettingsAction, SettingsUi};
+mod studio_lab_state;
+mod studio_state;
 mod theme;
 mod update_state;
 mod widgets;
+#[cfg(feature = "ui-capture")]
+mod window_memory_check;
 mod work_state;
-mod studio_state;
-use studio_state::{StudioAction, StudioOutcome, StudioUiState};
+mod workspace_state;
+use workspace_state::{WorkspaceAction, WorkspaceUi};
 use backscreen_state::{BackScreenAction, BackScreenUiState};
+use push_state::{PushAction, PushUiState, ShellMode};
+use studio_lab_state::{StudioLabAction, StudioLabOutcome, StudioLabUiState};
+use studio_state::{StudioAction, StudioOutcome, StudioUiState};
 use update_state::{UpdateAction, UpdateState};
 use work_state::{WorkAction, WorkOutcome, WorkUiState};
 
@@ -57,8 +105,8 @@ use stepx_companion::{
     companion_app::{self, CompanionStatus},
     device::{
         default_express_parcels, default_system_services, parse_devices, BackScreenPattern,
-        CallRecord, ContactEntry, Device, ExpressParcelInfo, GoogleSuiteStatus,
-        SystemServiceInfo, Transport,
+        CallRecord, ContactEntry, Device, ExpressParcelInfo, GoogleSuiteStatus, SystemServiceInfo,
+        Transport,
     },
     mirror::MirrorSession,
     openclaw::{self, RealAmooData},
@@ -94,7 +142,16 @@ const F_WORK_SEARCH: usize = 19;
 const F_WORK_CAP_SEARCH: usize = 20;
 const F_WORK_AGENT_NAME: usize = 21;
 const F_AMOO_GUI_APP: usize = 22;
-const FIELD_COUNT: usize = 23;
+const F_STUDIO_SEARCH: usize = 23;
+const F_LAB_ENDPOINT: usize = 24;
+const F_LAB_KEY: usize = 25;
+const F_LAB_MODEL: usize = 26;
+const F_LAB_PROMPT: usize = 27;
+const F_PUSH_SEARCH: usize = 28;
+const F_PUSH_REPLY: usize = 29;
+const F_IM_REPLY: usize = 30;
+const F_TOAST_REPLY: usize = 31;
+const FIELD_COUNT: usize = 32;
 
 const FILES_PER_PAGE: usize = 100;
 
@@ -102,10 +159,18 @@ struct DesktopAssets;
 impl facloud_ui::assets::AssetProvider for DesktopAssets {
     fn get(&self, path: &str) -> Result<std::borrow::Cow<'_, [u8]>> {
         match path {
-            "stepx_companion_icon.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!("../../assets/stepx_companion_icon.png"))),
-            "neo_front_frame.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!("../../assets/neo_front_frame.png"))),
-            "neo_rear_housing.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!("../../assets/neo_rear_housing.png"))),
-            "stepx_home_screen.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!("../../assets/stepx_home_screen.png"))),
+            "stepx_companion_icon.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!(
+                "../../assets/stepx_companion_icon.png"
+            ))),
+            "neo_front_frame.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!(
+                "../../assets/neo_front_frame.png"
+            ))),
+            "neo_rear_housing.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!(
+                "../../assets/neo_rear_housing.png"
+            ))),
+            "stepx_home_screen.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!(
+                "../../assets/stepx_home_screen.png"
+            ))),
             "amoo_desktop_icon.png" => Ok(std::borrow::Cow::Borrowed(include_bytes!(
                 "../../assets/stepx_companion_icon.png"
             ))),
@@ -120,16 +185,21 @@ impl facloud_ui::assets::AssetProvider for DesktopAssets {
 }
 
 pub fn run() -> Result<()> {
-    let instance_dir = stepx_companion::resources::user_config().join("stepx-companion/runtime");
-    let stepx_companion::single_instance::Claim::Primary(instance) =
-        stepx_companion::single_instance::Instance::claim(&instance_dir)? else {
-        return Ok(());
-    };
-    let activation = instance.activation_requests();
     let capture = std::env::args()
         .position(|arg| arg == "--capture-ui")
         .and_then(|i| std::env::args().nth(i + 1))
         .map(PathBuf::from);
+    let instance_dir = if capture.is_some() {
+        std::env::temp_dir().join(format!("stepx-companion-capture-{}", std::process::id()))
+    } else {
+        stepx_companion::resources::user_config().join("stepx-companion/runtime")
+    };
+    let stepx_companion::single_instance::Claim::Primary(instance) =
+        stepx_companion::single_instance::Instance::claim(&instance_dir)?
+    else {
+        return Ok(());
+    };
+    let activation = instance.activation_requests();
     let mut builder = platform::AppBuilder::new(
         platform::AppCallbacks {
             // The framework only tears down closed windows when this callback is set.
@@ -144,16 +214,31 @@ pub fn run() -> Result<()> {
         use facloud_ui::platform::linux::AppBuilderExt;
         builder.set_window_class("stepx-companion".into());
         // Share XWayland coordinates with scrcpy so its sidebar can follow it.
-        if std::env::var_os("DISPLAY").is_some() { builder.force_x11(true); }
+        if std::env::var_os("DISPLAY").is_some() {
+            builder.force_x11(true);
+        }
         builder.set_window_icon_png(std::borrow::Cow::Borrowed(include_bytes!(
             "../../assets/stepx_companion_icon.png"
         )));
     }
+    let size = mini_modes::WindowMemory::new().preferences.full;
+    let (default_w, default_h) = (size.width, size.height);
     builder.run(move |ctx| {
         ctx.add_window(
             facloud_ui::AddWindowOptions {
                 title: Some("StepX Companion".into()),
-                window_bounds: WindowBounds::ExactSize(if cfg!(feature = "ui-capture") && std::env::args().any(|a| a == "--press-capture") { vec2f(1440., 920.) } else { vec2f(1200., 760.) }),
+                // Capture runs may ask for a taller window so a long panel is
+                // not cut off at the fold.
+                window_bounds: WindowBounds::ExactSize(vec2f(
+                    std::env::var("STEPX_CAPTURE_WIDTH")
+                        .ok()
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(default_w),
+                    std::env::var("STEPX_CAPTURE_HEIGHT")
+                        .ok()
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(default_h),
+                )),
                 ..Default::default()
             },
             move |ctx| Root {
@@ -186,13 +271,16 @@ impl View for Root {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Page {
     Overview,
+    Expansion,
     BackScreen,
     Amoo,
     Account,
     About,
+    Settings,
     Work,
     Studio,
     Sms,
+    Notifications,
     Phone,
     Files,
     Apps,
@@ -204,13 +292,16 @@ impl Page {
     fn title(self) -> &'static str {
         match self {
             Self::Overview => "首页",
+            Self::Expansion => "存储扩容",
             Self::BackScreen => "背屏",
             Self::Amoo => "Amoo",
             Self::Account => "账号与用量",
-            Self::About => "关于 StepX Companion",
-            Self::Work => "Amoo Work",
-            Self::Studio => "Studio",
-            Self::Sms => "短信",
+            Self::About => "设置",
+            Self::Settings => "设置",
+            Self::Work => "Amoo",
+            Self::Studio => "Amoo",
+            Self::Sms => "消息与短信",
+            Self::Notifications => "手机推送",
             Self::Phone => "电话",
             Self::Files => "文件",
             Self::Apps => "应用",
@@ -222,13 +313,16 @@ impl Page {
     fn icon(self) -> &'static str {
         match self {
             Self::Overview => "◈",
+            Self::Expansion => "💾",
             Self::BackScreen => "❖",
             Self::Amoo => "✦",
             Self::Account => "◉",
             Self::About => "◉",
+            Self::Settings => "⚙",
             Self::Work => "💼",
             Self::Studio => "⚡",
             Self::Sms => "✉",
+            Self::Notifications => "🔔",
             Self::Phone => "☎",
             Self::Files => "▤",
             Self::Apps => "⊞",
@@ -241,7 +335,14 @@ impl Page {
     fn needs_device(self) -> bool {
         !matches!(
             self,
-            Self::Connect | Self::Tools | Self::Work | Self::Account | Self::About | Self::Studio
+            Self::Connect
+                | Self::Tools
+                | Self::Work
+                | Self::Amoo
+                | Self::Account
+                | Self::About | Self::Settings
+                | Self::Studio
+                | Self::Expansion
         )
     }
 
@@ -249,7 +350,7 @@ impl Page {
     fn fills_height(self) -> bool {
         matches!(
             self,
-            Self::Amoo | Self::Work | Self::Sms | Self::Phone | Self::Account
+            Self::Settings | Self::About | Self::Amoo | Self::Work | Self::Studio | Self::Sms | Self::Notifications | Self::Phone | Self::Account
         )
     }
 
@@ -257,15 +358,18 @@ impl Page {
         match arg {
             "backscreen" | "back" => Self::BackScreen,
             "amoo" => Self::Amoo,
-            "work" | "amoo-work" => Self::Work,
-            "studio" => Self::Studio,
-            "sms" => Self::Sms,
+            "work" | "amoo-work" => Self::Amoo,
+            "studio" => Self::Amoo,
+            "sms" | "chat" | "im" => Self::Sms,
+            "notifications" | "push" | "notify" => Self::Notifications,
             "phone" | "call" => Self::Phone,
             "files" => Self::Files,
+            "expansion" => Self::Expansion,
             "apps" => Self::Apps,
             "tools" | "toolbox" => Self::Tools,
             "account" => Self::Account,
             "about" => Self::About,
+            "settings" => Self::Settings,
             "pair" | "connect" => Self::Connect,
             _ => Self::Overview,
         }
@@ -278,19 +382,23 @@ enum ToolPage {
     Storage,
     Google,
     Companion,
+    Neo,
     Apk,
     Screen,
     Services,
+    InputMethod,
     Device,
 }
 impl ToolPage {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 10] = [
         Self::Updates,
         Self::Storage,
         Self::Google,
         Self::Companion,
+        Self::Neo,
         Self::Apk,
         Self::Services,
+        Self::InputMethod,
         Self::Screen,
         Self::Device,
     ];
@@ -300,9 +408,11 @@ impl ToolPage {
             Self::Storage => "释放空间",
             Self::Google => "Google Play",
             Self::Companion => "StepX伴侣",
+            Self::Neo => "内置 GUI Agent",
             Self::Apk => "APK 安装",
             Self::Screen => "截图与投屏",
             Self::Services => "系统服务",
+            Self::InputMethod => "手机输入法",
             Self::Device => "设备检测",
         }
     }
@@ -312,16 +422,18 @@ impl ToolPage {
             Self::Storage => "清理缓存、重复文件，压缩文档并在需要时还原。",
             Self::Google => "检测 Google 服务，安装适配套件或打开 Play 商店。",
             Self::Companion => "安装手机伴侣，管理后台连接、扫码配对与背屏权限。",
+            Self::Neo => "更新 StepX伴侣内置 GUI Agent，手机独立看屏、规划与执行。",
             Self::Apk => "从电脑选择 APK，安装到当前连接的手机。",
             Self::Screen => "截取手机画面，或在独立窗口中操作手机。",
             Self::Services => "查看可管理的系统服务，按需停用或恢复。",
+            Self::InputMethod => "安装小企鹅中文输入法，切换默认并停用搜狗；支持恢复。",
             Self::Device => "读取设备、电量与存储信息，复制检测结果。",
         }
     }
     fn category(self) -> u8 {
         match self {
             Self::Storage => 1,
-            Self::Google | Self::Apk | Self::Services => 2,
+            Self::Google | Self::Neo | Self::Apk | Self::Services | Self::InputMethod => 2,
             _ => 3,
         }
     }
@@ -331,9 +443,11 @@ impl ToolPage {
             "storage" => Some(Self::Storage),
             "google" => Some(Self::Google),
             "companion" => Some(Self::Companion),
+            "neo" | "gui-agent" => Some(Self::Neo),
             "apk" => Some(Self::Apk),
             "screen" => Some(Self::Screen),
             "services" => Some(Self::Services),
+            "input-method" => Some(Self::InputMethod),
             "device" => Some(Self::Device),
             _ => None,
         }
@@ -372,16 +486,25 @@ enum FileModal {
 
 #[derive(Clone, Debug)]
 enum Action {
+    ReviewConfirm,
+    ReviewCancel,
+    ReviewHistory,
+    Expansion(expansion_state::ExpansionAction),
     AmooUi(AmooUiAction),
     AmooToggleSchedules,
     AmooToggleDetails,
     AmooOpenScheduledSession(String),
     // Navigation & appearance & window
     Page(Page),
+    Push(PushAction),
     Work(WorkAction),
+    Workspace(WorkspaceAction),
     BackScreen(BackScreenAction),
     Updates(UpdateAction),
+    DesktopUpdate(DesktopUpdateAction),
     CycleTheme,
+    Settings(SettingsAction),
+    QuitApplication,
     ContextRefresh,
     ScanStorage,
     OpenStorageSettings,
@@ -409,6 +532,10 @@ enum Action {
     Qr,
     // Text input
     Focus(usize),
+    InputPointer(usize, usize, bool, u32),
+    InputPointerUp,
+    ExtendSelection(i8),
+    MessageSelection(Option<String>),
     ClearField(usize),
     FocusSearch,
     NextField(bool),
@@ -425,6 +552,14 @@ enum Action {
     End,
     SelectAll,
     CopyInput,
+    UndoInput,
+    RedoInput,
+    ContextOpen(context_menu::Target, Vector2F),
+    ContextClose,
+    ContextNavigate(i8),
+    ContextActivate,
+    ContextRun(Box<Action>),
+    Speak(String, String),
     CutInput,
     Paste,
     // Device & Overview
@@ -457,6 +592,7 @@ enum Action {
     AmooToggleToolRecords(String),
     AmooTogglePlus,
     AmooAttachFile(bool),
+    AmooDropFiles(Vec<PathBuf>),
     AmooAttachPhoneAlbum,
     AmooRemoveAttachment(usize),
     AmooToggleRecording,
@@ -482,6 +618,7 @@ enum Action {
     ReadVisible,
     AppendVisibleLine(String),
     Studio(StudioAction),
+    StudioLab(StudioLabAction),
     StudioOpenUrl(String),
     // SMS
     ReadSms,
@@ -512,6 +649,9 @@ enum Action {
     FileSort(FileSort),
     SelectFile(usize),
     ActivateFile(usize),
+    OpenFile(usize),
+    DownloadFile(usize),
+    CompactChat,
     MoveFileSelection(isize),
     ActivateSelectedFile,
     ParentDirectory,
@@ -523,6 +663,7 @@ enum Action {
     CancelFileModal,
     FilePage(usize),
     Upload,
+    TransferFiles(Vec<PathBuf>, Option<String>),
     Download,
     Trash,
     DeleteFile,
@@ -544,6 +685,7 @@ enum Action {
     DebloatPresetServices,
     RestoreAllSystemServices,
     SwitchInputMethodFcitx5(bool),
+    InspectInputMethod,
     OpenTool(Option<ToolPage>),
     ToolCategory(u8),
     PrepareUtility(Box<Action>),
@@ -558,6 +700,12 @@ enum Action {
     GoogleSuiteSnapshot,
     CompanionInspect,
     CompanionInstall,
+    NeoInspect,
+    NeoInstall,
+    NeoActivate,
+    NeoRestore,
+    NeoOpenPhone,
+    NeoIme(bool),
     CompanionBackground(bool),
     CompanionSendFiles,
     CompanionReceiveFolder,
@@ -596,6 +744,7 @@ fn read_result<T>(result: Result<Vec<T>>) -> ReadResult<T> {
 }
 
 enum Outcome {
+    InputMethod(stepx_companion::input_method::Status, String),
     AmooUi(AmooUiOutcome),
     Work(WorkOutcome),
     StorageScanned(String, StorageReport, Option<toolbox::SystemCompression>),
@@ -618,6 +767,7 @@ enum Outcome {
     AmooObservationUnavailable,
     AmooCreated(String),
     AmooSent(amoo::PendingReply),
+    WorkspaceDelivered(String,PathBuf,String,std::result::Result<String,String>),
     Transports(Vec<Transport>, Vec<Service>),
     Selected(
         Device,
@@ -644,9 +794,11 @@ enum Outcome {
     Paired(String),
     BackScreenImportedImage(PathBuf),
     Studio(StudioOutcome),
+    StudioLab(StudioLabOutcome),
     PhoneData(ReadResult<CallRecord>, ReadResult<ContactEntry>),
     GoogleSuite(GoogleSuiteStatus, CompanionStatus, String),
     CompanionStatus(CompanionStatus, String),
+    NeoStatus(stepx_companion::neo_agent::NeoStatus),
     SystemServices(Vec<SystemServiceInfo>, String),
     DeepAmooGranted(String),
     DeepBackScreenGranted(String),
@@ -659,6 +811,11 @@ struct Input {
     cursor: usize,
     all: bool,
     preedit: String,
+    anchor: Option<usize>,
+    dragging: bool,
+    undo: Vec<(String, usize)>,
+    redo: Vec<(String, usize)>,
+    last_edit: Option<Instant>,
 }
 
 impl Input {
@@ -667,6 +824,9 @@ impl Input {
         self.cursor = 0;
         self.all = false;
         self.preedit.clear();
+        self.anchor = None;
+        self.dragging = false;
+        self.undo.clear(); self.redo.clear(); self.last_edit=None;
     }
 
     fn set(&mut self, text: &str) {
@@ -675,11 +835,7 @@ impl Input {
     }
 
     fn insert(&mut self, text: &str) {
-        if self.all {
-            self.text.clear();
-            self.cursor = 0;
-            self.all = false;
-        }
+        self.delete_selection();
         let clean: String = text.chars().filter(|c| *c != '\0' && *c != '\r').collect();
         if self.text.len() + clean.len() > 16_384 {
             return;
@@ -957,13 +1113,24 @@ struct Companion {
     font: FamilyId,
     mono_font: FamilyId,
     theme_mode: ThemeMode,
+    settings: SettingsUi,
+    shortcuts: shortcuts::Shortcuts,
+    github_stars: github_stars::GithubStars,
+    desktop_update: DesktopUpdateState,
+    interaction: interaction::InteractionUi,
+    motion_started: Instant,
+    job_started: Instant,
     palette: Cell<Palette>,
     page: Page,
+    compact: mini_modes::CompactWindow,
+    window_memory: mini_modes::WindowMemory,
+    compact_start_pending: bool,
     // Connection
     devices: Vec<Transport>,
     mdns_services: Vec<Service>,
     selected: Option<Device>,
     phone_link: Option<stepx_companion::companion_link::Link>,
+    expansion: expansion_state::ExpansionUi,
     phone_link_notice: Option<(String, bool)>,
     preferences: Preferences,
     allow_first_connect: bool,
@@ -998,6 +1165,7 @@ struct Companion {
     matrix_marquee_on: bool,
     // Amoo Work
     work: WorkUiState,
+    workspace: WorkspaceUi,
     // Amoo
     demo_mode: bool,
     amoo_gateway_version: String,
@@ -1038,6 +1206,9 @@ struct Companion {
     amoo_guard_count: usize,
     // Studio & Reverse Proxy
     studio: StudioUiState,
+    studio_lab: StudioLabUiState,
+    // Push Notifications & IM Chat Hub & Compact Modes
+    push: PushUiState,
     // SMS
     sms: Vec<Message>,
     sms_loaded: bool,
@@ -1076,8 +1247,11 @@ struct Companion {
     include_system_apps: bool,
     google_suite: GoogleSuiteStatus,
     companion_status: CompanionStatus,
+    neo_status: stepx_companion::neo_agent::NeoStatus,
+    neo_enable_ime: bool,
     system_services: Vec<SystemServiceInfo>,
     fcitx5_active: bool,
+    input_method: stepx_companion::input_method::Status,
     deep_amoo_granted: bool,
     deep_backscreen_granted: bool,
     backscreen_hw_breath: bool,
@@ -1102,13 +1276,27 @@ struct Companion {
     sender: mpsc::Sender<Job>,
     receiver: mpsc::Receiver<Result<Outcome>>,
     last_scan: Instant,
+    connection_watch: connection_watch::ConnectionWatch,
+    text_selection: SelectionHandle,
+    selected_text: Option<String>,
+    context_menu: Option<context_menu::Menu>,
+    reply_motion: reply_motion::ReplyMotion,
+    speech: speech_state::SpeechUi,
     // Input
     fields: Vec<Input>,
     focus: Option<usize>,
     // View state
     scroll: ClippedScrollStateHandle,
     scroll_aux: ClippedScrollStateHandle,
-    hover_states: RefCell<HashMap<String, MouseStateHandle>>,
+    push_list_scroll: ClippedScrollStateHandle,
+    push_detail_scroll: ClippedScrollStateHandle,
+    sms_threads_scroll: ClippedScrollStateHandle,
+    sms_messages_scroll: ClippedScrollStateHandle,
+    hover_states: RefCell<HashMap<String, (u64,MouseStateHandle)>>,
+    render_epoch: Cell<u64>,
+    chat_scroll_metrics: std::rc::Rc<std::cell::Cell<(f32,f32)>>,
+    chat_tail_requested: std::rc::Rc<std::cell::Cell<bool>>,
+    wheel_motions: RefCell<HashMap<(&'static str,u32), smooth_scroll::WheelHandle>>,
     capture: Option<PathBuf>,
     capture_at: Instant,
     last_clock_second: u64,
@@ -1125,7 +1313,11 @@ fn is_wireless(transport: &str) -> bool {
 }
 
 impl Companion {
-    fn new(ctx: &mut ViewContext<Self>, capture: Option<PathBuf>, activation_requests: Arc<std::sync::atomic::AtomicBool>) -> Self {
+    fn new(
+        ctx: &mut ViewContext<Self>,
+        capture: Option<PathBuf>,
+        activation_requests: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
         let (font, mono_font) =
             FontCache::handle(ctx).update(ctx, |cache, _| theme::load_fonts(cache));
         let (sender, jobs) = mpsc::channel::<Job>();
@@ -1145,7 +1337,7 @@ impl Companion {
         let mut theme_mode = match std::env::var("STEPX_THEME").ok().as_deref() {
             Some("dark") => ThemeMode::Dark,
             Some("light") => ThemeMode::Light,
-            _ => ThemeMode::System,
+            _ => match stepx_companion::settings::load().appearance {stepx_companion::settings::Appearance::System=>ThemeMode::System,stepx_companion::settings::Appearance::Light=>ThemeMode::Light,stepx_companion::settings::Appearance::Dark=>ThemeMode::Dark},
         };
         if std::env::args().any(|arg| arg == "--dark") {
             theme_mode = ThemeMode::Dark;
@@ -1160,6 +1352,10 @@ impl Companion {
             .map(|p| Page::from_arg(&p))
             .unwrap_or(if std::env::args().any(|a| a == "--pair-qr") {
                 Page::Connect
+            } else if std::env::args().any(|a| a == "--mini-ai") {
+                Page::Amoo
+            } else if std::env::args().any(|a| a == "--mini-notify") {
+                Page::Notifications
             } else {
                 Page::Overview
             });
@@ -1174,18 +1370,29 @@ impl Companion {
         fields[F_BACK_PROMPT].set("让猫咪眨眼陪我工作，亮度 4 级，播放 30 秒");
         fields[F_BACK_MARQUEE].set("STEPX AI");
 
-
         let demo_mode = cfg!(feature = "ui-capture") && std::env::args().any(|a| a == "--demo");
         let mut me = Self {
             font,
             mono_font,
             theme_mode,
+            settings: SettingsUi::default(),
+            shortcuts: Default::default(),
+            github_stars: Default::default(),
+            desktop_update: Default::default(),
+            interaction: Default::default(),
+            motion_started: Instant::now(),
+            job_started: Instant::now(),
             palette: Cell::new(Palette::for_theme(false)),
             page,
+            compact: Default::default(),
+            window_memory: mini_modes::WindowMemory::new(),
+            compact_start_pending: mini_modes::WindowMemory::new().startup_mode()
+                != ShellMode::Full,
             devices,
             mdns_services: vec![],
             selected: None,
             phone_link: None,
+            expansion: Default::default(),
             phone_link_notice: None,
             allow_first_connect: true,
             connect_guide_step: if preferences.first_connect_done {
@@ -1225,6 +1432,7 @@ impl Companion {
             matrix_marquee_on: true,
             demo_mode,
             work: WorkUiState::default(),
+            workspace: WorkspaceUi::default(),
             amoo_gateway_version: String::new(),
             amoo_gateway_online: false,
             amoo_cron_count: 0,
@@ -1299,7 +1507,13 @@ impl Companion {
             amoo_skill_manage: false,
             amoo_safety_policy_idx: 0,
             amoo_guard_count: if demo_mode { 12 } else { 0 },
-            studio: StudioUiState::default(),
+            studio: StudioUiState {
+                tab: 2,
+                cloud_category: 3,
+                ..Default::default()
+            },
+            studio_lab: StudioLabUiState::default(),
+            push: PushUiState::default(),
             sms: Vec::new(),
             sms_loaded: false,
             phone_loaded: false,
@@ -1342,12 +1556,15 @@ impl Companion {
                 GoogleSuiteStatus::default()
             },
             companion_status: CompanionStatus::default(),
+            neo_status: Default::default(),
+            neo_enable_ime: false,
             system_services: if demo_mode {
                 default_system_services()
             } else {
                 Vec::new()
             },
             fcitx5_active: demo_mode,
+            input_method: Default::default(),
             deep_amoo_granted: demo_mode,
             deep_backscreen_granted: demo_mode,
             backscreen_hw_breath: false,
@@ -1380,19 +1597,62 @@ impl Companion {
             sender,
             receiver,
             last_scan: Instant::now(),
+            connection_watch: Default::default(),
+            text_selection: Default::default(),
+            selected_text: None,
+            context_menu: None,
+            reply_motion: Default::default(),
+            speech: Default::default(),
             fields,
             focus: None,
             scroll: Default::default(),
             scroll_aux: Default::default(),
+            push_list_scroll: Default::default(),
+            push_detail_scroll: Default::default(),
+            sms_threads_scroll: Default::default(),
+            sms_messages_scroll: Default::default(),
             hover_states: RefCell::new(HashMap::new()),
+            render_epoch: Cell::new(0),
+            wheel_motions: Default::default(),
+            chat_scroll_metrics: Default::default(),
+            chat_tail_requested: Default::default(),
             capture,
             capture_at: Instant::now(),
             last_clock_second: 0,
             activation_requests,
         };
-        me.back_screen.set_preview_visible(me.page == Page::BackScreen);
+        #[cfg(feature = "ui-capture")]
+        if me.page == Page::Expansion && std::env::args().any(|a| a == "--expansion-settings") {
+            me.expansion.settings = true;
+        }
+        #[cfg(feature = "ui-capture")]
+        if me.page == Page::Studio {
+            if let Some(i) = std::env::args().position(|a| a == "--studio-source") {
+                me.studio.source = match std::env::args().nth(i + 1).as_deref() {
+                    Some("phone") => 1,
+                    Some("saved") => 2,
+                    _ => 0,
+                };
+            }
+            if let Some(i) = std::env::args().position(|a| a == "--studio-section") {
+                me.studio.tab = match std::env::args().nth(i + 1).as_deref() {
+                    Some("create") => 2,
+                    Some("settings") => 3,
+                    _ => 0,
+                };
+            }
+            if demo_mode && std::env::args().any(|a| a == "--verify-studio-key-mask") {
+                // Deliberately non-secret fixture; never load real keys into a capture.
+                me.studio.tab = 3;
+                me.fields[F_LAB_KEY].set("MASK_TEST_NOT_SECRET");
+                me.fields[F_LAB_KEY].preedit = "输入测试".into();
+                me.focus = Some(F_LAB_KEY);
+            }
+        }
+        me.back_screen
+            .set_preview_visible(me.page == Page::BackScreen);
         if me.page == Page::Amoo {
-            Self::scroll_to_end(&me.scroll);
+            me.reveal_latest_chat();
         } else if me.page == Page::Sms {
             Self::scroll_to_end(&me.scroll_aux);
         }
@@ -1401,11 +1661,38 @@ impl Companion {
             .iter()
             .any(|d| d.state == "device" && is_stepx_model(&d.model));
         #[cfg(feature = "ui-capture")]
+        if let Some(panel) = std::env::args()
+            .position(|a| a == "--studio-tab")
+            .and_then(|i| std::env::args().nth(i + 1))
+        {
+            me.studio.tab = match panel.as_str() {
+                "work" => 2,
+                "settings" => 3,
+                _ => 0,
+            };
+            if demo_mode && me.page == Page::Studio {
+                me.studio_lab.loaded = true;
+                me.studio_lab.artifacts =
+                    stepx_companion::studio_lab::list_artifacts().unwrap_or_default();
+                me.studio_lab.selected = (!me.studio_lab.artifacts.is_empty()).then_some(0);
+                if let Some(a) = me.studio_lab.artifacts.first() {
+                    if let Ok(report) = stepx_companion::studio_lab::read_report(a) {
+                        me.studio_lab.report = Some((a.id.clone(), report));
+                    }
+                }
+            }
+        }
+        #[cfg(feature = "ui-capture")]
         if std::env::args().any(|a| a == "--demo") {
             me.load_demo();
             if let Some(index) = std::env::args().position(|a| a == "--adb-guide-preview") {
-                me.adb_guide_step = Some(std::env::args().nth(index + 1)
-                    .and_then(|s| s.parse::<u8>().ok()).unwrap_or(0).min(2));
+                me.adb_guide_step = Some(
+                    std::env::args()
+                        .nth(index + 1)
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(0)
+                        .min(2),
+                );
             }
             if std::env::args().any(|a| a == "--amoo-screen-view") {
                 me.amoo_ui.screen_mode = true;
@@ -1431,7 +1718,10 @@ impl Companion {
                 }
             }
             ctx.focus_self();
-            me.schedule_tick(ctx);
+            me.initialize_shortcut(ctx);
+        me.initialize_stars(ctx);
+        me.initialize_desktop_updates(ctx);
+        me.schedule_tick(ctx);
             return me;
         }
         if has_stepx_candidate {
@@ -1440,13 +1730,26 @@ impl Companion {
             me.refresh();
         }
         ctx.focus_self();
+        me.initialize_shortcut(ctx);
+        me.initialize_stars(ctx);
+        me.initialize_desktop_updates(ctx);
         me.schedule_tick(ctx);
         me
     }
 
     fn schedule_tick(&self, ctx: &mut ViewContext<Self>) {
-        let interval = if self.mirror.is_some() || self.busy || self.work.running || self.amoo_ui.gui_running
-            || (self.page == Page::BackScreen && self.back_screen.preview_running) { 100 } else { 500 };
+        let interval = if self.reply_motion.active() && !self.settings.hidden && matches!(self.page,Page::Amoo|Page::Work) { 32 } else if self.mirror.is_some()
+            || self.busy
+            || self.work.running
+            || self.amoo_ui.gui_running
+            || self.work_previews_loading()
+            || self.amoo_ui.snapshot_job.is_some()
+            || (self.page == Page::BackScreen && self.back_screen.preview_running)
+        {
+            100
+        } else {
+            500
+        };
         ctx.spawn(
             async move {
                 facloud_ui::r#async::Timer::after(Duration::from_millis(interval)).await;
@@ -1459,17 +1762,19 @@ impl Companion {
     }
 
     fn mouse_state(&self, id: impl Into<String>) -> MouseStateHandle {
-        self.hover_states
-            .borrow_mut()
-            .entry(id.into())
-            .or_default()
-            .clone()
+        let mut states=self.hover_states.borrow_mut();
+        let entry=states.entry(id.into()).or_default();
+        entry.0=self.render_epoch.get();
+        entry.1.clone()
     }
 
     fn submit(&mut self, label: &str, job: impl FnOnce(&Adb) -> Result<Outcome> + Send + 'static) {
         if self.sender.send(Box::new(job)).is_ok() {
+            self.amoo_ui.snapshot_generation = self.amoo_ui.snapshot_generation.wrapping_add(1);
             self.busy = true;
             self.job_page = self.page;
+            self.job_started = Instant::now();
+            self.loading_frame = 0;
             self.job_tool = self.tool_page;
             self.error = false;
             self.status = label.into();
@@ -1523,7 +1828,10 @@ impl Companion {
     }
 
     fn auto_load_for_page(&mut self) {
-        if self.page == Page::Studio && !self.studio.loaded && !self.busy { self.refresh_studio(); return; }
+        if self.page == Page::Studio && !self.studio.loaded && !self.busy {
+            self.refresh_studio();
+            return;
+        }
         if self.busy || self.selected.is_none() {
             return;
         }
@@ -1551,6 +1859,10 @@ impl Companion {
                 Some(ToolPage::Companion) if !self.companion_status.checked => {
                     self.handle_device_action(&Action::CompanionInspect)
                 }
+                Some(ToolPage::Neo) if !self.neo_status.checked => {
+                    self.handle_device_action(&Action::NeoInspect)
+                }
+                Some(ToolPage::InputMethod) if !self.input_method.checked => {self.handle_device_action(&Action::InspectInputMethod);}
                 Some(ToolPage::Services) if self.system_services.is_empty() => {
                     self.handle_device_action(&Action::InspectServices)
                 }
@@ -1601,22 +1913,39 @@ impl Companion {
                     Ok(Outcome::PhoneData(logs, contacts))
                 });
             }
-            Page::Studio => {},
+            Page::Studio => {}
             _ => {}
         }
     }
 
     fn clear_device_state(&mut self) {
+        self.clear_text_interaction();
+        self.speech = Default::default();
+        let mode = self.push.shell_mode;
+        let pin = self.push.pin_window;
+        self.push = PushUiState::default();
+        self.push.shell_mode = mode;
+        self.push.pin_window = pin;
+        for index in [F_IM_REPLY, F_PUSH_REPLY, F_TOAST_REPLY] {
+            self.fields[index].clear();
+        }
+        self.studio_lab.cloud_models.clear();
+        self.studio_lab.cloud_model = None;
+        self.studio_lab.cloud_scope = None;
         self.studio.phone_note = None;
         self.studio.cloud = None;
+        self.studio.web = None;
+        self.studio.web_selected = None;
+        self.studio.web_error = None;
         self.studio.cloud_selected = None;
         self.studio.cloud_checked = None;
         self.studio.cloud_error = None;
         self.studio.connecting_until = None;
-        let native_gui_unconfirmed = (self.amoo_ui.gui_running && !self.amoo_ui.gui_desktop)
-            || self.amoo_ui.gui_unconfirmed;
+        let native_gui_unconfirmed =
+            (self.amoo_ui.gui_running && !self.amoo_ui.gui_desktop) || self.amoo_ui.gui_unconfirmed;
         self.google_suite = GoogleSuiteStatus::default();
         self.companion_status = CompanionStatus::default();
+        self.neo_status = Default::default();
         self.phone_link_notice = None;
         self.deep_backscreen_granted = false;
         self.deep_amoo_granted = false;
@@ -1634,6 +1963,7 @@ impl Companion {
         self.amoo_snapshot = None;
         self.amoo_poll_remaining = 0;
         self.amoo_pending_reply.clear();
+        self.input_method=Default::default();
         self.amoo_ui = AmooUiState::default();
         self.amoo_attachments.clear();
         self.amoo_cron_jobs.clear();
@@ -1690,8 +2020,27 @@ impl Companion {
     }
 
     fn tick(&mut self, ctx: &mut ViewContext<Self>) {
-        if self.activation_requests.swap(false, std::sync::atomic::Ordering::AcqRel) {
+        let _timing=perf::Span::new("tick");
+        #[cfg(all(feature="ui-capture",target_os="linux"))]
+        self.verify_text_interaction(ctx);
+        #[cfg(all(feature="ui-capture",target_os="linux"))]
+        self.verify_shell_details(ctx);
+        self.poll_desktop_update(ctx);
+        self.tick_speech(ctx);
+        self.tick_reply_motion(ctx);
+        self.tick_connection_watch(ctx);
+        self.tick_settings(ctx);
+        #[cfg(feature="ui-capture")]
+        self.verify_settings(ctx);
+        self.remember_window(ctx, false);
+        #[cfg(feature = "ui-capture")]
+        self.verify_window_memory(ctx);
+        if self
+            .activation_requests
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
             let id = ctx.window_id();
+            self.settings.hidden = false;
             ctx.windows().show_window_and_focus_app(id);
         }
         let link_matches = self
@@ -1717,9 +2066,14 @@ impl Companion {
             self.phone_link_notice = Some((event.message, event.error));
             ctx.notify();
         }
-        let mut preview_visible = self.page == Page::BackScreen;
+        if self.tick_expansion() && matches!(self.page, Page::Overview | Page::Expansion) {
+            ctx.notify();
+        }
+        let mut preview_visible = self.page == Page::BackScreen && !self.settings.hidden;
         #[cfg(any(target_os = "linux", target_os = "windows"))]
-        if let Some(window) = facloud_ui::windowing::winit::winit_window_for_id(ctx, ctx.window_id()) {
+        if let Some(window) =
+            facloud_ui::windowing::winit::winit_window_for_id(ctx, ctx.window_id())
+        {
             preview_visible &= !window.is_minimized().unwrap_or(false);
         }
         if self.poll_backscreen(preview_visible) && preview_visible {
@@ -1734,15 +2088,21 @@ impl Companion {
         if self.poll_amoo_gui() && self.page == Page::Amoo {
             ctx.notify();
         }
-        if !self.demo_mode && self.page == Page::Overview && self.selected.is_some()
-            && !self.busy && !self.amoo_ui.usage_attempted {
+        if !self.demo_mode
+            && self.page == Page::Overview
+            && self.selected.is_some()
+            && !self.busy
+            && !self.amoo_ui.usage_attempted
+        {
             self.start_account_usage_sync();
             ctx.notify();
         }
-        if self.poll_account_usage_sync() { ctx.notify(); }
-        if self.busy {
-            let frame = (self.capture_at.elapsed().as_millis() / 250 % 4) as usize;
-            if frame != self.loading_frame { self.loading_frame = frame; ctx.notify(); }
+        if self.poll_account_usage_sync() {
+            ctx.notify();
+        }
+        if self.push.syncing && !self.push.loaded && self.push.sync_started.elapsed()>Duration::from_millis(150) && self.push.sync_started.elapsed()<Duration::from_millis(750) && matches!(self.page,Page::Notifications|Page::Sms) {ctx.notify();}
+        if self.busy && self.loading_frame==0 && self.job_started.elapsed()>Duration::from_millis(150) {
+            self.loading_frame=1;ctx.notify();
         }
         while let Ok(result) = self.receiver.try_recv() {
             let completed_page = self.job_page;
@@ -1755,6 +2115,7 @@ impl Companion {
                 progress.clear();
             }
             self.error = result.is_err();
+            if let Err(e)=&result {self.record_notice("操作未完成",format!("{e:#}"));}
             match result {
                 Err(e) => {
                     self.initializing = false;
@@ -1771,6 +2132,7 @@ impl Companion {
                         self.work.error = Some(format!("{e:#}"));
                     }
                     self.status = format!("{e:#}");
+                    if self.workspace.running.as_ref().is_some_and(|r|!r.accepted && matches!(r.executor,stepx_companion::amoo_workspace::Executor::Phone|stepx_companion::amoo_workspace::Executor::Image)) { self.workspace_finish(stepx_companion::amoo_workspace::Phase::Failed, self.status.clone()); }
                 }
                 Ok(outcome) => {
                     self.status = "就绪".into();
@@ -1789,10 +2151,23 @@ impl Companion {
             }
             ctx.notify();
         }
+        if self.poll_amoo_sync() {
+            ctx.notify();
+        }
         if self.page == Page::Studio && !self.studio.loaded && !self.busy {
             self.refresh_studio();
         }
+        if self.tick_studio_lab() && matches!(self.page, Page::Studio | Page::Amoo) {
+            ctx.notify();
+        }
         self.tick_studio_cloud();
+        if self.tick_workspace(ctx) { ctx.notify(); }
+        if self.compact_start_pending {
+            self.compact_start_pending = false;
+            let mode = self.window_memory.startup_mode();
+            self.set_compact_mode(mode, ctx);
+        }
+        self.tick_push_sync(ctx);
         if let Some(child) = &mut self.mirror {
             if let Ok(Some(status)) = child.try_wait() {
                 self.error = !status.success();
@@ -1809,6 +2184,14 @@ impl Companion {
         }
         #[cfg(feature = "ui-capture")]
         self.verify_ui_performance(ctx);
+        #[cfg(feature = "ui-capture")]
+        self.verify_compact_window(ctx);
+        #[cfg(feature = "ui-capture")]
+        self.verify_compact_live(ctx);
+        #[cfg(feature = "ui-capture")]
+        self.verify_composer(ctx);
+        #[cfg(feature = "ui-capture")]
+        self.verify_workspace(ctx);
         self.sync_mirror_controls(ctx);
         #[cfg(feature = "ui-capture")]
         self.verify_mirror_controls(ctx);
@@ -1823,14 +2206,24 @@ impl Companion {
             self.amoo_record_secs = (self.amoo_record_secs + 1).min(59);
             ctx.notify();
         }
+        let selected_session_empty = self
+            .amoo_sessions
+            .get(self.amoo_session_idx)
+            .is_some_and(|s| s.items.is_empty());
+        let needs_initial_amoo_fetch = self.page == Page::Amoo
+            && (self.amoo_sessions.is_empty()
+                || (selected_session_empty && self.amoo_poll_remaining > 0));
         if !self.busy
             && !self.demo_mode
             && self.selected.is_some()
+            && self.amoo_ui.snapshot_job.is_none()
             && !self.work.running
             && (!self.amoo_pending_reply.is_empty() || matches!(self.page, Page::Amoo | Page::Work))
             && self.last_amoo_poll.elapsed()
-                >= if self.amoo_poll_remaining > 0 {
-                    Duration::from_millis(2400)
+                >= if needs_initial_amoo_fetch {
+                    Duration::from_millis(400)
+                } else if self.amoo_poll_remaining > 0 {
+                    Duration::from_millis(if !self.settings.hidden && self.chat_waiting() {1200} else {2400})
                 } else if self.amoo_pending_reply.is_empty() && !self.amoo_gateway_online {
                     Duration::from_secs(30)
                 } else {
@@ -1844,22 +2237,12 @@ impl Companion {
                 .get(self.amoo_session_idx)
                 .map(|s| s.session_key.clone());
             let pending: Vec<String> = self.amoo_pending_reply.keys().cloned().collect();
-            self.with_device("正在从后台读取 Amoo 回复…", move |adb, d| {
-                if pending.is_empty() {
-                    match amoo::AgentBus::observe(adb, &d)
-                        .and_then(|mut bus| bus.snapshot_with_pending(key.as_deref(), &pending))
-                    {
-                        Ok(real) => Ok(Outcome::AmooRealData(real, "已刷新后台对话".into())),
-                        Err(_) => Ok(Outcome::AmooObservationUnavailable),
-                    }
-                } else {
-                    let real = amoo::AgentBus::connect(adb, &d)?
-                        .snapshot_with_pending(key.as_deref(), &pending)?;
-                    Ok(Outcome::AmooRealData(real, "已刷新后台对话".into()))
-                }
-            });
+            self.begin_amoo_sync(key, pending, needs_initial_amoo_fetch);
         }
-        if !self.busy && self.last_scan.elapsed() > Duration::from_secs(5) {
+        if !self.busy
+            && self.amoo_ui.snapshot_job.is_none()
+            && self.last_scan.elapsed() > Duration::from_secs(5)
+        {
             if self.page == Page::Connect
                 && self.pair_tab == PairTab::Qr
                 && self.connect_guide_step.is_none_or(|step| step >= 4)
@@ -1880,37 +2263,68 @@ impl Companion {
             } else if !self.error {
                 if self.selected.is_some() {
                     self.last_scan = Instant::now();
-                    let services = self.mdns_services.clone();
-                    self.submit("正在检查连接…", move |adb| {
-                        Ok(Outcome::Transports(
-                            parse_devices(&adb.run(&["devices", "-l"])?),
-                            services,
-                        ))
-                    });
-                    self.job_tool = None;
+                    self.begin_connection_watch();
                 } else {
                     self.refresh();
                 }
             }
         }
         #[cfg(feature = "ui-capture")]
-        if std::env::args().any(|a|a=="--verify-amoo-gui") && !self.busy && !self.initializing && self.page==Page::Amoo
-            && self.selected.as_ref().is_some_and(|d|d.serial=="DISABLED_RELEASE_TEST_DEVICE") {
-            static SENT: std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
-            if !SENT.swap(true,std::sync::atomic::Ordering::SeqCst) {
-                self.amoo_ui.screen_mode=false;
+        if std::env::args().any(|a| a == "--verify-google-cert") && !self.initializing {
+            static SENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !SENT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                // Land on Tools → Google so the certification panel is on screen
+                // when --capture-ui fires.
+                self.page = Page::Tools;
+                self.tool_page = Some(ToolPage::Google);
+                eprintln!("GOOGLE_CERT_UI_VERIFICATION: landing on Tools → Google");
+            }
+        }
+        #[cfg(feature = "ui-capture")]
+        if std::env::args().any(|a| a == "--verify-amoo-gui")
+            && !self.busy
+            && !self.initializing
+            && self.page == Page::Amoo
+            && self
+                .selected
+                .as_ref()
+                .is_some_and(|d| d.serial == "ZYPZ261A01M692000LP")
+        {
+            static SENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !SENT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                self.amoo_ui.screen_mode = false;
                 self.fields[F_AMOO].set("打开京东，我的订单");
                 eprintln!("GUI_UI_VERIFICATION: normal Amoo composer sends user request");
                 self.send_amoo_draft();
             }
         }
         if self.capture.is_some()
+            && !std::env::args().any(|a| {
+                a == "--verify-settings" || a == "--verify-compact"
+                    || a == "--verify-compact-live"
+                    || a == "--verify-composer" || a == "--verify-workspace" || a == "--verify-workspace-live"
+                    || a == "--verify-window-memory"
+            })
             && self.capture_at.elapsed() > Duration::from_millis(900)
             && (self.demo_mode
-                || (!self.busy && self.selected.is_some() && !self.work_previews_loading())
+                || (!self.busy
+                    && self.selected.is_some()
+                    && !self.work_previews_loading()
+                    && (self.page != Page::Notifications
+                        || self.push.loaded
+                        || self.push.error.is_some())
+                    && (self.page != Page::Expansion
+                        || self.expansion.snapshot.online
+                        || self.expansion.snapshot.error)
+                    && (self.page != Page::Studio
+                        || self.studio.web.is_some()
+                        || self.studio.web_error.is_some()))
                 || self.capture_at.elapsed()
                     > Duration::from_millis(
-                        if matches!(self.page, Page::Tools | Page::Work | Page::Amoo) {
+                        if matches!(
+                            self.page,
+                            Page::Tools | Page::Work | Page::Amoo | Page::Studio
+                        ) {
                             60000
                         } else {
                             12000
@@ -2064,6 +2478,7 @@ impl Companion {
                 self.output_page = self.job_page;
             }
             Outcome::Notice(text) => {
+                if text!="就绪" && text!="已记住的设备不在线" {self.record_notice("执行反馈",text.clone());}
                 self.initializing = false;
                 self.status = text;
             }
@@ -2087,6 +2502,8 @@ impl Companion {
                     "已就绪：将通过 {} 发送至 {}，请点击「确认发送」",
                     plan.subscription_label, plan.number
                 );
+                let target=self.selected.as_ref().map(|d|format!("手机：{} · {}",d.model,d.serial)).unwrap_or_default();
+                self.review_action(&Action::ConfirmDirectSms,"确认发送这条短信？",target,vec![format!("收件人：{} · 使用 {}",plan.number,plan.subscription_label),plan.body.clone(),format!("共 {} 段短信，运营商可能按套餐计费。确认后实际从手机发出。",plan.parts)],"确认发送",true,false);
                 self.pending_sms_plan = Some(plan);
             }
             Outcome::SmsSent(send_status, messages) => {
@@ -2165,7 +2582,7 @@ impl Companion {
                 }
                 self.amoo_snapshot = Some(snapshot);
                 if self.page == Page::Amoo {
-                    Self::scroll_to_end(&self.scroll);
+                    self.reveal_latest_chat();
                 }
                 if start_poll {
                     self.fields[F_AMOO].clear();
@@ -2195,7 +2612,13 @@ impl Companion {
                 self.amoo_poll_remaining = 0;
                 self.status = "已在后台创建 Amoo 会话，可直接输入消息".into();
             }
+            Outcome::WorkspaceDelivered(task,path,serial,result)=>{
+                let note=result.clone().unwrap_or_else(|e|format!("发送未完成：{e}"));self.status=note.clone();self.error=result.is_err();
+                if let Some(task)=self.workspace.journal.tasks.iter_mut().find(|t|t.id==task){task.receipts.push(stepx_companion::amoo_workspace::Receipt{path,note,success:result.is_ok(),device:serial,account:None,cloud_url:None});}
+                self.workspace_persist();
+            }
             Outcome::AmooSent(receipt) => {
+                self.workspace_bind_session(&receipt.key);
                 let key = receipt.key.clone();
                 let text = receipt.text.clone();
                 self.amoo_ui
@@ -2212,10 +2635,10 @@ impl Companion {
                     session.status_kind = 1;
                     session.meta = "后台已接收 · 正在等待回复".into();
                 }
-                self.amoo_poll_remaining = 50;
+                self.amoo_poll_remaining = 100;
                 self.last_amoo_poll = Instant::now();
                 self.status = "Amoo 后台已接收消息，正在等待回复".into();
-                Self::scroll_to_end(&self.scroll);
+                self.reveal_latest_chat();
             }
             Outcome::AmooObservationUnavailable => {
                 // Idle reads are not task failures. Retain the loaded history,
@@ -2225,7 +2648,9 @@ impl Companion {
                 self.status = "手机 Amoo 暂未连接，已保留上次内容；发送任务时会重新连接".into();
             }
             Outcome::AmooRealData(real, mut msg) => {
+                // Measure completion before removing the matching pending run.
                 self.record_amoo_usage(&real);
+                self.reply_motion.live.extend(self.amoo_pending_reply.keys().cloned());
                 let was_pending = self.amoo_pending_reply.len();
                 let finished_error = self.amoo_pending_reply.values().find_map(|pending| {
                     let session = real.sessions.iter().find(|s| pending.finished(s))?;
@@ -2240,6 +2665,18 @@ impl Companion {
                                 .unwrap_or_else(|| "手机返回了错误，请查看会话后继续".into())
                         })
                 });
+                if let Some(run)=self.workspace.running.clone().filter(|r|matches!(r.executor,stepx_companion::amoo_workspace::Executor::Phone|stepx_companion::amoo_workspace::Executor::Image)) {
+                    let key=self.workspace.journal.tasks.iter().find(|t|t.id==run.task).and_then(|t|t.session.as_ref());
+                    let completed=key.and_then(|key|self.amoo_pending_reply.get(key)).and_then(|pending|real.sessions.iter().find(|s|pending.finished(s)).map(|s|(s,pending)));
+                    if let Some((session,pending))=completed {
+                        let failure=session.messages.iter().rev().find(|m|m.run_id==pending.run_id && m.is_error).map(|m|m.error_message.clone().unwrap_or("手机返回错误，请查看回复".into()));
+                        let note=session.messages.iter().filter(|m| m.run_id == pending.run_id && m.role == "assistant").filter_map(|m| stepx_companion::work_protocol::display_text(&m.text, false)).filter(|t|!t.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
+                        if let Some(error)=failure {self.workspace_finish(stepx_companion::amoo_workspace::Phase::Failed,error);}
+                        else if run.executor==stepx_companion::amoo_workspace::Executor::Image {
+                            self.workspace_deliver_images(session.messages.iter().filter(|m|m.run_id==pending.run_id && m.role!="user").cloned().collect(),note);
+                        } else {self.workspace_finish(stepx_companion::amoo_workspace::Phase::Done,note);}
+                    }
+                }
                 self.amoo_pending_reply
                     .retain(|_, pending| !real.sessions.iter().any(|s| pending.finished(s)));
                 if self.amoo_pending_reply.len() < was_pending {
@@ -2256,17 +2693,18 @@ impl Companion {
                 } else if !self.amoo_pending_reply.is_empty() && self.amoo_poll_remaining == 0 {
                     msg = "Amoo 尚未返回完整结果，后台会继续同步；请勿重复发送".into();
                 }
+                let follow_tail = self.chat_near_end() && self.selected_text.is_none();
                 let previous = self
                     .amoo_sessions
                     .get(self.amoo_session_idx)
                     .map(|s| (s.session_key.clone(), s.items.clone()));
-                self.apply_real_amoo_data(real);
+                self.apply_real_amoo_data_recorded(real);
                 let current = self
                     .amoo_sessions
                     .get(self.amoo_session_idx)
                     .map(|s| (s.session_key.clone(), s.items.clone()));
-                if matches!(self.page, Page::Amoo | Page::Work) && previous != current {
-                    Self::scroll_to_end(&self.scroll);
+                if matches!(self.page, Page::Amoo | Page::Work) && previous != current && follow_tail {
+                    self.reveal_latest_chat();
                 }
                 if !msg.is_empty() {
                     self.status = msg;
@@ -2275,6 +2713,8 @@ impl Companion {
             Outcome::Files(path, files, notice) => {
                 if path != self.directory {
                     self.scroll = Default::default();
+                    self.fields[F_FILE_SEARCH].clear();
+                    if self.focus == Some(F_FILE_SEARCH) { self.focus = None; }
                 }
                 self.directory = path;
                 self.files = files;
@@ -2283,6 +2723,7 @@ impl Companion {
                 self.file_modal = None;
                 self.trash_confirm = false;
                 if let Some(msg) = notice {
+                    self.record_notice("文件操作",msg.clone());
                     self.status = msg;
                 }
             }
@@ -2356,6 +2797,7 @@ impl Companion {
                 }
             }
             Outcome::Studio(result) => self.apply_studio(result),
+            Outcome::StudioLab(result) => self.apply_studio_lab(result),
             Outcome::PhoneData(logs, contacts) => {
                 self.apply_phone_data(logs, contacts);
             }
@@ -2376,6 +2818,8 @@ impl Companion {
                         "请确认通过 {} 呼叫 {}",
                         plan.subscription_label, plan.number
                     );
+                    let target=format!("手机：{}",plan.device_serial);
+                    self.review_action(&Action::PhoneConfirmCall,"确认用手机拨打？",target,vec![format!("号码：{}",plan.number),format!("SIM：{}",plan.subscription_label),"确认后手机将发起实际通话，可能产生运营商费用。".into()],"确认拨打",true,false);
                     self.pending_call = Some(plan);
                 }
             }
@@ -2392,10 +2836,15 @@ impl Companion {
                 self.companion_status = companion;
                 self.status = msg;
             }
+            Outcome::NeoStatus(neo) => {
+                self.status = neo.message.clone();
+                self.neo_status = neo;
+            }
             Outcome::CompanionStatus(companion, msg) => {
                 self.companion_status = companion;
                 self.status = msg;
             }
+            Outcome::InputMethod(report, message) => { self.fcitx5_active=report.active; self.input_method=report; self.status=message; },
             Outcome::SystemServices(services, msg) => {
                 self.fcitx5_active = services
                     .iter()
@@ -2566,6 +3015,10 @@ impl Companion {
 
     fn apply_real_amoo_data(&mut self, real: RealAmooData) {
         self.record_amoo_usage(&real);
+        self.apply_real_amoo_data_recorded(real);
+    }
+
+    fn apply_real_amoo_data_recorded(&mut self, real: RealAmooData) {
         self.record_work_attachment_identities(&real);
         for session in &real.sessions {
             if !session.model.is_empty() {
@@ -2625,8 +3078,23 @@ impl Companion {
                 new_sessions.push(old.clone());
             }
         }
+        if !self.settings.value.reduced_motion && !self.settings.hidden {
+            for next in &new_sessions {
+                if current_key.as_deref()!=Some(&next.session_key) || !(self.amoo_pending_reply.contains_key(&next.session_key) || self.reply_motion.live.contains(&next.session_key)) {continue;}
+                let Some(old)=self.amoo_sessions.iter().find(|s|s.session_key==next.session_key) else {continue;};
+                for (i,item) in next.items.iter().enumerate() {
+                    if let AmooChatItem::AssistantRich {text:Some(text),..}=item {
+                        let previous=match old.items.get(i) {Some(AmooChatItem::AssistantRich {text:Some(t),..})=>t.as_str(),_=>""};
+                        let before=stepx_companion::work_protocol::display_text(previous,false).unwrap_or_default();
+                        let after=stepx_companion::work_protocol::display_text(text,false).unwrap_or_default();
+                        self.reply_motion.track(next.session_key.clone(),i,&before,&after);
+                    }
+                }
+            }
+        }
+        self.reply_motion.live.clear();
         self.amoo_sessions = new_sessions;
-        self.scroll_aux = Default::default();
+        // Passive updates preserve the user's session-list scroll position.
         if let Some(key) = current_key {
             if let Some(pos) = self.amoo_sessions.iter().position(|s| s.session_key == key) {
                 self.amoo_session_idx = pos;
@@ -2672,6 +3140,7 @@ impl Companion {
     }
 
     fn browse(&mut self, path: String) {
+        if self.busy { return; }
         self.with_device("正在读取目录…", move |adb, device| {
             Ok(Outcome::Files(
                 path.clone(),
@@ -2800,6 +3269,7 @@ impl View for Companion {
     }
 
     fn on_window_closed(&mut self, ctx: &mut ViewContext<Self>) {
+        self.remember_window(ctx, true);
         self.stop_mirror();
         self.close_mirror_controls(ctx);
         self.qr = None;
@@ -2814,69 +3284,114 @@ impl View for Companion {
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
+        let _timing=perf::Span::new("render");
+        let epoch=self.render_epoch.get().wrapping_add(1);self.render_epoch.set(epoch);
+        if self.hover_states.borrow().len()>512 {self.hover_states.borrow_mut().retain(|_,(last,_)|epoch.wrapping_sub(*last)<=2);}
         let p = Palette::for_theme(self.theme_mode.is_dark(app.system_theme()));
         self.palette.set(p);
 
-        let body = if self.initializing && self.busy {
-            self.loading_page()
-        } else if self.page.needs_device() && self.selected.is_none() && self.page != Page::Overview {
-            self.no_device()
-        } else if matches!(self.page, Page::Tools | Page::Connect) {
-            self.scrollable(self.scroll.clone(), self.page_content())
-        } else if self.page.fills_height() {
-            self.page_content()
+        let tree = if self.push.shell_mode != ShellMode::Full {
+            self.compact_shell()
         } else {
-            Container::new(self.page_content())
-                .with_uniform_padding(theme::S5)
-                .finish()
-        };
+            let body = if self.initializing && self.busy && self.page.needs_device() {
+                self.loading_page()
+            } else if self.page.needs_device()
+                && self.selected.is_none()
+                && self.page != Page::Overview
+            {
+                self.no_device()
+            } else if matches!(self.page, Page::Tools | Page::Connect) {
+                self.scrollable(self.scroll.clone(), self.page_content())
+            } else if self.page.fills_height() {
+                self.page_content()
+            } else {
+                Container::new(self.page_content())
+                    .with_uniform_padding(theme::S5)
+                    .finish()
+            };
 
-        let main = Container::new(
-            Flex::column()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_child(self.header())
-                .with_child(Expanded::new(1., body).finish())
-                .finish(),
-        )
-        .with_background_color(p.workspace)
-        .finish();
-
-        let top = Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .with_child(self.sidebar())
-            .with_child(Expanded::new(1., main).finish())
+            let body = self.loading_feedback(body);
+            let body = motion::enter(body, self.motion_started, !self.settings.value.reduced_motion && !self.settings.hidden);
+            let main = Container::new(
+                Flex::column()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_child(self.header())
+                    .with_child(Expanded::new(1., body).finish())
+                    .finish(),
+            )
+            .with_background_color(p.workspace)
+            .with_corner_radius(CornerRadius::with_top_right(Radius::Pixels(theme::R_PANEL)))
             .finish();
 
-        let outer_border_color = if p.dark {
-            p.border_strong
-        } else {
-            theme::rgb(0xDC, 0xDC, 0xE2)
-        };
-        let tree = Container::new(
-            Flex::column()
+            let top = Flex::row()
                 .with_main_axis_size(MainAxisSize::Max)
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_child(Expanded::new(1., top).finish())
-                .with_child(self.status_bar())
-                .finish(),
-        )
-        .with_background_color(p.workspace)
-        .with_border(Border::all(1.).with_border_color(outer_border_color))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.)))
-        .finish();
+                .with_child(self.sidebar())
+                .with_child(Expanded::new(1., main).finish())
+                .finish();
 
-        let tree = if let Some(step) = self.adb_guide_step {
+            let outer_border_color = if p.dark {
+                p.border_strong
+            } else {
+                theme::rgb(0xDC, 0xDC, 0xE2)
+            };
+            let tree = Container::new(
+                Flex::column()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_child(Expanded::new(1., top).finish())
+                    .with_child(self.status_bar())
+                    .finish(),
+            )
+            .with_background_color(p.workspace)
+            .with_border(Border::all(1.).with_border_color(outer_border_color))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.)))
+            .finish();
+
+            tree
+        };
+        #[cfg(feature="ui-capture")]
+        let tree=self.text_test_fixture().unwrap_or(tree);
+        #[cfg(feature="ui-capture")]
+        let tree=SavePosition::new(tree,"test-window-layout").for_single_frame().finish();
+        // SavePosition commits in a Stack paint scope, including the pinned composer.
+        let tree = Stack::new().with_child(tree).finish();
+        let tree = if let Some(sheet) = self.desktop_update_overlay() {
+            Stack::new().with_child(adb_onboarding::Inert(tree).finish()).with_child(sheet).finish()
+        } else if let Some(menu) = self.context_overlay() {
+            Stack::new().with_child(adb_onboarding::Inert(tree).finish()).with_child(menu).finish()
+        } else if let Some(sheet) = self.interaction_overlay() {
+            Stack::new().with_child(adb_onboarding::Inert(tree).finish()).with_child(sheet).finish()
+        } else if let Some(step) = self.adb_guide_step {
             Stack::new()
                 .with_child(adb_onboarding::Inert(tree).finish())
                 .with_child(self.adb_guide_modal(step))
                 .finish()
-        } else { tree };
+        } else if let Some(viewer) = self.amoo_image_viewer() {
+            Stack::new()
+                .with_child(adb_onboarding::Inert(tree).finish())
+                .with_child(viewer)
+                .finish()
+        } else if let Some(toast_overlay) = self.push_toast_overlay() {
+            Stack::new()
+                .with_child(tree)
+                .with_child(toast_overlay)
+                .finish()
+        } else {
+            tree
+        };
         Keyboard {
-            child: tree,
+            accept_attachments: self.page == Page::Amoo && !self.busy && !self.workspace_busy() && self.context_menu.is_none() && self.workspace.proposal.is_none() && self.interaction_overlay().is_none() && self.amoo_image_viewer().is_none(),
+            context_menu:self.context_menu.is_some(),
+            child: perf::Measured(tree).finish(),
+            shortcut: self.settings.value.compact_shortcut.clone(),
+            recording_shortcut: self.shortcuts.recording,
             active: self.focus.is_some(),
-            multiline: matches!(self.focus, Some(F_WORK_PROMPT | F_AMOO | F_SMS_BODY)),
+            multiline: matches!(
+                self.focus,
+                Some(F_WORK_PROMPT | F_AMOO | F_SMS_BODY | F_LAB_PROMPT)
+            ),
             composing: self
                 .focus
                 .is_some_and(|i| !self.fields[i].preedit.is_empty()),
@@ -2887,6 +3402,7 @@ impl View for Companion {
 
 impl Drop for Companion {
     fn drop(&mut self) {
+        self.workspace_flush();
         self.stop_mirror();
     }
 }
@@ -2894,6 +3410,10 @@ impl Drop for Companion {
 /// Handles committed IME text separately from key presses so Chinese input is neither lost
 /// nor inserted twice, and maps Cmd (macOS) / Ctrl (Windows, Linux) shortcuts.
 struct Keyboard {
+    accept_attachments: bool,
+    context_menu:bool,
+    shortcut: stepx_companion::settings::CompactShortcut,
+    recording_shortcut: bool,
     child: Box<dyn Element>,
     active: bool,
     multiline: bool,
@@ -2924,6 +3444,37 @@ impl Element for Keyboard {
         ctx: &mut EventContext,
         app: &AppContext,
     ) -> bool {
+        #[cfg(feature = "ui-capture")]
+        if std::env::var_os("STEPX_ENTER_TEST").is_some() {
+            if let Event::KeyDown { keystroke, is_composing, .. } = event.raw_event() {
+                eprintln!("ENTER_KEY key={} shift={} active={} composing={}/{}", keystroke.key, keystroke.shift, self.active, self.composing, is_composing);
+            }
+            match event.raw_event() {
+                Event::TypedCharacters { chars } => eprintln!("ENTER_TEXT bytes={} control={:?}", chars.len(), chars.chars().filter(|c| c.is_control()).collect::<Vec<_>>()),
+                Event::SetMarkedText { marked_text, .. } => eprintln!("ENTER_PREEDIT bytes={}", marked_text.len()),
+                Event::ClearMarkedText => eprintln!("ENTER_PREEDIT clear"),
+                _ => {}
+            }
+        }
+        if self.context_menu {
+            if let Event::KeyDown {keystroke,..}=event.raw_event(){
+                let a=match keystroke.key.as_str(){"up"=>Some(Action::ContextNavigate(-1)),"down"=>Some(Action::ContextNavigate(1)),"enter"|"return"=>Some(Action::ContextActivate),"escape"|"tab"=>Some(Action::ContextClose),_=>None};
+                if let Some(a)=a{ctx.dispatch_typed_action(a);return true;}
+            }
+        }
+        if let Event::KeyDown { keystroke, is_composing: false, .. } = event.raw_event() {
+            if !self.composing {
+                let action = if self.recording_shortcut {
+                    Some(Action::Settings(if keystroke.key == "escape" {
+                        SettingsAction::CancelShortcut
+                    } else { SettingsAction::CaptureShortcut(shortcuts::Shortcuts::captured(keystroke)) }))
+                } else if shortcuts::Shortcuts::matches(&self.shortcut, keystroke) {
+                    Some(Action::CompactChat)
+                } else { None };
+                if let Some(action) = action { ctx.dispatch_typed_action(action); return true; }
+            }
+        }
+        if self.recording_shortcut && matches!(event.raw_event(), Event::TypedCharacters { .. } | Event::SetMarkedText { .. }) { return true; }
         if self.child.dispatch_event(event, ctx, app) {
             return true;
         }
@@ -2940,6 +3491,7 @@ impl Element for Keyboard {
 impl Keyboard {
     fn action_for_event(&self, event: &Event) -> Option<Action> {
         match event {
+            Event::DragAndDropFiles { paths, .. } if self.accept_attachments => Some(Action::AmooDropFiles(paths.iter().map(PathBuf::from).collect())),
             Event::TypedCharacters { chars } if self.active => Some(Action::Insert(chars.clone())),
             Event::SetMarkedText { marked_text, .. } if self.active => {
                 Some(Action::Preedit(marked_text.clone()))
@@ -2977,6 +3529,9 @@ impl Keyboard {
                     "backspace" if !typing => Some(Action::ParentDirectory),
                     "delete" if !typing => Some(Action::Trash),
                     "f2" if !typing => Some(Action::OpenRename),
+                    "z" if cmd && k.shift && typing => Some(Action::RedoInput),
+                    "z" if cmd && typing => Some(Action::UndoInput),
+                    "y" if cmd && typing => Some(Action::RedoInput),
                     "v" if cmd && typing => Some(Action::Paste),
                     "c" if cmd && typing => Some(Action::CopyInput),
                     "c" if cmd => Some(Action::Copy),
@@ -2985,6 +3540,10 @@ impl Keyboard {
                     "backspace" if cmd => Some(Action::BackspaceLine),
                     "backspace" => Some(Action::Backspace),
                     "delete" => Some(Action::Delete),
+                    "left" if k.shift && typing => Some(Action::ExtendSelection(if cmd { -2 } else { -1 })),
+                    "right" if k.shift && typing => Some(Action::ExtendSelection(if cmd { 2 } else { 1 })),
+                    "home" if k.shift && typing => Some(Action::ExtendSelection(-2)),
+                    "end" if k.shift && typing => Some(Action::ExtendSelection(2)),
                     "left" if k.cmd && typing => Some(Action::Home),
                     "right" if k.cmd && typing => Some(Action::End),
                     "left" if typing => Some(Action::Left),
@@ -3005,7 +3564,11 @@ mod input_tests {
 
     fn keyboard(composing: bool) -> Keyboard {
         Keyboard {
+            accept_attachments:false,
+            context_menu:false,
             child: Empty::new().finish(),
+            shortcut: Default::default(),
+            recording_shortcut: false,
             active: true,
             multiline: true,
             composing,
@@ -3042,6 +3605,29 @@ mod input_tests {
             keyboard(false).action_for_event(&key("enter", false)),
             Some(Action::SubmitFocused)
         ));
+    }
+
+    #[test]
+    fn enter_and_shift_enter_share_input_rules() {
+        for name in ["enter", "return"] {
+            let mut event = key(name, false);
+            assert!(matches!(keyboard(false).action_for_event(&event), Some(Action::SubmitFocused)));
+            if let Event::KeyDown { keystroke, .. } = &mut event { keystroke.shift = true; }
+            assert!(matches!(keyboard(false).action_for_event(&event), Some(Action::Insert(text)) if text == "\n"));
+            assert!(keyboard(true).action_for_event(&event).is_none());
+        }
+    }
+
+    #[test]
+    fn dropped_files_only_enter_an_available_composer() {
+        let event = Event::DragAndDropFiles {
+            paths: vec!["/tmp/example.csv".into()],
+            location: Vector2F::new(20., 20.),
+        };
+        let mut input = keyboard(false);
+        assert!(input.action_for_event(&event).is_none());
+        input.accept_attachments = true;
+        assert!(matches!(input.action_for_event(&event), Some(Action::AmooDropFiles(paths)) if paths == vec![PathBuf::from("/tmp/example.csv")]));
     }
 
     #[test]

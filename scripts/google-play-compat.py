@@ -23,7 +23,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(__file__).resolve().parent
-SERIAL = os.environ.get("STEPX_SERIAL", "")
+SERIAL = "ZYPZ261A01M692000LP"
 FORMAT = 1
 MAX_PRIVATE_BYTES = 8 * 1024 * 1024
 SCOPES = {
@@ -195,9 +195,13 @@ def db_read():
  connection=sqlite3.connect('file:'+db_path+'?mode=ro',uri=True)
  try:return (dbm if scope=='gms' else storedbm).plan(connection)
  finally:connection.close()
-def inspect_files(baseline):
+def inspect_files(baseline,db=None):
+ entries=baseline['entries']
+ if scope=='play' and isinstance(db,dict) and db.get('state',{}).get('account_id',0)>0:
+  scoped=[e for e in entries if not e['path'].endswith('/experiment-flags-regular-null-account')]
+  if scoped:entries=scoped
  checks=[]
- for entry in baseline['entries']:
+ for entry in entries:
   raw=filesm._original(entry)
   if scope=='gms':
    fn=snapm.inspect_fallback if entry['path'].endswith('/com.google.android.gms.gmscompliance.pb') else snapm.inspect_primary
@@ -211,7 +215,7 @@ def db_active(plan):
    x['experiment_state_id']==plan['config']['committed_experiment_state_id'] for x in plan['links']))
  return storedbm.is_active(plan)
 def summary(baseline,db):
- return {'cache_active':inspect_files(baseline),'db_active':db_active(db),'cache_count':len(baseline['entries'])}
+ return {'cache_active':inspect_files(baseline,db),'db_active':db_active(db),'cache_count':len(baseline['entries'])}
 def read_journal(path):
  filesm._path(scope,path,filesm.ROOT_BASE,journal=True)
  raw,metadata=filesm._read(path,filesm.ROOT_BASE)

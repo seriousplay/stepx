@@ -119,12 +119,6 @@ impl Companion {
     pub(in super::super) fn files_actions(&self) -> Vec<El> {
         vec![
             self.button(
-                "files-up-dir",
-                "↑ 上级目录",
-                Action::ParentDirectory,
-                Btn::Secondary,
-            ),
-            self.button(
                 "files-mkdir",
                 "＋ 新建文件夹",
                 Action::OpenNewFolder,
@@ -167,14 +161,14 @@ impl Companion {
                 .finish(),
             )
             .with_child(
-                Expanded::new(
-                    2.,
+                ConstrainedBox::new(
                     Flex::row()
                         .with_main_axis_size(MainAxisSize::Max)
                         .with_main_axis_alignment(MainAxisAlignment::End)
                         .with_child(col_actions)
                         .finish(),
                 )
+                .with_width(230.)
                 .finish(),
             )
             .finish()
@@ -246,30 +240,20 @@ impl Companion {
             ],
         );
 
-        let breadcrumb_box = Container::new(self.hstack(
-            6.,
-            vec![
-                self.line("📂", CAPTION, p.accent),
-                self.mono(&self.directory, CAPTION, p.text),
-            ],
-        ))
-        .with_horizontal_padding(12.)
-        .with_vertical_padding(7.)
-        .with_background_color(p.bg)
-        .with_border(Border::all(1.).with_border_color(p.border))
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
-        .finish();
-
-        let top_bar = self.between(
-            self.hstack(8., vec![places_bar, breadcrumb_box]),
-            self.hstack(
-                8.,
-                vec![
-                    sort_seg,
-                    self.input(F_FILE_SEARCH, "筛选当前目录…", Some(180.)),
-                ],
-            ),
-        );
+        let breadcrumb = self.wrap(breadcrumbs(&self.directory).into_iter().enumerate().flat_map(|(i,(label,path))| {
+            let mut nodes = Vec::new();
+            if i > 0 { nodes.push(self.ui_icon(UiIcon::ChevronRight, 12., p.text3)); }
+            nodes.push(self.button(format!("files-crumb-{i}"), &label, Action::Browse(path.clone()), if path == self.directory { Btn::Secondary } else { Btn::Ghost }));
+            nodes
+        }).collect());
+        let navigation = self.hstack(S2, vec![
+            if self.directory == "/sdcard" { self.disabled_button("↑ 上一级") } else { self.button_icon("files-up-inline", "上一级", UiIcon::ArrowUp, Action::ParentDirectory, Btn::Secondary) },
+            breadcrumb,
+        ]);
+        let top_bar = self.vstack(S2, vec![
+            places_bar,
+            self.between(navigation, self.hstack(S2, vec![sort_seg, self.input(F_FILE_SEARCH, "筛选当前目录…", Some(180.))])),
+        ]);
 
         let mut modal_banners: Vec<El> = Vec::new();
         if let Some(modal) = &self.file_modal {
@@ -470,9 +454,12 @@ impl Companion {
                     || entry.name.ends_with(".jpeg");
                 let mut act_links = vec![self.link(
                     format!("f-real-open-{orig_idx}"),
-                    if entry.directory { "打开" } else { "下载" },
+                    "打开",
                     Action::ActivateFile(orig_idx),
                 )];
+                if !entry.directory {
+                    act_links.push(self.link(format!("f-real-save-{orig_idx}"), "下载", Action::DownloadFile(orig_idx)));
+                }
                 if is_img {
                     act_links.push(self.link(
                         format!("f-real-mat-{orig_idx}"),
@@ -507,6 +494,7 @@ impl Companion {
                     self.mono(size_str, CAPTION, p.text2),
                     actions_col,
                 );
+                let menu_path=entry.path.clone();
                 let state = self.mouse_state(format!("file-real-row:{orig_idx}"));
                 let row_el = Hoverable::new(state, move |mouse| {
                     let hovered = mouse.is_mouse_over_element();
@@ -533,6 +521,8 @@ impl Companion {
                 })
                 .with_cursor(Cursor::PointingHand)
                 .on_click(move |ctx, _, _| ctx.dispatch_typed_action(Action::SelectFile(orig_idx)))
+                .on_double_click(move |ctx, _, _| ctx.dispatch_typed_action(Action::ActivateFile(orig_idx)))
+                .on_right_click(move |ctx, _, at| ctx.dispatch_typed_action(Action::ContextOpen(crate::ui::context_menu::Target::File(menu_path.clone()), at)))
                 .finish();
                 table_rows.push(row_el);
             }
@@ -634,7 +624,7 @@ impl Companion {
             self.hstack(
                 10.,
                 vec![
-                    self.line(format!("当前目录共 {total_items} 项"), CAPTION, p.text2),
+                    self.line(format!("{total_items} 项 · 单击选择，双击打开"), CAPTION, p.text2),
                     self.line("·", CAPTION, p.text2),
                     self.line_w(
                         format!("路径：{}", self.directory),
@@ -694,5 +684,25 @@ impl Companion {
             .with_spacing(S3)
             .with_children(page_children)
             .finish()
+    }
+}
+
+/// Stable cumulative paths, with a human-readable root. No substring replacement.
+fn breadcrumbs(path: &str) -> Vec<(String, String)> {
+    let mut result = vec![("手机存储".into(), "/sdcard".into())];
+    let mut current = String::from("/sdcard");
+    for part in path.strip_prefix("/sdcard/").unwrap_or("").split('/').filter(|p| !p.is_empty()) {
+        current.push('/'); current.push_str(part);
+        result.push((part.to_owned(), current.clone()));
+    }
+    result
+}
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+    #[test]
+    fn breadcrumbs_keep_unicode_and_repeated_names() {
+        assert_eq!(breadcrumbs("/sdcard").len(),1);
+        assert_eq!(breadcrumbs("/sdcard/DCIM/旅行/DCIM").last().unwrap(), &("DCIM".into(),"/sdcard/DCIM/旅行/DCIM".into()));
     }
 }

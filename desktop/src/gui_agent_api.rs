@@ -1,21 +1,65 @@
 //! Local authenticated tool endpoint shared with Amoo's phone skill.
-use crate::{adb::Adb,device::Device,gui_agent::{self,Control},amoo_screen::ScreenEvent,openclaw::GatewayWs};
-use anyhow::{ensure,Context,Result};
-use serde_json::{json,Value};
-use std::{io::{Read,Write},net::{TcpListener,TcpStream},sync::{Arc,Mutex},time::Duration};
+use crate::{
+    adb::Adb,
+    amoo_screen::ScreenEvent,
+    device::Device,
+    gui_agent::{self, Control},
+    openclaw::GatewayWs,
+};
+use anyhow::{ensure, Context, Result};
+use serde_json::{json, Value};
+use std::{
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 #[derive(Default)]
-struct Task { active:bool, id:String, goal:String, status:String, result:Value, control:Control }
-fn request(mut stream:TcpStream,token:&str,state:&Arc<Mutex<Task>>,adb:&Adb,device:&Device)->Result<()> {
+struct Task {
+    active: bool,
+    id: String,
+    goal: String,
+    status: String,
+    result: Value,
+    control: Control,
+}
+fn request(
+    mut stream: TcpStream,
+    token: &str,
+    state: &Arc<Mutex<Task>>,
+    adb: &Adb,
+    device: &Device,
+) -> Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;
-    let mut bytes=vec![];let mut byte=[0u8;1];
-    while bytes.len()<8192&&!bytes.ends_with(b"\r\n\r\n"){stream.read_exact(&mut byte)?;bytes.push(byte[0]);}
-    ensure!(bytes.ends_with(b"\r\n\r\n"),"headers too large");
-    let headers=String::from_utf8(bytes)?;
-    ensure!(headers.starts_with("POST /tool HTTP/1.1\r\n") && headers.lines().any(|s|s==format!("Authorization: Bearer {token}")),"unauthorized");
-    let size:usize=headers.lines().find_map(|s|s.split_once(':').filter(|(k,_)|k.eq_ignore_ascii_case("content-length")).map(|(_,v)|v.trim())).context("missing length")?.parse()?;
-    ensure!(size<=20000,"request too large");let mut body=vec![0;size];stream.read_exact(&mut body)?;
-    let request:Value=serde_json::from_slice(&body)?;
+    let mut bytes = vec![];
+    let mut byte = [0u8; 1];
+    while bytes.len() < 8192 && !bytes.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut byte)?;
+        bytes.push(byte[0]);
+    }
+    ensure!(bytes.ends_with(b"\r\n\r\n"), "headers too large");
+    let headers = String::from_utf8(bytes)?;
+    ensure!(
+        headers.starts_with("POST /tool HTTP/1.1\r\n")
+            && headers
+                .lines()
+                .any(|s| s == format!("Authorization: Bearer {token}")),
+        "unauthorized"
+    );
+    let size: usize = headers
+        .lines()
+        .find_map(|s| {
+            s.split_once(':')
+                .filter(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                .map(|(_, v)| v.trim())
+        })
+        .context("missing length")?
+        .parse()?;
+    ensure!(size <= 20000, "request too large");
+    let mut body = vec![0; size];
+    stream.read_exact(&mut body)?;
+    let request: Value = serde_json::from_slice(&body)?;
     let response=(||->Result<Value>{
         let mut task=state.lock().unwrap();
         match request["op"].as_str().unwrap_or("") {
@@ -44,28 +88,56 @@ fn request(mut stream:TcpStream,token:&str,state:&Arc<Mutex<Task>>,adb:&Adb,devi
             },_=>anyhow::bail!("未知工具操作")
         }
     })().unwrap_or_else(|e|json!({"ok":false,"error":e.to_string()}));
-    let body=response.to_string();write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body)?;Ok(())
+    let body = response.to_string();
+    write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body)?;
+    Ok(())
 }
 
 /// Installs a private skill with an ephemeral endpoint capability, never account credentials.
-pub fn start(adb:&Adb,device:&Device)->Result<()> {
-    static SERVERS: std::sync::OnceLock<Mutex<std::collections::BTreeMap<String,(u16,String)>>> = std::sync::OnceLock::new();
-    let mut servers=SERVERS.get_or_init(Default::default).lock().unwrap();
-    let (port, token)=if let Some(existing)=servers.get(&device.serial) { existing.clone() } else {
-        let listener=TcpListener::bind("127.0.0.1:0")?;
-        let port=listener.local_addr()?.port();let token=format!("{:032x}{:032x}",rand::random::<u128>(),rand::random::<u128>());
-        let state=Arc::new(Mutex::new(Task::default()));
-        let adb_worker=adb.clone();let device_worker=device.clone();let secret=token.clone();
-        std::thread::spawn(move||{for stream in listener.incoming().flatten(){let _=request(stream,&secret,&state,&adb_worker,&device_worker);}});
-        servers.insert(device.serial.clone(),(port,token.clone()));(port,token)
+pub fn start(adb: &Adb, device: &Device) -> Result<()> {
+    static SERVERS: std::sync::OnceLock<Mutex<std::collections::BTreeMap<String, (u16, String)>>> =
+        std::sync::OnceLock::new();
+    let mut servers = SERVERS.get_or_init(Default::default).lock().unwrap();
+    let (port, token) = if let Some(existing) = servers.get(&device.serial) {
+        existing.clone()
+    } else {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        let token = format!(
+            "{:032x}{:032x}",
+            rand::random::<u128>(),
+            rand::random::<u128>()
+        );
+        let state = Arc::new(Mutex::new(Task::default()));
+        let adb_worker = adb.clone();
+        let device_worker = device.clone();
+        let secret = token.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let _ = request(stream, &secret, &state, &adb_worker, &device_worker);
+            }
+        });
+        servers.insert(device.serial.clone(), (port, token.clone()));
+        (port, token)
     };
     drop(servers);
-    adb.run(&["-s",&device.transport,"reverse","tcp:18796",&format!("tcp:{port}")])?;
-    let mut ws=GatewayWs::connect(adb,device)?;
-    let status=ws.call("skills.status",json!({}))?;
-    let workspace=status["workspaceDir"].as_str().context("手机未返回技能工作目录")?;
-    let script=include_str!("gui_agent_skill_install.py");
-    let result=ws.call("stepclaw.system.run",json!({"command":["python3","-c",script,workspace,token],"timeoutMs":15000}))?;
-    ensure!(result["exitCode"]==0,"手机技能安装未完成");
+    adb.run(&[
+        "-s",
+        &device.transport,
+        "reverse",
+        "tcp:18796",
+        &format!("tcp:{port}"),
+    ])?;
+    let mut ws = GatewayWs::connect(adb, device)?;
+    let status = ws.call("skills.status", json!({}))?;
+    let workspace = status["workspaceDir"]
+        .as_str()
+        .context("手机未返回技能工作目录")?;
+    let script = include_str!("gui_agent_skill_install.py");
+    let result = ws.call(
+        "stepclaw.system.run",
+        json!({"command":["python3","-c",script,workspace,token],"timeoutMs":15000}),
+    )?;
+    ensure!(result["exitCode"] == 0, "手机技能安装未完成");
     Ok(())
 }

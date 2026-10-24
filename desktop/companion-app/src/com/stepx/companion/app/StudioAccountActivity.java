@@ -9,17 +9,18 @@ import android.widget.TextView;
 /** Uses the system account chooser; never assumes another application's identity. */
 public final class StudioAccountActivity extends Activity {
     private TextView status;
-    private boolean destroyed;
+    private boolean destroyed;private CompanionUi design;
     @Override public void onCreate(Bundle state) {
-        super.onCreate(state);
-        android.widget.LinearLayout page=new android.widget.LinearLayout(this);page.setOrientation(1);page.setPadding(48,60,48,36);page.setBackgroundColor(0xfff8f8fb);
+        super.onCreate(state);design=new CompanionUi(this);
+        android.widget.LinearLayout page=new android.widget.LinearLayout(this);page.setOrientation(1);page.setPadding(design.dp(20),design.dp(20),design.dp(20),design.dp(24));page.setBackgroundColor(CompanionUi.BG);
         android.widget.ScrollView scroll=new android.widget.ScrollView(this);scroll.addView(page);setContentView(scroll);
         scroll.setOnApplyWindowInsetsListener((v,i)->{android.graphics.Insets b=i.getInsets(android.view.WindowInsets.Type.systemBars());v.setPadding(b.left,b.top,b.right,b.bottom);return i;});scroll.requestApplyInsets();
         getWindow().getInsetsController().setSystemBarsAppearance(android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
-        TextView title=new TextView(this);title.setText("Studio 账号");title.setTextColor(0xff19191d);title.setTextSize(26);title.setTypeface(null,android.graphics.Typeface.BOLD);page.addView(title);
-        status = new TextView(this); status.setTextSize(16);status.setTextColor(0xff62626d);status.setPadding(0,32,0,32);status.setLineSpacing(6,1.2f);page.addView(status);
-        android.widget.Button done=new android.widget.Button(this);done.setText("返回作品库");done.setTextColor(0xffffffff);done.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff19191d));page.addView(done);done.setOnClickListener(v->{startActivity(new Intent(this,StudioActivity.class));finish();});
+        TextView title=new TextView(this);title.setText("Studio 账号");title.setTextColor(CompanionUi.INK);title.setTextSize(21);title.setTypeface(CompanionUi.MEDIUM);page.addView(title);
+        status = new TextView(this); status.setTextSize(16);status.setTextColor(CompanionUi.MUTED);status.setPadding(0,32,0,32);status.setLineSpacing(6,1.2f);page.addView(status);
+        android.widget.Button done=new android.widget.Button(this);done.setText("返回作品库");done.setTextColor(0xffffffff);done.setBackgroundTintList(android.content.res.ColorStateList.valueOf(CompanionUi.INK));design.styleButton(done,true);page.addView(done);done.setOnClickListener(v->finish());
         note("正在连接手机账号…");
+        if(state!=null)note(getSharedPreferences("studio-account",0).getString("status","请返回后重新连接手机账号"));
         if (state == null) {
             Account[] accounts = AccountManager.get(this).getAccountsByType("com.stepos.account");
             if (accounts.length == 1) authorize(accounts[0]);

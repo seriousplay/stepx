@@ -20,7 +20,33 @@ public final class StudioProvider extends ContentProvider {
             if(!"request".equals(method)||arg==null||arg.length()>32768)throw new IllegalArgumentException("请求无效");
             JSONObject q=new JSONObject(new String(Base64.decode(arg,Base64.DEFAULT),StandardCharsets.UTF_8));StudioStore store=new StudioStore(getContext());
             result=new JSONObject().put("ok",true);
-            if(q.optString("op").equals("cloud-status")){
+            if(q.optString("op").equals("local-begin")){
+                result=StudioLocal.begin(getContext(),q);
+            }else if(q.optString("op").equals("local-chunk")){
+                result=StudioLocal.chunk(getContext(),q);
+            }else if(q.optString("op").equals("local-commit")){
+                result=StudioLocal.commit(getContext(),q.getString("upload"));
+            }else if(q.optString("op").equals("local-abort")){
+                result=StudioLocal.abort(getContext(),q.getString("upload"));
+            }else if(q.optString("op").equals("local-list")){
+                result.put("items",StudioLocal.list(getContext()));
+            }else if(q.optString("op").equals("local-status")){
+                result=StudioLocal.status(getContext());
+            }else if(q.optString("op").equals("web-api")){
+                result=StudioWeb.request(getContext(),q);
+            }else if(q.optString("op").equals("web-session")){
+                result=StudioWeb.sessionHandoff(getContext(),q.getString("url"));
+            }else if(q.optString("op").equals("web-snapshot")){
+                result=StudioWeb.snapshot(getContext());
+            }else if(q.optString("op").equals("web-disconnect")){
+                getContext().getSharedPreferences("studio-web",0).edit().clear().commit();
+                new Handler(Looper.getMainLooper()).post(()->android.webkit.CookieManager.getInstance().removeAllCookies(null));
+                result.put("authorized",false);
+            }else if(q.optString("op").equals("gui-skill-status")){
+                result=OfficialGuiSkill.status(getContext());
+            }else if(q.optString("op").equals("gui-skill-install")){
+                result=OfficialGuiSkill.install(getContext(),q);
+            }else if(q.optString("op").equals("cloud-status")){
                 result=StudioCloud.status(getContext());
             }else if(q.optString("op").equals("cloud-page")){
                 result=StudioCloud.page(getContext(),q.getString("category"),q.getInt("page"));

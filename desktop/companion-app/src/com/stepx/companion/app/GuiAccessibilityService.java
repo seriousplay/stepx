@@ -13,6 +13,8 @@ import java.util.concurrent.CompletableFuture;
 /** Bounded screenshot/action executor shared by native MCP and independent planners. */
 public final class GuiAccessibilityService extends AccessibilityService {
     static volatile GuiAccessibilityService instance;
+    static volatile long lastUserTouchRealtimeMs;
+    static volatile long lastSyntheticActionRealtimeMs;
     private JSONArray observedNodes;
     private String observedWindow = "";
     final GuiTaskState task = new GuiTaskState();
@@ -21,14 +23,40 @@ public final class GuiAccessibilityService extends AccessibilityService {
         task.expire(SystemClock.elapsedRealtime()); main.postDelayed(this, 1000);
     }};
     @Override protected void onServiceConnected() { instance=this; main.post(watchdog); }
-    @Override public void onAccessibilityEvent(AccessibilityEvent event) {}
+    @Override public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null) return;
+        int type = event.getEventType();
+        if (type == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START
+                || type == AccessibilityEvent.TYPE_GESTURE_DETECTION_START
+                || type == AccessibilityEvent.TYPE_VIEW_CLICKED
+                || type == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            long now = SystemClock.elapsedRealtime();
+            if (now - lastSyntheticActionRealtimeMs > 1200L && !task.active()) {
+                lastUserTouchRealtimeMs = now;
+            }
+        }
+    }
+    public static void markSyntheticAction() {
+        lastSyntheticActionRealtimeMs = SystemClock.elapsedRealtime();
+    }
+    public static void recordUserTouch(long realtimeMs) {
+        lastUserTouchRealtimeMs = realtimeMs;
+    }
+    public static boolean isHumanTouchingRecently(long windowMs) {
+        return isHumanTouchingRecently(SystemClock.elapsedRealtime(), windowMs);
+    }
+    public static boolean isHumanTouchingRecently(long nowRealtimeMs, long windowMs) {
+        long last = lastUserTouchRealtimeMs;
+        return last > 0L && nowRealtimeMs >= last && (nowRealtimeMs - last) < windowMs;
+    }
     @Override public void onInterrupt() { if(task.active()) task.stop(task.id,"系统中断了操作服务"); }
     @Override public void onDestroy() { if(instance==this)instance=null; main.removeCallbacksAndMessages(null); super.onDestroy(); }
     JSONObject status() throws JSONException {
         task.expire(SystemClock.elapsedRealtime());
         return new JSONObject().put("ok",true).put("ready",true).put("task",task.id)
             .put("phase",task.phase).put("goal",task.goal).put("detail",task.detail)
-            .put("epoch",task.epoch).put("actions",task.actions).put("userPaused",task.userPaused).put("userStopped",task.userStopped);
+            .put("epoch",task.epoch).put("actions",task.actions).put("userPaused",task.userPaused).put("userStopped",task.userStopped)
+            .put("lastUserTouchRealtimeMs",lastUserTouchRealtimeMs).put("humanTouching",isHumanTouchingRecently(10_000L));
     }
     void unlocked() {
         if(getSystemService(KeyguardManager.class).isKeyguardLocked() || !getSystemService(PowerManager.class).isInteractive())

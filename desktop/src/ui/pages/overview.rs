@@ -13,7 +13,12 @@ impl Companion {
     pub(in super::super) fn overview_actions(&self) -> Vec<El> {
         if self.selected.is_none() {
             return vec![
-                self.button("ov-account", "账号与用量", Action::Page(Page::Account), Btn::Secondary),
+                self.button(
+                    "ov-account",
+                    "账号与用量",
+                    Action::Page(Page::Account),
+                    Btn::Secondary,
+                ),
                 self.button("ov-refresh", "重新扫描", Action::Refresh, Btn::Secondary),
                 self.button(
                     "ov-connect",
@@ -24,7 +29,12 @@ impl Companion {
             ];
         }
         vec![
-            self.button("ov-account", "账号与用量", Action::Page(Page::Account), Btn::Secondary),
+            self.button(
+                "ov-account",
+                "账号与用量",
+                Action::Page(Page::Account),
+                Btn::Secondary,
+            ),
             self.button("ov-summary", "刷新状态", Action::Summary, Btn::Secondary),
             self.button("ov-shot", "📷 截屏", Action::Screenshot, Btn::Secondary),
             if self.mirror.is_some() {
@@ -108,9 +118,10 @@ impl Companion {
 
     pub(in super::super) fn overview_page(&self) -> El {
         let Some(device) = &self.selected else {
-            return self.pane_scroll(self.scroll.clone(), self.vstack(S4, vec![
-                self.overview_usage_card(), self.no_device(),
-            ]));
+            return self.pane_scroll(
+                self.scroll.clone(),
+                self.vstack(S4, vec![self.overview_usage_card(), self.no_device()]),
+            );
         };
         let p = self.p();
         let metrics = DeviceMetrics::from_summary(&self.summary);
@@ -369,7 +380,11 @@ impl Companion {
                                 if self.overview_back_preview {
                                     "背屏设计稿"
                                 } else {
-                                    if self.screenshot.is_some() { "最近截图" } else { "外观示意" }
+                                    if self.screenshot.is_some() {
+                                        "最近截图"
+                                    } else {
+                                        "外观示意"
+                                    }
                                 },
                                 CAPTION,
                                 p.text2,

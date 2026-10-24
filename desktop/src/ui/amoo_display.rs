@@ -162,7 +162,9 @@ pub(super) fn chat_items(
         if has_text || message.is_error {
             let text = reply_text(&message);
             items.push(AmooChatItem::AssistantRich {
-                thinking_time: if message.is_error {
+                thinking_time: if message.stop_reason == "tracking_limit" {
+                    "同步提示"
+                } else if message.is_error {
                     "请求失败"
                 } else if status_kind == 1 && message.stop_reason.is_empty() {
                     "生成中"

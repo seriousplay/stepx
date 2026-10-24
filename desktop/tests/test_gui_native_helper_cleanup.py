@@ -9,11 +9,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-import os
-import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
-JAVA = Path(shutil.which('javac') or '/missing-jdk/javac').parent
+JAVA = Path('/home/zhengfa/.local/opt/android-studio/jbr/bin')
 SOURCES = {
 'android/os/Looper.java': '''package android.os; public class Looper { static final Looper MAIN=new Looper(); public static Looper getMainLooper(){return MAIN;} public static Looper myLooper(){return MAIN;} }''',
 'android/os/Handler.java': '''package android.os; public class Handler { public final java.util.Set<Runnable> callbacks=new java.util.HashSet<>(); public Looper getLooper(){return Looper.getMainLooper();} public boolean hasCallbacks(Runnable r){return callbacks.contains(r);} public void removeCallbacks(Runnable r){callbacks.remove(r);} }''',

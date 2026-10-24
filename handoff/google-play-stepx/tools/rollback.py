@@ -10,7 +10,7 @@ parser.add_argument('--keep-apps', action='store_true')
 args = parser.parse_args()
 guard()
 BASELINE = json.loads((HERE / 'baseline.json').read_text())
-assert BASELINE.get('serial', 'STEPX_DEVICE_SERIAL') == ADB[-1], 'Wrong device baseline'
+assert BASELINE.get('serial', 'ZYPZ261A01M692000LP') == ADB[-1], 'Wrong device baseline'
 INSTALL = json.loads((HERE / 'boot-install.json').read_text())
 assert subprocess.check_output(ADB + ['shell', 'getprop', 'ro.build.fingerprint'], text=True).strip() == BASELINE['fingerprint'], '设备固件已变化，停止自动回退'
 code = '''import os,json,hashlib,shutil,fcntl,stat

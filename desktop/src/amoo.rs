@@ -479,6 +479,9 @@ impl AgentBus {
                 Instant::now() + Duration::from_secs(12),
             );
             session.messages.sort_by_key(|message| message.timestamp_ms);
+            // Report the last real parent-session inference, not a catalog default
+            // or the model used by an unrelated child task.
+            session.model = recent_session_model(session).unwrap_or_default().to_string();
             let more = history["page"]["hasMore"].as_bool().unwrap_or(false);
             session.meta = format!(
                 "后台同步 · {} 条消息{}",
@@ -523,6 +526,7 @@ impl AgentBus {
                 continue;
             }
             let mut waiting = true;
+            let mut read_confirmed = false;
             if depth < 3 && *budget > 0 {
                 *budget -= 1;
                 seen.insert(task.key.clone());
@@ -535,6 +539,7 @@ impl AgentBus {
                 ) {
                     if let Some(child_rows) = history["messages"].as_array() {
                         if let Ok(child_messages) = parse_messages(child_rows) {
+                            read_confirmed = true;
                             // A verified image/file result is already deliverable even
                             // while the phone finishes its post-processing narration.
                             waiting = !child_messages.iter().any(|message| {
@@ -564,7 +569,14 @@ impl AgentBus {
                     }
                 }
             }
-            if waiting {
+            if !read_confirmed {
+                messages.push(RealChatMessage {
+                    message_id: format!("child-unavailable:{}", task.key), run_id: run,
+                    role: "assistant".into(), stop_reason: "tracking_limit".into(), is_error: true,
+                    error_message: Some("暂时未能读取手机子任务的结果，无法确认是否完成。已保留会话；可再次同步查看，避免重复提交同一任务。".into()),
+                    timestamp_ms: task.timestamp, ..Default::default()
+                });
+            } else if waiting {
                 messages.push(RealChatMessage {
                     message_id: format!("child-pending:{}", task.key),
                     run_id: run,
@@ -591,6 +603,9 @@ impl AgentBus {
 
     /// Cloud Amoo and the phone OpenClaw gateway have different session stores.
     /// Never silently patch a gateway session with an unrelated cloud key.
+    /// AgentBus 1.0.0 also ACKs sessions.patch for a deliberately nonexistent
+    /// model while inference still returns the default model. An ACK is not
+    /// evidence of an applied override (verify_amoo_model_selection reproduces it).
     pub fn set_session_model(&mut self, _key: &str, _model: &str) -> Result<AppliedModel> {
         bail!("当前 Amoo 云会话未开放可验证的模型切换接口；请使用手机自动模型。手机 OpenClaw 模型目录与云会话独立")
     }
@@ -696,7 +711,14 @@ impl PendingReply {
 fn is_terminal(reason: &str) -> bool {
     matches!(
         reason.to_ascii_lowercase().as_str(),
-        "stop" | "end_turn" | "error" | "aborted" | "cancelled" | "length" | "tracking_limit"
+        "stop"
+            | "end_turn"
+            | "error"
+            | "aborted"
+            | "cancelled"
+            | "length"
+            | "tracking_limit"
+            | "task_delivered"
     )
 }
 
@@ -716,6 +738,85 @@ fn tool_result(tool: &Value) -> Option<Value> {
         None
     }
 }
+/// A successful tool acknowledgement binds inline task output to the exact
+/// submitted artifact. Tool arguments alone are never treated as delivered work.
+fn submitted_text_results(row: &Value) -> Vec<RealChatMessage> {
+    let mut delivered = Vec::new();
+    for tool in row["toolCalls"].as_array().into_iter().flatten() {
+        if tool["name"] != "task_result_submit" || tool["status"] != "OK" {
+            continue;
+        }
+        let Some(result) = tool_result(tool) else {
+            continue;
+        };
+        let Some(receipts) = result["artifacts"].as_array() else {
+            continue;
+        };
+        let Some(artifacts) = tool["arguments"]["artifacts"].as_array() else {
+            continue;
+        };
+        // Positional correspondence is additionally checked by type, content type
+        // and title; reordered or mismatched receipts cannot acknowledge prose.
+        let matched = |index: usize, artifact: &Value| {
+            receipts.get(index).is_some_and(|receipt| {
+                receipt["ok"] == true
+                    && receipt["type"] == artifact["type"]
+                    && receipt["contentType"] == artifact["contentType"]
+                    && receipt["title"] == artifact["title"]
+                    && receipt["artifactId"]
+                        .as_str()
+                        .is_some_and(|id| !id.is_empty())
+            })
+        };
+        let complete = !artifacts.is_empty()
+            && artifacts.len() == receipts.len()
+            && result["subTaskId"].as_u64() == Some(0)
+            && artifacts.iter().enumerate().all(|(i, a)| {
+                matched(i, a)
+                    && a["type"] == "text"
+                    && a["contentType"] == "inline"
+                    && a["content"].as_str().is_some_and(|s| !s.trim().is_empty())
+            });
+        for (i, artifact) in artifacts.iter().enumerate() {
+            if !matched(i, artifact)
+                || artifact["type"] != "text"
+                || artifact["contentType"] != "inline"
+            {
+                continue;
+            }
+            let Some(text) = artifact["content"]
+                .as_str()
+                .filter(|s| !s.trim().is_empty())
+            else {
+                continue;
+            };
+            let timestamp = row["timestamp"].as_i64().unwrap_or(0);
+            delivered.push(RealChatMessage {
+                message_id: format!(
+                    "task-result:{}:{}",
+                    string(tool, &["id"]),
+                    string(&receipts[i], &["artifactId"])
+                ),
+                run_id: string(row, &["runId"]).into(),
+                role: "assistant".into(),
+                text: text.into(),
+                stop_reason: if complete { "task_delivered" } else { "" }.into(),
+                timestamp_ms: timestamp,
+                time_label: chrono::DateTime::from_timestamp_millis(timestamp)
+                    .map(|d| {
+                        d.with_timezone(&chrono::Local)
+                            .format("%m-%d %H:%M")
+                            .to_string()
+                    })
+                    .unwrap_or_default(),
+                // Token usage belongs to the original tool message, not this view.
+                ..Default::default()
+            });
+        }
+    }
+    delivered
+}
+
 fn child_tasks(rows: &[Value]) -> Vec<ChildTask> {
     let mut tasks = Vec::new();
     let mut seen = HashSet::new();
@@ -906,7 +1007,10 @@ pub(crate) fn parse_messages(rows: &[Value]) -> Result<Vec<RealChatMessage>> {
             text,
             attachments,
             tools_summary: tool_names,
-            tool_authorization_failures: row["toolCalls"].as_array().into_iter().flatten()
+            tool_authorization_failures: row["toolCalls"]
+                .as_array()
+                .into_iter()
+                .flatten()
                 .filter(|tool| {
                     // Inspect the result only; a user quoting an error in tool arguments
                     // is not evidence of an authorization failure.
@@ -930,12 +1034,22 @@ pub(crate) fn parse_messages(rows: &[Value]) -> Result<Vec<RealChatMessage>> {
             } else {
                 Some(error.into())
             },
-            model: string(row, &["model"]).into(),
+            model: string(row, &["responseModel", "model"]).into(),
             provider: string(row, &["provider"]).into(),
             ..Default::default()
         });
+        if role == "assistant" {
+            messages.extend(submitted_text_results(row));
+        }
     }
     Ok(messages)
+}
+
+fn recent_session_model(session: &RealSessionInfo) -> Option<&str> {
+    session.messages.iter().rev().find(|message| {
+        message.role == "assistant" && !message.is_error && !message.model.is_empty()
+            && message.usage.has_tokens() && message.usage_session_key == session.key
+    }).map(|message| message.model.as_str())
 }
 
 fn parse_attachment(value: &Value) -> Option<RealAttachment> {
@@ -1009,6 +1123,20 @@ fn take_native_attachments(text: &mut String) -> Vec<RealAttachment> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn actual_response_model_excludes_child_tasks_and_failures() {
+        let mut messages = super::parse_messages(&[
+            serde_json::json!({"role":"assistant","text":"OK","model":"requested-model","responseModel":"actual-model","usage":{"output_tokens":2}}),
+            serde_json::json!({"role":"assistant","text":"child","model":"child-model","usage":{"output_tokens":2}}),
+            serde_json::json!({"role":"assistant","text":"error","model":"failed-model","stopReason":"error","usage":{"output_tokens":2}})
+        ]).unwrap();
+        messages[0].usage_session_key = "parent".into();
+        messages[1].usage_session_key = "child".into();
+        messages[2].usage_session_key = "parent".into();
+        assert_eq!(messages[0].model, "actual-model");
+        let session = super::RealSessionInfo {key:"parent".into(),messages,..Default::default()};
+        assert_eq!(super::recent_session_model(&session), Some("actual-model"));
+    }
     #[test]
     fn authorization_timeout_comes_from_tool_result_not_prompt_or_arguments() {
         let error = "[Security Guard] 用户在 180 秒内未确认授权 [ask_timeout]";
@@ -1200,6 +1328,87 @@ mod tests {
         );
         assert_eq!(image[0].attachments[0].size_bytes, Some(678741));
         assert_eq!(image[0].attachments[0].name, "boat.png");
+    }
+    fn submitted_fixture() -> Value {
+        json!({"id":"m","role":"assistant","runId":"child-run","timestamp":1792808400521i64,
+            "stopReason":"TOOL_CALLS","toolCalls":[{"id":"t","name":"task_result_submit","status":"OK",
+            "arguments":{"artifacts":[{"type":"text","contentType":"inline","title":"推荐","content":"完整的推荐正文"}]},
+            "result":{"result":json!({"taskId":"task1","subTaskId":0,"artifacts":[{"artifactId":"a1","ok":true,"type":"text","contentType":"inline","title":"推荐"}]}).to_string()}}]})
+    }
+    #[test]
+    fn successful_inline_task_result_is_visible_and_finishes_parent() {
+        let messages = parse_messages(&[submitted_fixture()]).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1].text, "完整的推荐正文");
+        assert_eq!(messages[1].message_id, "task-result:t:a1");
+        assert!(!messages[1].usage.has_tokens());
+        assert!(is_terminal(&messages[1].stop_reason));
+        let session = RealSessionInfo {
+            key: "parent".into(),
+            messages: messages
+                .into_iter()
+                .map(|mut m| {
+                    m.run_id = "parent-run".into();
+                    m
+                })
+                .collect(),
+            ..Default::default()
+        };
+        assert!(PendingReply {
+            key: "parent".into(),
+            text: "".into(),
+            run_id: "parent-run".into()
+        }
+        .finished(&session));
+    }
+    #[test]
+    fn unacknowledged_or_mismatched_submission_does_not_show_arguments_as_result() {
+        for mode in [
+            "error",
+            "pending",
+            "mismatch",
+            "missing-id",
+            "failed-receipt",
+        ] {
+            let mut row = submitted_fixture();
+            let tool = &mut row["toolCalls"][0];
+            let mut result = tool_result(tool).unwrap();
+            match mode {
+                "error" => tool["status"] = json!("ERROR"),
+                "pending" => tool["result"] = Value::Null,
+                "mismatch" => result["artifacts"][0]["title"] = json!("别的结果"),
+                "missing-id" => result["artifacts"][0]["artifactId"] = Value::Null,
+                _ => result["artifacts"][0]["ok"] = json!(false),
+            }
+            if !matches!(mode, "error" | "pending") {
+                tool["result"]["result"] = json!(result.to_string());
+            }
+            assert!(submitted_text_results(&row).is_empty(), "{mode}");
+        }
+    }
+    #[test]
+    fn partial_submission_and_non_root_subtask_do_not_finish_whole_task() {
+        let mut row = submitted_fixture();
+        row["toolCalls"][0]["arguments"]["artifacts"]
+            .as_array_mut()
+            .unwrap()
+            .push(
+                json!({"type":"text","contentType":"inline","title":"未提交","content":"不能展示"}),
+            );
+        let output = submitted_text_results(&row);
+        assert_eq!(output.len(), 1);
+        assert!(!is_terminal(&output[0].stop_reason));
+        let mut row = submitted_fixture();
+        let mut result = tool_result(&row["toolCalls"][0]).unwrap();
+        result["subTaskId"] = json!(3);
+        row["toolCalls"][0]["result"]["result"] = json!(result.to_string());
+        assert!(!is_terminal(&submitted_text_results(&row)[0].stop_reason));
+    }
+    #[test]
+    fn inline_results_are_not_taken_from_user_rows() {
+        let mut row = submitted_fixture();
+        row["role"] = json!("user");
+        assert_eq!(parse_messages(&[row]).unwrap().len(), 1);
     }
     #[test]
     fn child_tracking_prioritizes_latest_run_in_long_conversations() {

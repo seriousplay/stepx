@@ -39,6 +39,17 @@ pub(super) fn ui_label(
             .with_clip(ClipConfig::ellipsis())
             .finish();
     };
+    icon_label(icon, rest, font, size, color, weight)
+}
+
+fn icon_label(
+    icon: UiIcon,
+    rest: &str,
+    font: facloud_ui::fonts::FamilyId,
+    size: f32,
+    color: ColorU,
+    weight: Weight,
+) -> El {
     let icon_size = size.max(14.);
     let image = icons::draw_icon(icon, icon_size, color);
     if rest.is_empty() {
@@ -239,12 +250,13 @@ impl Companion {
         on_click: Option<Action>,
         on_double: Option<Action>,
     ) -> El {
+        let id = id.into();
         let p = self.p();
-        let state = self.mouse_state(format!("row:{}", id.into()));
+        let state = self.mouse_state(format!("row:{id}"));
         let interactive = on_click.is_some() || on_double.is_some();
         let mut row = Hoverable::new(state, move |mouse| {
             let bg = if selected {
-                p.selected
+                p.accent_soft
             } else if interactive && mouse.is_mouse_over_element() {
                 p.hover
             } else {
@@ -265,7 +277,10 @@ impl Companion {
         if let Some(action) = on_double {
             row = row.on_double_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()));
         }
-        row.finish()
+        let control = row.finish();
+        #[cfg(feature="ui-capture")]
+        let control = super::scenario_check::control(id, control);
+        control
     }
 
     pub fn empty(
@@ -364,14 +379,34 @@ impl Companion {
         action: Action,
         kind: Btn,
     ) -> El {
+        self.button_control(id.into(), label.into(), None, action, kind)
+    }
+
+    pub fn button_icon(
+        &self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        icon: UiIcon,
+        action: Action,
+        kind: Btn,
+    ) -> El {
+        self.button_control(id.into(), label.into(), Some(icon), action, kind)
+    }
+
+    fn button_control(
+        &self,
+        id: String,
+        label: String,
+        icon: Option<UiIcon>,
+        action: Action,
+        kind: Btn,
+    ) -> El {
         let p = self.p();
-        let id = id.into();
-        let label = label.into();
         let state = self.mouse_state(format!("btn:{id}"));
         let font = self.font;
-        Hoverable::new(state, move |mouse| {
+        let control = Hoverable::new(state, move |mouse| {
             let hovered = mouse.is_mouse_over_element();
-            let (bg, border, fg) = match kind {
+            let (_, border, fg) = match kind {
                 Btn::Primary => {
                     let c = if hovered { p.accent_hover } else { p.accent };
                     (c, c, p.on_accent)
@@ -397,19 +432,25 @@ impl Companion {
                 ),
                 Btn::DangerSolid => (p.danger, p.danger, p.on_accent),
             };
+            let resting = match kind { Btn::Primary => p.accent, Btn::Ghost => ColorU::transparent_black(), Btn::DangerSolid => p.danger, _ => p.bg };
+            let t = if self.settings.value.reduced_motion { if hovered {1.} else {0.} } else {mouse.hover_progress()};
+            let mix = |a:u8,b:u8| (a as f32+(b as f32-a as f32)*t) as u8;
+            let hover_bg=match kind {Btn::Primary=>p.accent_hover,Btn::Danger=>p.danger_soft,Btn::DangerSolid=>p.danger,_=>p.hover};
+            let mut bg=ColorU::new(mix(resting.r,hover_bg.r),mix(resting.g,hover_bg.g),mix(resting.b,hover_bg.b),mix(resting.a,hover_bg.a));
+            if mouse.is_clicked() { bg = if matches!(kind, Btn::Primary) { p.accent_hover } else { p.accent_soft }; }
             Container::new(
                 ConstrainedBox::new(
-                    Align::new(ui_label(
-                        label.clone(),
-                        font,
-                        BODY,
-                        fg,
-                        if matches!(kind, Btn::Primary | Btn::DangerSolid) {
+                    Align::new({
+                        let weight = if matches!(kind, Btn::Primary | Btn::DangerSolid) {
                             Weight::Medium
                         } else {
                             Weight::Normal
-                        },
-                    ))
+                        };
+                        match icon {
+                            Some(icon) => icon_label(icon, &label, font, BODY, fg, weight),
+                            None => ui_label(label.clone(), font, BODY, fg, weight),
+                        }
+                    })
                     .finish(),
                 )
                 .with_height(28.)
@@ -423,7 +464,10 @@ impl Companion {
         })
         .with_cursor(Cursor::PointingHand)
         .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()))
-        .finish()
+        .finish();
+        #[cfg(feature="ui-capture")]
+        let control = super::scenario_check::control(id, control);
+        control
     }
 
     /// Text-style link button (used inside rows and breadcrumbs).
@@ -541,12 +585,45 @@ impl Companion {
             .finish()
     }
 
+    /// Shape each hard line separately: native paragraph shaping uses local
+    /// character indices. Keep the active caret local too, including CJK/emoji.
+    pub(super) fn multiline_field_text(
+        &self,
+        value: &str,
+        caret: usize,
+        index: usize,
+        color: ColorU,
+    ) -> El {
+        let mut offset = 0;
+        let mut byte_offset = 0;
+        let paragraphs = value
+            .split('\n')
+            .map(|line| {
+                let chars = line.chars().count();
+                let text = Text::new(
+                    if line.is_empty() { " " } else { line }.to_owned(),
+                    self.font,
+                    BODY,
+                )
+                .with_color(color)
+                .with_line_height_ratio(1.45);
+                let local_caret = (caret >= offset && caret <= offset + chars).then(|| caret - offset);
+                offset += chars + 1;
+                let element = self.editable_line(text, line, byte_offset, index, local_caret);
+                byte_offset += line.len()+1;
+                element
+            })
+            .collect();
+        self.vstack(0., paragraphs)
+    }
+
     /// Text field bound to `self.fields[index]`. Without a width it fills the parent.
     pub fn input(&self, index: usize, placeholder: &str, width: Option<f32>) -> El {
         let p = self.p();
         let field = &self.fields[index];
         let focused = self.focus == Some(index);
-        let masked = index == super::F_PAIR_CODE && !self.show_secret;
+        let masked =
+            (index == super::F_PAIR_CODE && !self.show_secret) || index == super::F_LAB_KEY;
         let mut value = if masked {
             "•".repeat(field.text.chars().count())
         } else {
@@ -560,8 +637,13 @@ impl Companion {
             } else {
                 safe_cursor
             };
-            caret_index = cursor + field.preedit.len();
-            value.insert_str(cursor.min(value.len()), &format!("{}│", field.preedit));
+            let preedit = if masked {
+                "•".repeat(field.preedit.chars().count())
+            } else {
+                field.preedit.clone()
+            };
+            caret_index = value[..cursor].chars().count() + preedit.chars().count();
+            value.insert_str(cursor.min(value.len()), &preedit);
         }
         let is_empty = field.text.is_empty() && field.preedit.is_empty();
         if value.is_empty() {
@@ -585,12 +667,11 @@ impl Companion {
                 p.surface_border
             };
             Container::new(
-                Text::new(value.clone(), font, BODY)
-                    .with_saved_char_position(caret_index, format!("input-caret:{index}"))
-                    .with_color(text_color)
-                    .soft_wrap(false)
-                    .with_clip(ClipConfig::ellipsis())
-                    .finish(),
+                {
+                    let text = Text::new(value.clone(), font, BODY)
+                        .with_color(text_color).soft_wrap(false).with_clip(ClipConfig::ellipsis());
+                    self.editable_line(text, &value, 0, index, Some(caret_index))
+                },
             )
             .with_horizontal_padding(10.)
             .with_vertical_padding(6.)
@@ -604,7 +685,9 @@ impl Companion {
             .finish()
         })
         .with_cursor(Cursor::IBeam)
+        .with_defer_events_to_children()
         .on_mouse_down(move |ctx, _, _| ctx.dispatch_typed_action(Action::Focus(index)))
+        .on_right_click(move |ctx, _, at| ctx.dispatch_typed_action(Action::ContextOpen(crate::ui::context_menu::Target::Input(index), at)))
         .finish();
 
         match width {
@@ -690,7 +773,7 @@ impl Companion {
         Hoverable::new(state, move |mouse| {
             let hovered = mouse.is_mouse_over_element();
             let bg = if active {
-                p.selected
+                p.accent_soft
             } else if hovered {
                 p.hover
             } else {
@@ -811,13 +894,27 @@ impl Companion {
 
     /// Orthographic device artwork. Screen/LED content is composited separately.
     fn phone_art(&self, name: &'static str, width: f32, height: f32) -> El {
-        ConstrainedBox::new(Image::new(
-            facloud_ui::assets::asset_cache::AssetSource::Bundled { path: name },
-            CacheOption::BySize,
-        ).contain().finish()).with_width(width).with_height(height).finish()
+        ConstrainedBox::new(
+            Image::new(
+                facloud_ui::assets::asset_cache::AssetSource::Bundled { path: name },
+                CacheOption::BySize,
+            )
+            .contain()
+            .finish(),
+        )
+        .with_width(width)
+        .with_height(height)
+        .finish()
     }
 
-    pub fn phone_rear_housing(&self, width: f32, height: f32, frame: &[u8], _dot_size: f32, _gap: f32) -> El {
+    pub fn phone_rear_housing(
+        &self,
+        width: f32,
+        height: f32,
+        frame: &[u8],
+        _dot_size: f32,
+        _gap: f32,
+    ) -> El {
         let scale = (width / 866.).min(height / 1817.);
         let w = 866. * scale;
         let h = 1817. * scale;
@@ -828,9 +925,12 @@ impl Companion {
                 self.matrix_grid(frame, 7. * scale, 2.5 * scale, false),
                 OffsetPositioning::offset_from_parent(
                     pathfinder_geometry::vector::vec2f(562. * scale, 180. * scale),
-                    ParentOffsetBounds::Unbounded, ParentAnchor::TopLeft, ChildAnchor::TopLeft,
+                    ParentOffsetBounds::Unbounded,
+                    ParentAnchor::TopLeft,
+                    ChildAnchor::TopLeft,
                 ),
-            ).finish()
+            )
+            .finish()
     }
 
     pub fn phone_front_housing(&self, width: f32, height: f32) -> El {
@@ -838,23 +938,49 @@ impl Companion {
         let w = 866. * scale;
         let h = 1817. * scale;
         let source = if let Some((_, path)) = &self.screenshot {
-            facloud_ui::assets::asset_cache::AssetSource::LocalFile { path: path.to_string_lossy().into_owned() }
+            facloud_ui::assets::asset_cache::AssetSource::LocalFile {
+                path: path.to_string_lossy().into_owned(),
+            }
         } else {
-            facloud_ui::assets::asset_cache::AssetSource::Bundled { path: "stepx_home_screen.png" }
+            facloud_ui::assets::asset_cache::AssetSource::Bundled {
+                path: "stepx_home_screen.png",
+            }
         };
         // Fit under the generated bezel, preserving screenshot aspect ratio.
-        let screen = ConstrainedBox::new(Image::new(source, CacheOption::BySize)
-            .cover().with_corner_radius(CornerRadius::with_all(Radius::Pixels(77. * scale)))
-            .finish()).with_width(738. * scale).with_height(1660. * scale).finish();
+        let screen = ConstrainedBox::new(
+            Image::new(source, CacheOption::BySize)
+                .cover()
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(77. * scale)))
+                .finish(),
+        )
+        .with_width(738. * scale)
+        .with_height(1660. * scale)
+        .finish();
         Stack::new()
-            .with_child(ConstrainedBox::new(Rect::new().finish()).with_width(w).with_height(h).finish())
-            .with_positioned_child(screen, OffsetPositioning::offset_from_parent(
-                pathfinder_geometry::vector::vec2f(64. * scale, 80. * scale),
-                ParentOffsetBounds::Unbounded, ParentAnchor::TopLeft, ChildAnchor::TopLeft,
-            ))
-            .with_positioned_child(self.phone_art("neo_front_frame.png", w, h), OffsetPositioning::offset_from_parent(
-                pathfinder_geometry::vector::vec2f(0., 0.),
-                ParentOffsetBounds::Unbounded, ParentAnchor::TopLeft, ChildAnchor::TopLeft,
-            )).finish()
+            .with_child(
+                ConstrainedBox::new(Rect::new().finish())
+                    .with_width(w)
+                    .with_height(h)
+                    .finish(),
+            )
+            .with_positioned_child(
+                screen,
+                OffsetPositioning::offset_from_parent(
+                    pathfinder_geometry::vector::vec2f(64. * scale, 80. * scale),
+                    ParentOffsetBounds::Unbounded,
+                    ParentAnchor::TopLeft,
+                    ChildAnchor::TopLeft,
+                ),
+            )
+            .with_positioned_child(
+                self.phone_art("neo_front_frame.png", w, h),
+                OffsetPositioning::offset_from_parent(
+                    pathfinder_geometry::vector::vec2f(0., 0.),
+                    ParentOffsetBounds::Unbounded,
+                    ParentAnchor::TopLeft,
+                    ChildAnchor::TopLeft,
+                ),
+            )
+            .finish()
     }
 }

@@ -13,16 +13,18 @@ impl Companion {
             None
         } else {
             Some(Device {
-                transport: "DEMO-PZ261A".into(),
-                serial: "DEMO-PZ261A".into(),
+                transport: "ZYPZ261A01M692000LP".into(),
+                serial: "ZYPZ261A01M692000LP".into(),
                 model: "StepX PZ261A".into(),
                 android: "16".into(),
                 product: "pandora".into(),
             })
         };
-        if self.selected.is_some() { self.seed_demo_usage(); }
+        if self.selected.is_some() {
+            self.seed_demo_usage();
+        }
         self.devices = vec![Transport {
-            id: "DEMO-PZ261A".into(),
+            id: "ZYPZ261A01M692000LP".into(),
             state: "device".into(),
             model: "StepX_PZ261A".into(),
         }];
@@ -154,36 +156,9 @@ impl Companion {
             model: "StepX PZ261A".into(),
         }];
         self.preferences.selected_serial = Some("PZ261A0001".into());
-        self.status = "界面演示 · 数据为虚构示例".into();
-        self.connect_guide_step = None;
-        self.amoo_gateway_online = true;
-        if self.page == Page::Work {
-            self.amoo_sessions = vec![AmooSessionItem {
-                session_key: "demo:work".into(), title: "整理项目资料与下周计划".into(),
-                agent: "Amoo Work".into(), status: "已完成".into(), status_kind: 0,
-                meta: "文档协作 · 演示任务".into(), items: vec![
-                    AmooChatItem::UserText { attachment: Some(("项目周报.md".into(), "工作资料".into(), false)), text: "把这份周报整理成清晰的项目摘要，列出下周行动，并生成可继续编辑的文档。".into() },
-                    AmooChatItem::AssistantRich {
-                        thinking_time: String::new(), thinking_steps: vec![], tools_summary: String::new(),
-                        text: Some("## 项目摘要\n本周已完成连接引导和文件协作流程，下一步进入跨平台体验验证。\n\n### 下周行动\n- **连接体验**：验证 USB 与扫码配对的完整路径。\n- **文件协作**：复核文档、表格和演示文稿的导出。\n- **交付检查**：补齐使用说明与版本下载入口。\n\n文档已整理到成果栏，可预览后继续修改。".into()),
-                        has_bolt_artifact: false, has_invoice_artifact: false, has_safety_confirm: false, time_label: "刚刚".into(),
-                    }
-                ]
-            }];
-            self.work.status = "示例任务 · 已整理工作成果".into();
-            self.work.events = vec!["阅读项目周报".into(), "整理要点与行动".into(), "生成可编辑文档".into()];
-            let demo_path = PathBuf::from("docs/examples/项目摘要.md");
-            self.work.workspace = Some(PathBuf::from("docs/examples"));
-            self.work.artifacts = vec![super::work_state::WorkArtifactItem { path: demo_path.clone(), name: "项目摘要.md".into(), kind: "Markdown 文档".into() }];
-            self.work.local_preview = Some(super::work_state::WorkLocalPreview {
-                path: demo_path, name: "项目摘要.md".into(), bytes: 436, image: false,
-                text: Some(include_str!("../../../docs/examples/项目摘要.md").into()), markdown: true,
-                note: "可编辑文档 · 演示资料".into()
-            });
-            self.work.panel = 2;
-            self.amoo_session_idx = 0;
-        }
+        self.status = "已连接 StepX PZ261A".into();
         self.error = false;
+        self.init_demo_push();
         // Alternate state set: confirmations, transient panels.
         if std::env::var_os("STEPX_DEMO_ALT").is_some() {
             self.trash_confirm = true;

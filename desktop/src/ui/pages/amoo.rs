@@ -3,8 +3,7 @@ use super::super::{
     icons::UiIcon,
     theme::*,
     widgets::*,
-    Action, AmooChatItem, AmooUiAction, Companion, SafetyDecision, F_AMOO, F_AMOO_GUI_APP,
-    F_AMOO_SEARCH,
+    Action, AmooChatItem, AmooUiAction, Companion, SafetyDecision, F_AMOO_GUI_APP, F_AMOO_SEARCH,
 };
 use facloud_ui::{
     assets::asset_cache::AssetSource, color::ColorU, elements::*, fonts::Weight, platform::Cursor,
@@ -14,11 +13,11 @@ use stepx_companion::{amoo_gui::GuiRunState, device::BackScreenPattern};
 
 fn ensure_amoo_tti_portrait_path() -> String {
     const PORTRAIT_PNG: &[u8] = include_bytes!("../../../assets/amoo_tti_portrait.png");
-    let path = "/tmp/stepx_amoo_tti_portrait.png";
-    if !std::path::Path::new(path).exists() {
-        let _ = std::fs::write(path, PORTRAIT_PNG);
+    let path = std::env::temp_dir().join("stepx_amoo_tti_portrait.png");
+    if !path.exists() {
+        let _ = std::fs::write(&path, PORTRAIT_PNG);
     }
-    path.to_string()
+    path.to_string_lossy().into_owned()
 }
 
 const CAPABILITY_PILLS: [(&str, &str); 5] = [
@@ -95,7 +94,6 @@ fn reply_reports_lock_block(body: &str) -> bool {
 }
 
 impl Companion {
-    fn legacy_demo(&self) -> bool { self.demo_mode && !std::env::args().any(|a| a == "--press-capture") }
     fn amoo_action_icon(
         &self,
         id: impl Into<String>,
@@ -147,8 +145,12 @@ impl Companion {
     fn amoo_execution_records(&self, key: &str, records: &[ToolRecord]) -> El {
         let p = self.p();
         let expanded = self.amoo_expanded_tool_records.contains(key);
-        let authorization_failed = records.iter().any(|record| record.detail.as_deref()
-            .is_some_and(|detail| detail.starts_with("授权超时：")));
+        let authorization_failed = records.iter().any(|record| {
+            record
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with("授权超时："))
+        });
         let action = Action::AmooToggleToolRecords(key.into());
         let mut names = Vec::<(String, usize)>::new();
         for record in records {
@@ -185,7 +187,15 @@ impl Companion {
                             p.text2,
                         ),
                         self.line_w(
-                            format!("执行记录 · {} 条{}", records.len(), if authorization_failed { " · 授权超时" } else { "" }),
+                            format!(
+                                "执行记录 · {} 条{}",
+                                records.len(),
+                                if authorization_failed {
+                                    " · 授权超时"
+                                } else {
+                                    ""
+                                }
+                            ),
                             CAPTION,
                             p.text2,
                             Weight::Medium,
@@ -246,6 +256,42 @@ impl Companion {
     }
 
     pub(in super::super) fn amoo_actions(&self) -> Vec<El> {
+        if !self.demo_mode {
+            return vec![
+                self.button(
+                    "amoo-schedules",
+                    if self.amoo_show_schedules {
+                        "返回对话"
+                    } else {
+                        "定时任务"
+                    },
+                    Action::AmooToggleSchedules,
+                    Btn::Secondary,
+                ),
+                self.button(
+                    "amoo-mode-phone",
+                    if self.amoo_ui.screen_mode {
+                        "返回对话"
+                    } else {
+                        "操作手机"
+                    },
+                    Action::AmooUi(AmooUiAction::GuiMode(!self.amoo_ui.screen_mode)),
+                    Btn::Secondary,
+                ),
+                self.button(
+                    "amoo-sync-real",
+                    "刷新",
+                    Action::AmooSnapshot,
+                    Btn::Secondary,
+                ),
+                self.button(
+                    "amoo-new-chat",
+                    "新建对话",
+                    Action::AmooNewChat,
+                    Btn::Primary,
+                ),
+            ];
+        }
         let mut actions = vec![self.button(
             "amoo-schedules",
             if self.amoo_show_schedules {
@@ -256,34 +302,18 @@ impl Companion {
             Action::AmooToggleSchedules,
             Btn::Secondary,
         )];
-        if self.legacy_demo() {
-            actions.push(self.button(
-                "amoo-express-quick",
-                if self.legacy_demo() {
-                    "📦 查快递 (2)"
-                } else {
-                    "查快递"
-                },
-                Action::AmooToggleExpressCard,
-                Btn::Secondary,
-            ));
-        }
-        if !self.legacy_demo() {
-            actions.push(self.button(
-                "amoo-sync-real",
-                "↻ 后台同步",
-                Action::AmooSnapshot,
-                Btn::Secondary,
-            ));
-        }
-        if self.legacy_demo() {
-            actions.push(self.button(
-                "amoo-read",
-                "⊕ 圈选感知",
-                Action::ReadVisible,
-                Btn::Secondary,
-            ));
-        }
+        actions.push(self.button(
+            "amoo-express-quick",
+            "📦 查快递 (2)",
+            Action::AmooToggleExpressCard,
+            Btn::Secondary,
+        ));
+        actions.push(self.button(
+            "amoo-read",
+            "⊕ 圈选感知",
+            Action::ReadVisible,
+            Btn::Secondary,
+        ));
         actions.push(self.button(
             "amoo-details",
             if self.amoo_show_details {
@@ -402,6 +432,10 @@ impl Companion {
         .finish()
     }
 
+    pub(in super::super) fn compact_amoo_composer(&self) -> El {
+        self.amoo_message_composer(true, false)
+    }
+
     pub(in super::super) fn amoo_page(&self) -> El {
         if let Some(picker) = self.amoo_album_picker() {
             return picker;
@@ -416,7 +450,7 @@ impl Companion {
                     self.between(
                         self.heading("协同智能体"),
                         Container::new(self.line_w(
-                            if self.legacy_demo() || self.amoo_gateway_online {
+                            if self.demo_mode || self.amoo_gateway_online {
                                 "在线"
                             } else {
                                 "未连接"
@@ -451,7 +485,7 @@ impl Companion {
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_PANEL)))
         .finish();
 
-        let agent_selector = if self.legacy_demo() {
+        let agent_selector = if self.demo_mode {
             agent_selector
         } else {
             Container::new(self.vstack(
@@ -511,7 +545,7 @@ impl Companion {
             .iter()
             .filter(|s| s.status == "执行中" || s.status == "进行中" || s.status == "请求中")
             .count();
-        let running_label = if self.legacy_demo() {
+        let running_label = if self.demo_mode {
             let c = self
                 .amoo_sessions
                 .iter()
@@ -541,9 +575,9 @@ impl Companion {
         .finish();
 
         let mut session_cards: Vec<El> = Vec::new();
-        let max_cards = if self.legacy_demo() { 6 } else { 50 };
+        let max_cards = if self.demo_mode { 6 } else { 50 };
         for (idx, sess) in filtered_sessions.into_iter().take(max_cards) {
-            let waiting_unlock = !self.legacy_demo() && session_waits_for_unlock(&sess.items);
+            let waiting_unlock = !self.demo_mode && session_waits_for_unlock(&sess.items);
             session_cards.push(self.session_card(
                 idx,
                 session_title(&sess.title),
@@ -572,7 +606,7 @@ impl Companion {
                             } else {
                                 "⊞ 技能市场"
                             },
-                            if self.legacy_demo() {
+                            if self.demo_mode {
                                 Action::AmooToggleSkillManage
                             } else {
                                 Action::Work(super::super::WorkAction::Tab(2))
@@ -592,7 +626,7 @@ impl Companion {
                         self.button(
                             "amoo-npu-models",
                             "◈ 模型目录",
-                            if self.legacy_demo() {
+                            if self.demo_mode {
                                 Action::AmooOpenModels
                             } else {
                                 Action::Work(super::super::WorkAction::Tab(1))
@@ -609,7 +643,7 @@ impl Companion {
         .with_border(Border::top(1.).with_border_color(p.border))
         .finish();
 
-        let left_col = if self.legacy_demo() {
+        let left_col = if self.demo_mode {
             let mut session_els = vec![sessions_header];
             session_els.extend(session_cards);
             let sessions_block = self.vstack(6., session_els);
@@ -629,33 +663,111 @@ impl Companion {
             .with_border(Border::right(1.).with_border_color(p.border))
             .finish()
         } else {
-            let top_fixed =
-                Container::new(self.vstack(10., vec![agent_selector, search_box, sessions_header]))
-                    .with_padding_left(14.)
-                    .with_padding_right(14.)
-                    .with_padding_top(14.)
-                    .with_padding_bottom(6.)
-                    .finish();
+            let search_header = Container::new(self.input(F_AMOO_SEARCH, "搜索对话…", None))
+                .with_uniform_padding(12.)
+                .with_border(Border::bottom(1.).with_border_color(p.border))
+                .finish();
+
+            let mut history_rows: Vec<El> = Vec::new();
+            let filtered_real: Vec<(usize, &super::super::AmooSessionItem)> = self
+                .amoo_sessions
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| {
+                    query.is_empty()
+                        || session_title(&s.title).to_lowercase().contains(&query)
+                        || s.meta.to_lowercase().contains(&query)
+                        || s.status.to_lowercase().contains(&query)
+                })
+                .collect();
+
+            for (row_i, (idx, sess)) in filtered_real.into_iter().take(60).enumerate() {
+                if row_i > 0 {
+                    history_rows.push(self.divider());
+                }
+                let active = self.amoo_session_idx == idx;
+                let waiting_unlock = session_waits_for_unlock(&sess.items);
+                let title_str = session_title(&sess.title);
+                let status_str = if waiting_unlock {
+                    "等待解锁".to_string()
+                } else {
+                    sess.status.clone()
+                };
+                let status_badge = if waiting_unlock {
+                    self.pill_badge(status_str, p.warning, p.warning_soft)
+                } else if sess.status_kind == 2 {
+                    self.pill_badge(status_str, p.success_text, p.success_soft)
+                } else {
+                    self.line(status_str, MICRO, p.text3)
+                };
+                let row_content = self.vstack(
+                    4.,
+                    vec![
+                        self.between(
+                            self.line_w(
+                                title_str,
+                                BODY,
+                                p.text,
+                                if active {
+                                    Weight::Semibold
+                                } else {
+                                    Weight::Medium
+                                },
+                            ),
+                            status_badge,
+                        ),
+                        self.line(sess.meta.clone(), CAPTION, p.text2),
+                    ],
+                );
+                let state = self.mouse_state(format!("amoo-sess-row:{idx}"));
+                let row_el = Hoverable::new(state, move |mouse| {
+                    let hovered = mouse.is_mouse_over_element();
+                    let bg = if active {
+                        p.selected
+                    } else if hovered {
+                        p.hover
+                    } else {
+                        ColorU::transparent_black()
+                    };
+                    Container::new(row_content)
+                        .with_uniform_padding(12.)
+                        .with_background_color(bg)
+                        .finish()
+                })
+                .with_cursor(Cursor::PointingHand)
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(Action::AmooSelectSession(idx))
+                })
+                .finish();
+                history_rows.push(row_el);
+            }
+
+            if history_rows.is_empty() {
+                history_rows.push(self.empty(
+                    if self.busy && self.amoo_sessions.is_empty() {
+                        "正在同步对话历史…"
+                    } else {
+                        "暂无对话记录"
+                    },
+                    "点击右上角「新建对话」或在右侧直接输入问题开始对话。",
+                    None,
+                ));
+            }
+
             let scrollable_sessions = Expanded::new(
                 1.,
-                Container::new(
-                    self.pane_scroll(self.scroll_aux.clone(), self.vstack(6., session_cards)),
-                )
-                .with_padding_left(14.)
-                .with_padding_right(14.)
-                .with_padding_bottom(8.)
-                .finish(),
+                self.pane_scroll(self.scroll_aux.clone(), self.vstack(0., history_rows)),
             )
             .finish();
             Container::new(
                 Flex::column()
                     .with_main_axis_size(MainAxisSize::Max)
                     .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                    .with_child(top_fixed)
+                    .with_child(search_header)
                     .with_child(scrollable_sessions)
-                    .with_child(left_bottom)
                     .finish(),
             )
+            .with_background_color(if p.dark { p.sidebar } else { p.bg })
             .with_border(Border::right(1.).with_border_color(p.border))
             .finish()
         };
@@ -738,16 +850,16 @@ impl Companion {
             self.hstack(
                 6.,
                 vec![
-                    self.line_w("模型:", 11., p.text2, Weight::Medium),
+                    self.line_w("模型 · 自动:", 11., p.text2, Weight::Medium),
                     self.line(self.active_amoo_model_short(), 11., p.text),
                     self.link_muted(
                         "amoo-real-models",
-                        "模型目录",
+                        "模型与权限",
                         Action::Work(super::super::WorkAction::Tab(1)),
                     ),
                 ],
             ),
-            if self.legacy_demo() {
+            if self.demo_mode {
                 tts_toggle
             } else {
                 self.line("手机后台同步", 11., p.text3)
@@ -786,21 +898,37 @@ impl Companion {
                 ),
             ],
         );
-        let mut top_rows = vec![self.between(mode_row, if !phone_mode && !self.legacy_demo() {
-            self.hstack(4., [("pause", "暂停手机"), ("resume", "继续"), ("stop", "停止")].into_iter().map(|(op, label)|
-                self.button(format!("amoo-native-task-{op}"), label, Action::AmooUi(AmooUiAction::GuiPhoneControl(op.into())), Btn::Ghost)
-            ).collect())
-        } else { Empty::new().finish() })];
+        let mut top_rows = vec![self.between(
+            mode_row,
+            if !phone_mode && !self.demo_mode {
+                self.hstack(
+                    4.,
+                    [("pause", "暂停手机"), ("resume", "继续"), ("stop", "停止")]
+                        .into_iter()
+                        .map(|(op, label)| {
+                            self.button(
+                                format!("amoo-native-task-{op}"),
+                                label,
+                                Action::AmooUi(AmooUiAction::GuiPhoneControl(op.into())),
+                                Btn::Ghost,
+                            )
+                        })
+                        .collect(),
+                )
+            } else {
+                Empty::new().finish()
+            },
+        )];
         if phone_mode {
             top_rows.push(self.amoo_gui_controls());
         } else {
             top_rows.push(model_selector_row);
             top_rows.push(self.between(
                 self.wrap(scene_pills),
-                if self.legacy_demo() {
+                if self.demo_mode {
                     self.link_action(
                         "amoo-top-express",
-                        if self.legacy_demo() {
+                        if self.demo_mode {
                             "📦 快递取件码 (4-2-1086)"
                         } else {
                             "后台文字对话"
@@ -832,327 +960,196 @@ impl Companion {
             }
         }
 
-        if self.amoo_plus_open && !phone_mode {
-            let pop_item =
-                |id: &str, icon: UiIcon, color: ColorU, label: &'static str, act: Action| -> El {
-                    let state = self.mouse_state(format!("amoo-pop:{id}"));
-                    let row = self.hstack(
-                        10.,
+        let composer_input_row = self.amoo_message_composer(false, phone_mode);
+
+        if !self.demo_mode {
+            let current = self.amoo_sessions.get(self.amoo_session_idx);
+            let cur_title = current
+                .map(|s| session_title(&s.title))
+                .unwrap_or_else(|| "新对话".into());
+            let cur_meta = current
+                .map(|s| s.meta.clone())
+                .unwrap_or_else(|| "在下方输入问题，按回车发送".into());
+
+            let subheader = ConstrainedBox::new(
+                Container::new(self.between(
+                    self.hstack(
+                        S2,
                         vec![
-                            self.ui_icon(icon, 18., color),
-                            self.line_w(label, CAPTION, p.text, Weight::Medium),
+                            self.line_w(cur_title, SUBHEAD, p.text, Weight::Semibold),
+                            self.pill_badge(
+                                if self.amoo_gateway_online {
+                                    "已连接"
+                                } else {
+                                    "待连接"
+                                },
+                                if self.amoo_gateway_online {
+                                    p.success_text
+                                } else {
+                                    p.text2
+                                },
+                                if self.amoo_gateway_online {
+                                    p.success_soft
+                                } else {
+                                    p.tag_bg
+                                },
+                            ),
                         ],
-                    );
-                    Hoverable::new(state, move |mouse| {
-                        Container::new(row)
-                            .with_horizontal_padding(10.)
-                            .with_vertical_padding(7.)
-                            .with_background_color(if mouse.is_mouse_over_element() {
-                                p.hover
-                            } else {
-                                ColorU::transparent_black()
-                            })
-                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
-                            .finish()
-                    })
-                    .with_cursor(Cursor::PointingHand)
-                    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(act.clone()))
-                    .finish()
-                };
-            let popover = ConstrainedBox::new(
-                Container::new(self.vstack(
-                    2.,
-                    vec![
-                        pop_item(
-                            "img",
-                            UiIcon::Image,
-                            p.blue,
-                            "上传本地图片",
-                            Action::AmooAttachFile(true),
-                        ),
-                        pop_item(
-                            "doc",
-                            UiIcon::Attach,
-                            p.success,
-                            "添加文档与附件",
-                            Action::AmooAttachFile(false),
-                        ),
-                        pop_item(
-                            "album",
-                            UiIcon::Smartphone,
-                            p.warning,
-                            "从手机相册选取",
-                            Action::AmooAttachPhoneAlbum,
-                        ),
-                    ],
+                    ),
+                    self.line(cur_meta, CAPTION, p.text2),
                 ))
-                .with_uniform_padding(6.)
+                .with_horizontal_padding(S4)
                 .with_background_color(p.bg)
-                .with_border(Border::all(1.).with_border_color(p.border))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_PANEL)))
+                .with_border(Border::bottom(1.).with_border_color(p.border))
                 .finish(),
             )
-            .with_width(208.)
+            .with_height(48.)
             .finish();
-            bottom_stack.push(popover);
-        }
 
-        // Pending Attachments Strip inside Composer (driven by self.amoo_attachments)
-        let att_chips: Vec<El> = self
-            .amoo_attachments
-            .iter()
-            .enumerate()
-            .map(|(idx, att)| {
-                let (icon, icon_bg, icon_fg) = if att.is_image {
-                    (UiIcon::Image, p.success, ColorU::white())
-                } else {
-                    (
-                        UiIcon::File,
-                        if p.dark {
-                            rgb(0x27, 0x27, 0x2A)
-                        } else {
-                            rgb(0xEF, 0xEF, 0xF2)
-                        },
-                        p.text,
-                    )
-                };
-                let rm_state = self.mouse_state(format!("amoo-att-rm:{idx}"));
-                let rm_btn = Hoverable::new(rm_state, move |mouse| {
-                    self.line(
-                        "×",
-                        CAPTION,
-                        if mouse.is_mouse_over_element() {
-                            p.danger
-                        } else {
-                            p.text3
-                        },
-                    )
-                })
-                .with_cursor(Cursor::PointingHand)
-                .on_click(move |ctx, _, _| {
-                    ctx.dispatch_typed_action(Action::AmooRemoveAttachment(idx))
-                })
-                .finish();
-
-                Container::new(self.hstack(
-                    6.,
-                    vec![
-                            ConstrainedBox::new(
-                                Container::new(
-                                    Flex::row()
-                                        .with_main_axis_size(MainAxisSize::Max)
-                                        .with_main_axis_alignment(MainAxisAlignment::Center)
-                                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                                        .with_child(self.ui_icon(icon, 14., icon_fg))
-                                        .finish(),
-                                )
-                                .with_background_color(icon_bg)
-                                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
-                                .finish(),
-                            )
-                            .with_width(20.)
-                            .with_height(20.)
-                            .finish(),
-                            ConstrainedBox::new(self.line_w(
-                                att.name.clone(),
-                                CAPTION,
-                                p.text,
-                                Weight::Medium,
-                            ))
-                            .with_max_width(190.)
-                            .finish(),
-                            self.mono(att.size_label.clone(), 11., p.text2),
-                            rm_btn,
-                        ],
-                ))
-                .with_padding_left(4.)
-                .with_padding_right(8.)
-                .with_vertical_padding(4.)
-                .with_background_color(p.surface)
-                .with_border(Border::all(1.).with_border_color(p.surface_border))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
-                .finish()
-            })
-            .collect();
-
-        let composer_input_row = if self.amoo_recording {
-            let wave_bars: Vec<El> = [
-                6., 12., 16., 9., 14., 16., 10., 7., 13., 15., 11., 8., 14., 10.,
-            ]
-            .into_iter()
-            .map(|h| {
-                ConstrainedBox::new(
-                    Rect::new()
-                        .with_background_color(p.danger)
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(1.5)))
+            let mut right_children: Vec<El> = Vec::new();
+            if phone_mode {
+                right_children.push(
+                    Container::new(self.amoo_gui_controls())
+                        .with_uniform_padding(S3)
+                        .with_border(Border::bottom(1.).with_border_color(p.border))
                         .finish(),
-                )
-                .with_width(2.)
-                .with_height(h)
-                .finish()
-            })
-            .collect();
+                );
+            } else if !self.amoo_show_schedules {
+                right_children.push(subheader);
+            }
 
-            Container::new(self.between(
-                self.hstack(
-                    8.,
-                    vec![
-                        self.dot(p.danger),
-                        self.mono(
-                            format!("正在录音 00:{:02}", self.amoo_record_secs),
-                            CAPTION,
-                            p.danger,
-                        ),
-                        self.hstack(2.5, wave_bars),
-                    ],
-                ),
-                self.hstack(
-                    6.,
-                    vec![
-                        self.button(
-                            "amoo-rec-cancel",
-                            "取消",
-                            Action::AmooCancelRecording,
-                            Btn::Secondary,
-                        ),
-                        self.button(
-                            "amoo-rec-send",
-                            "发送语音",
-                            Action::AmooSendRecording,
-                            Btn::Primary,
-                        ),
-                    ],
-                ),
-            ))
-            .with_horizontal_padding(8.)
-            .with_vertical_padding(4.)
-            .with_background_color(rgba(0xEF, 0x44, 0x44, 24))
-            .with_border(Border::all(1.).with_border_color(rgba(0xEF, 0x44, 0x44, 76)))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_PANEL)))
-            .finish()
-        } else {
-            let plus_state = self.mouse_state("amoo-plus-circle");
-            let plus_open = self.amoo_plus_open;
-            let plus_btn = Hoverable::new(plus_state, move |mouse| {
-                let hovered = mouse.is_mouse_over_element();
-                let bg = if plus_open {
-                    p.accent
-                } else if hovered {
-                    p.hover
-                } else {
-                    p.surface
-                };
-                let fg = if plus_open { p.accent_fg } else { p.text };
-                let border = if plus_open {
-                    p.accent
-                } else {
-                    p.surface_border
-                };
-                ConstrainedBox::new(
-                    Container::new(
-                        Flex::row()
-                            .with_main_axis_size(MainAxisSize::Max)
-                            .with_main_axis_alignment(MainAxisAlignment::Center)
-                            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                            .with_child(self.ui_icon(UiIcon::Plus, 16., fg))
-                            .finish(),
-                    )
-                    .with_background_color(bg)
-                    .with_border(Border::all(1.).with_border_color(border))
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(16.)))
+            if !phone_mode
+                && !self.amoo_show_schedules
+                && current.is_some_and(|session| session_waits_for_unlock(&session.items))
+            {
+                right_children.push(
+                    Container::new(self.vstack(
+                        4.,
+                        vec![
+                            self.line_w("等待解锁", CAPTION, p.warning, Weight::Semibold),
+                            self.text(
+                                "最近的手机操作被锁屏阻止，请解锁手机后继续。",
+                                CAPTION,
+                                p.text2,
+                            ),
+                        ],
+                    ))
+                    .with_horizontal_padding(S4)
+                    .with_vertical_padding(S2)
+                    .with_background_color(p.warning_soft)
+                    .with_border(Border::bottom(1.).with_border_color(p.warning_border))
                     .finish(),
-                )
-                .with_width(32.)
-                .with_height(32.)
-                .finish()
-            })
-            .with_cursor(Cursor::PointingHand)
-            .on_click(|ctx, _, _| ctx.dispatch_typed_action(Action::AmooTogglePlus))
-            .finish();
+                );
+            }
 
-            let mic_btn = self.amoo_action_icon(
-                "amoo-speech-input",
-                if self.legacy_demo() {
-                    "语音输入（演示）"
-                } else {
-                    "语音输入（暂未接入语音转文字）"
-                },
-                UiIcon::Mic,
-                Action::AmooToggleRecording,
-            );
-
-            Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_spacing(8.)
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(if phone_mode {
-                    Empty::new().finish()
-                } else {
-                    plus_btn
-                })
-                .with_child(
-                    Expanded::new(
-                        1.,
-                        self.input(
-                            F_AMOO,
-                            if phone_mode {
-                                "描述手机上要完成的操作…"
-                            } else {
-                                "输入消息或添加图片、文档…"
-                            },
-                            None,
-                        ),
-                    )
-                    .finish(),
-                )
-                .with_child(if self.legacy_demo() && !phone_mode {
-                    mic_btn
-                } else {
-                    Empty::new().finish()
-                })
-                .with_child(
-                    if phone_mode
-                        && (self.amoo_ui.gui_running
-                            || self.amoo_ui.gui_checking
-                            || self.amoo_ui.gui_unconfirmed
-                            || (!self.amoo_ui.gui_desktop
-                                && self.amoo_ui.gui_unavailable_reason.is_some())
-                            || self.busy
-                            || self.work.running)
-                    {
-                        self.disabled_button(
-                            if !self.amoo_ui.gui_desktop
-                                && self.amoo_ui.gui_unavailable_reason.is_some()
-                            {
-                                "系统未开放"
-                            } else if self.amoo_ui.gui_running {
-                                "等待结果"
-                            } else {
-                                "开始操作"
-                            },
+            right_children.push(
+                Expanded::new(
+                    1.,
+                    if phone_mode || self.amoo_show_schedules {
+                        self.pane_scroll(
+                            self.scroll.clone(),
+                            Container::new(stream).with_uniform_padding(S4).finish(),
                         )
                     } else {
-                        self.button(
-                            "amoo-send",
-                            if phone_mode { "开始操作" } else { "发送" },
-                            Action::AmooSend,
-                            Btn::Primary,
+                        self.chat_scroll(
+                            Container::new(self.selectable_messages(stream))
+                                .with_uniform_padding(S4)
+                                .finish(),
                         )
                     },
                 )
-                .finish()
-        };
+                .finish(),
+            );
+
+            let mut real_composer_rows: Vec<El> = Vec::new();
+            if !phone_mode {
+                if let Some(panel) = self.screen_text_panel() {
+                    real_composer_rows.push(panel);
+                }
+            }
+            if !phone_mode && self.amoo_ui.gui_running {
+                real_composer_rows.push(self.hstack(
+                    8.,
+                    vec![
+                        self.text(&self.amoo_ui.gui_message, MICRO, p.text2),
+                        self.button(
+                            "amoo-chat-gui-pause",
+                            if self.amoo_ui.gui_paused {
+                                "继续"
+                            } else {
+                                "暂停"
+                            },
+                            Action::AmooUi(AmooUiAction::GuiPauseResume),
+                            Btn::Secondary,
+                        ),
+                        self.button(
+                            "amoo-chat-gui-stop",
+                            "停止",
+                            Action::AmooUi(AmooUiAction::GuiStopWaiting),
+                            Btn::Secondary,
+                        ),
+                    ],
+                ));
+            } else if !phone_mode && !self.amoo_ui.gui_message.is_empty() {
+                real_composer_rows.push(self.text(&self.amoo_ui.gui_message, MICRO, p.text2));
+            }
+            real_composer_rows.push(composer_input_row);
+
+            right_children.push(
+                Container::new(self.vstack(S2, real_composer_rows))
+                    .with_horizontal_padding(S4)
+                    .with_vertical_padding(S3)
+                    .with_background_color(p.bg)
+                    .with_border(Border::top(1.).with_border_color(p.border))
+                    .finish(),
+            );
+
+            let right_pane = Container::new(
+                Flex::column()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_children(right_children)
+                    .finish(),
+            )
+            .with_background_color(p.bg)
+            .finish();
+
+            return Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_child(
+                    ConstrainedBox::new(left_col)
+                        .with_width(LIST_PANE_W)
+                        .finish(),
+                )
+                .with_child(Expanded::new(1., right_pane).finish())
+                .finish();
+        }
 
         let mut composer_children = Vec::new();
-        if !att_chips.is_empty() {
-            composer_children.push(self.wrap(att_chips));
-        }
         if !phone_mode && self.amoo_ui.gui_running {
-            composer_children.push(self.hstack(8., vec![
-                self.text(&self.amoo_ui.gui_message, MICRO, p.text2),
-                self.button("amoo-chat-gui-pause", if self.amoo_ui.gui_paused {"继续"} else {"暂停"}, Action::AmooUi(AmooUiAction::GuiPauseResume), Btn::Secondary),
-                self.button("amoo-chat-gui-stop", "停止操作", Action::AmooUi(AmooUiAction::GuiStopWaiting), Btn::Secondary),
-            ]));
+            composer_children.push(self.hstack(
+                8.,
+                vec![
+                    self.text(&self.amoo_ui.gui_message, MICRO, p.text2),
+                    self.button(
+                        "amoo-chat-gui-pause",
+                        if self.amoo_ui.gui_paused {
+                            "继续"
+                        } else {
+                            "暂停"
+                        },
+                        Action::AmooUi(AmooUiAction::GuiPauseResume),
+                        Btn::Secondary,
+                    ),
+                    self.button(
+                        "amoo-chat-gui-stop",
+                        "停止操作",
+                        Action::AmooUi(AmooUiAction::GuiStopWaiting),
+                        Btn::Secondary,
+                    ),
+                ],
+            ));
         } else if !phone_mode && !self.amoo_ui.gui_message.is_empty() {
             composer_children.push(self.text(&self.amoo_ui.gui_message, MICRO, p.text2));
         }
@@ -1178,14 +1175,7 @@ impl Companion {
             ));
         }
 
-        let docked_composer = Container::new(self.vstack(8., composer_children))
-            .with_uniform_padding(10.)
-            .with_background_color(p.bg)
-            .with_border(Border::all(1.).with_border_color(p.border))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(16.)))
-            .finish();
-
-        bottom_stack.push(docked_composer);
+        bottom_stack.push(self.vstack(S2, composer_children));
 
         let mut center_children: Vec<El> = vec![top_cap_bar];
 
@@ -1301,7 +1291,7 @@ impl Companion {
         center_children.push(
             Expanded::new(
                 1.,
-                Container::new(self.pane_scroll(self.scroll.clone(), stream))
+                Container::new(self.chat_scroll(self.selectable_messages(stream)))
                     .with_padding_top(8.)
                     .with_padding_bottom(6.)
                     .finish(),
@@ -1376,14 +1366,14 @@ impl Companion {
         };
 
         let mem_count_state = self.mouse_state("amoo-mem-badge");
-        let mem_total = if self.legacy_demo() {
+        let mem_total = if self.demo_mode {
             26 + self.amoo_memories.len()
         } else {
             self.amoo_bm25_entries.max(self.amoo_memories.len())
         };
         let mem_badge = Hoverable::new(mem_count_state, move |_| {
             Container::new(self.line_w(
-                if self.legacy_demo() || mem_total > 0 {
+                if self.demo_mode || mem_total > 0 {
                     format!("{mem_total} 条")
                 } else {
                     "未同步".into()
@@ -1441,7 +1431,7 @@ impl Companion {
                         clickable_pref_row(
                             "amoo-pref-mem",
                             "跨会话记忆",
-                            if !self.legacy_demo() {
+                            if !self.demo_mode {
                                 "未同步"
                             } else if self.amoo_memory_enabled {
                                 "已开启"
@@ -1458,14 +1448,14 @@ impl Companion {
                         clickable_pref_row(
                             "amoo-pref-style",
                             "交流风格",
-                            if self.legacy_demo() { style_label } else { "未同步" },
+                            if self.demo_mode { style_label } else { "未同步" },
                             p.text,
                             Action::AmooCycleStyle,
                         ),
                         clickable_pref_row(
                             "amoo-pref-commute",
                             "通勤偏好",
-                            if self.legacy_demo() { commute_label } else { "未同步" },
+                            if self.demo_mode { commute_label } else { "未同步" },
                             p.text,
                             Action::AmooCycleCommute,
                         ),
@@ -1521,14 +1511,14 @@ impl Companion {
             .finish()
         };
 
-        let enabled_skills_count = if self.legacy_demo() {
+        let enabled_skills_count = if self.demo_mode {
             2 + self.amoo_skills.iter().filter(|s| s.enabled).count()
         } else {
             self.amoo_skills.iter().filter(|s| s.enabled).count()
         };
 
         let mut skill_rows: Vec<El> = vec![self.between(
-            self.heading(if self.legacy_demo() || !self.amoo_skills.is_empty() {
+            self.heading(if self.demo_mode || !self.amoo_skills.is_empty() {
                 format!("已启用技能 ({enabled_skills_count})")
             } else {
                 "技能尚未同步".into()
@@ -1633,7 +1623,7 @@ impl Companion {
 
         let engine_title = match self.amoo_agent_idx {
             0 => {
-                if self.legacy_demo() {
+                if self.demo_mode {
                     "端侧 Agent 引擎"
                 } else {
                     "Amoo 后台连接"
@@ -1643,7 +1633,7 @@ impl Companion {
             2 => "飞书 / 企微网关",
             _ => "Claude / OpenClaw",
         };
-        let engine_ver_label = if self.legacy_demo() {
+        let engine_ver_label = if self.demo_mode {
             "v1.0.7 就绪".to_string()
         } else {
             let short_ver = self
@@ -1795,7 +1785,7 @@ impl Companion {
         .with_background_color(if p.dark { p.sidebar } else { p.surface })
         .finish();
 
-        let right_col = if self.legacy_demo() {
+        let right_col = if self.demo_mode {
             right_col
         } else {
             let current = self.amoo_sessions.get(self.amoo_session_idx);
@@ -1880,13 +1870,13 @@ impl Companion {
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(ConstrainedBox::new(left_col).with_width(260.).finish())
             .with_child(Expanded::new(1., center_col).finish());
-        if self.legacy_demo() || self.amoo_show_details {
+        if self.demo_mode || self.amoo_show_details {
             layout = layout.with_child(ConstrainedBox::new(right_col).with_width(286.).finish());
         }
         layout.finish()
     }
 
-    fn amoo_schedule_center(&self) -> El {
+    pub(in super::super) fn amoo_schedule_center(&self) -> El {
         let p = self.p();
         let enabled = self.amoo_cron_jobs.iter().filter(|job| job.enabled).count();
         let mut sections = vec![
@@ -2071,7 +2061,7 @@ impl Companion {
             6.,
             vec![
                 self.hstack(6., [false, true].into_iter().map(|desktop| {
-                    let label = if desktop { "GELab-Zero Agent" } else { "手机原生" };
+                    let label = if desktop { "伴侣 GUI Agent" } else { "手机原生" };
                     if state.gui_running || state.gui_unconfirmed {
                         self.disabled_button(label)
                     } else {
@@ -2081,7 +2071,7 @@ impl Companion {
                     }
                 }).collect()),
                 self.text(if state.gui_desktop {
-                    "手机端 GELab-Zero 适配器使用 Step Plan 视觉模型独立规划、操作与核验。关闭 desktop 或断开连接后，任务仍由手机继续执行。"
+                    "手机端独立规划、看屏操作与核验。可从小工具安装 Neo Agent Touch 适配版；关闭 desktop 或断开连接后，任务仍由手机继续执行。"
                 } else {
                     "使用手机系统提供的原生执行器；是否开放以手机实际返回为准。"
                 }, MICRO, p.text2),
@@ -2250,7 +2240,16 @@ impl Companion {
                     p.text3,
                 ));
                 if state.gui_desktop {
-                    message.push(self.button("amoo-gui-pause", if state.gui_paused { "继续任务" } else { "暂停任务" }, Action::AmooUi(AmooUiAction::GuiPauseResume), Btn::Secondary));
+                    message.push(self.button(
+                        "amoo-gui-pause",
+                        if state.gui_paused {
+                            "继续任务"
+                        } else {
+                            "暂停任务"
+                        },
+                        Action::AmooUi(AmooUiAction::GuiPauseResume),
+                        Btn::Secondary,
+                    ));
                 }
                 if !state.gui_steps.is_empty() {
                     message.push(self.amoo_gui_step_list(&state.gui_steps, "amoo-gui-live-steps"));
@@ -2398,7 +2397,7 @@ impl Companion {
         self.vstack(12., rows)
     }
 
-    fn amoo_conversation(&self) -> El {
+    pub(in super::super) fn amoo_conversation(&self) -> El {
         let p = self.p();
         let Some(sess) = self.amoo_sessions.get(self.amoo_session_idx) else {
             return self.text(
@@ -2583,7 +2582,7 @@ impl Companion {
                 } => {
                     let think_state = self.mouse_state(format!("amoo-think-btn:{idx}"));
                     let expanded = self.amoo_thinking_expanded;
-                    let think_label = if self.legacy_demo() {
+                    let think_label = if self.demo_mode {
                         format!("已深度思考 {thinking_time}")
                     } else if !thinking_steps.is_empty() {
                         "思考过程".into()
@@ -2640,7 +2639,7 @@ impl Companion {
                             vec![
                                 think_chip,
                                 self.line_w(
-                                    if self.legacy_demo() {
+                                    if self.demo_mode {
                                         format!("✓ 已调用 {} 项工具", thinking_steps.len())
                                     } else {
                                         String::new()
@@ -2657,7 +2656,13 @@ impl Companion {
                     .with_border(Border::bottom(1.).with_border_color(p.border))
                     .finish();
 
-                    let mut card_children: Vec<El> = vec![thinking_bar];
+                    let mut card_children: Vec<El> = Vec::new();
+                    if !thinking_steps.is_empty()
+                        || thinking_time == "请求失败"
+                        || !tools_summary.is_empty()
+                    {
+                        card_children.push(thinking_bar);
+                    }
 
                     if expanded && !thinking_steps.is_empty() {
                         let step_lines: Vec<El> = thinking_steps
@@ -2680,8 +2685,9 @@ impl Companion {
                         .as_deref()
                         .and_then(|body| stepx_companion::work_protocol::display_text(body, false))
                     {
+                        let body_txt = self.live_reply_text(idx, &body_txt);
                         let marker = "🖼 [AI 生成图片卡片 · 手机端已渲染高清写真]";
-                        if self.legacy_demo() && body_txt.contains(marker) {
+                        if self.demo_mode && body_txt.contains(marker) {
                             let parts: Vec<&str> = body_txt.splitn(2, marker).collect();
                             let before = parts.first().copied().unwrap_or("").trim();
                             let after = parts.get(1).copied().unwrap_or("").trim();
@@ -3088,20 +3094,12 @@ impl Companion {
                         format!("amoo-reply-copy:{idx}"),
                         "复制回复",
                         UiIcon::Copy,
-                        Action::CopyText(copy_payload, "已复制 Amoo 回复内容".into()),
+                        Action::CopyText(copy_payload.clone(), "已复制 Amoo 回复内容".into()),
                     )];
-                    if self.legacy_demo() {
-                        reply_actions.push(self.amoo_action_icon(
-                            format!("amoo-reply-tts:{idx}"),
-                            if self.amoo_tts_on {
-                                "停止播报"
-                            } else {
-                                "语音播报"
-                            },
-                            UiIcon::Speaker,
-                            Action::AmooToggleTts,
-                        ));
-                    }
+                    reply_actions.push(self.speech_icon(
+                        format!("amoo-speech:{}:{idx}", sess.session_key),
+                        copy_payload,
+                    ));
                     if let Some(text) = retry_prompt(&sess.items, idx) {
                         reply_actions.push(self.amoo_action_icon(
                             format!("amoo-reply-retry:{idx}"),
@@ -3119,38 +3117,14 @@ impl Companion {
                     );
                     card_children.push(reply_footer);
 
-                    let reply_card = Container::new(self.vstack(8., card_children))
-                        .with_uniform_padding(12.)
-                        .with_background_color(p.bg)
-                        .with_border(Border::all(1.).with_border_color(p.border))
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(16.)))
+                    let reply_card = Container::new(self.vstack(12., card_children))
+                        .with_vertical_padding(10.)
+                        .with_horizontal_padding(4.)
                         .finish();
 
-                    let avatar_a = ConstrainedBox::new(
-                        Container::new(
-                            Flex::row()
-                                .with_main_axis_size(MainAxisSize::Max)
-                                .with_main_axis_alignment(MainAxisAlignment::Center)
-                                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                                .with_child(self.line_w(
-                                    "A",
-                                    CAPTION,
-                                    ColorU::white(),
-                                    Weight::Semibold,
-                                ))
-                                .finish(),
-                        )
-                        .with_background_color(if p.dark {
-                            rgb(0x27, 0x27, 0x2A)
-                        } else {
-                            rgb(0x18, 0x18, 0x1B)
-                        })
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
-                        .finish(),
-                    )
-                    .with_width(24.)
-                    .with_height(24.)
-                    .finish();
+                    let avatar_a = Container::new(self.ui_icon(UiIcon::Star, 22., p.text))
+                        .with_padding_top(12.)
+                        .finish();
 
                     rows.push(
                         Flex::row()

@@ -11,7 +11,6 @@ spec.loader.exec_module(recovery)
 
 
 class RecoveryGuards(unittest.TestCase):
-    @unittest.skipUnless((ROOT / "diagnostics/native-gui-backup-20261022-1910").is_dir(), "Private device recovery fixture not distributed")
     def test_exact_failed_run_and_redirect(self):
         directory = ROOT / 'diagnostics/native-gui-backup-20261022-1910'
         owner = json.loads((directory / ('task-host-' + recovery.OWNER_ID + '.json')).read_text())
@@ -38,7 +37,6 @@ class RecoveryGuards(unittest.TestCase):
         altered = value.copy(); altered['raw_details'] = 'unexpected'
         with self.assertRaises(RuntimeError): recovery.validate_result(altered, 2859)
 
-    @unittest.skipUnless(recovery.DEX.is_file(), "Build optional recovery DEX first")
     def test_worker_pins_reviewed_dex_and_has_no_old_payload(self):
         identity = {'pid': 2859, 'start_ticks': '706', 'boot_id': 'c92e4fb8-5efd-4c7f-b448-0571f5080d79'}
         code = recovery.build_worker(recovery.DEX.read_bytes(), identity)

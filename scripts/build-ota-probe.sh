@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-JDK="${STEPX_JDK:-${JAVA_HOME}}"
-SDK_JAR="${STEPX_ANDROID_JAR:-${ANDROID_HOME}/platforms/android-36/android.jar}"
-R8_JAR="${STEPX_R8_JAR:-${ANDROID_HOME}/cmdline-tools/latest/lib/r8.jar}"
+JDK="${STEPX_JDK:-${JAVA_HOME:?Set JAVA_HOME to JDK 17}}"
+SDK_JAR="${STEPX_ANDROID_JAR:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Set ANDROID_HOME}}/platforms/android-36/android.jar}"
+R8_JAR="${STEPX_R8_JAR:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Set ANDROID_HOME}}/cmdline-tools/latest/lib/r8.jar}"
 OUT="$ROOT/desktop/.runtime/ota-build"
 mkdir -p "$OUT/classes" "$OUT/dex"
 "$JDK/bin/javac" -encoding UTF-8 -source 11 -target 11 -classpath "$SDK_JAR" -d "$OUT/classes" "$ROOT/desktop/ota-bridge/OtaProbe.java"

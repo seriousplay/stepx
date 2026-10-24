@@ -41,6 +41,7 @@ pub(super) enum WorkAction {
         url: String,
     },
     OpenPreview(String),
+    CloseImagePreview,
     SelectModel(Option<String>),
     Template(u8),
     OpenArtifact(usize),
@@ -115,6 +116,7 @@ pub(super) struct WorkUiState {
     pub files: Vec<WorkFileItem>,
     pub artifacts: Vec<WorkArtifactItem>,
     pub events: Vec<String>,
+    final_reply: Option<String>,
     pub status: String,
     pub running: bool,
     pub selected_model: Option<String>,
@@ -129,6 +131,9 @@ pub(super) struct WorkUiState {
     pub prompt_scroll: ClippedScrollStateHandle,
     pub image_previews: HashMap<String, PathBuf>,
     pub preview_errors: HashMap<String, String>,
+    pub image_viewer: Option<String>,
+    pub preview_pending: HashSet<String>,
+    preview_tx: Option<mpsc::Sender<(String, std::result::Result<PathBuf, String>)>>,
     preview_identities: HashMap<String, String>,
     preview_attempted: HashSet<String>,
     preview_cache: Option<Arc<tempfile::TempDir>>,
@@ -141,10 +146,7 @@ pub(super) struct WorkUiState {
 impl Default for WorkUiState {
     fn default() -> Self {
         let local_preview = initial_local_preview();
-        let workspace = local_preview
-            .as_ref()
-            .and_then(|preview| preview.path.parent())
-            .map(std::path::Path::to_path_buf);
+        let workspace = stepx_companion::settings::load().work_directory.or_else(||local_preview.as_ref().and_then(|preview|preview.path.parent()).map(std::path::Path::to_path_buf));
         let files = workspace
             .as_ref()
             .and_then(|root| {
@@ -188,6 +190,7 @@ impl Default for WorkUiState {
             files,
             artifacts: Vec::new(),
             events: Vec::new(),
+            final_reply: None,
             status: "选择手机会话继续处理，或创建工作任务".into(),
             running: false,
             selected_model: None,
@@ -202,6 +205,9 @@ impl Default for WorkUiState {
             prompt_scroll: Default::default(),
             image_previews: initial_image_previews(),
             preview_errors: HashMap::new(),
+            image_viewer: None,
+            preview_pending: HashSet::new(),
+            preview_tx: None,
             preview_identities: HashMap::new(),
             preview_attempted: HashSet::new(),
             preview_cache: None,
@@ -275,6 +281,9 @@ impl WorkUiState {
 
     pub(super) fn clear_account_previews(&mut self) {
         self.preview_rx = None;
+        self.preview_tx = None;
+        self.preview_pending.clear();
+        self.image_viewer = None;
         self.preview_cache = None;
         self.preview_attempted.clear();
         self.image_previews.clear();
@@ -295,6 +304,9 @@ impl WorkUiState {
         self.session_models.clear();
         self.pending_install = None;
         self.preview_rx = None;
+        self.preview_tx = None;
+        self.preview_pending.clear();
+        self.image_viewer = None;
         self.preview_cache = None;
         self.preview_attempted.clear();
         self.image_previews = initial_image_previews();
@@ -314,7 +326,7 @@ impl WorkUiState {
         self.running = false;
         self.status = "手机已断开，请连接设备后同步工作".into();
     }
-    fn log(&mut self, message: String) {
+    pub(super) fn log(&mut self, message: String) {
         self.events.push(message);
         if self.events.len() > 200 {
             self.events.remove(0);
@@ -354,6 +366,51 @@ pub(super) enum WorkOutcome {
     CatalogChanged(amoo_catalog::WorkCatalog, String),
 }
 
+impl WorkAction {
+    pub(super) fn keeps_current_shell(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenRemote(_)
+                | Self::PreviewAttachment { .. }
+                | Self::SaveAttachment { .. }
+                | Self::OpenPreview(_)
+                | Self::CloseImagePreview
+        )
+    }
+}
+
+fn conversation_images(items: &[AmooChatItem]) -> Vec<stepx_companion::openclaw::RealAttachment> {
+    let mut seen = HashSet::new();
+    items
+        .iter()
+        .rev()
+        .flat_map(|item| match item {
+            AmooChatItem::Attachment {
+                name,
+                kind,
+                mime,
+                url,
+                path,
+                ..
+            } if (kind == "image" || mime.starts_with("image/")) && !url.is_empty() => {
+                vec![stepx_companion::openclaw::RealAttachment {
+                    name: name.clone(),
+                    kind: kind.clone(),
+                    mime: mime.clone(),
+                    url: url.clone(),
+                    path: path.clone(),
+                    ..Default::default()
+                }]
+            }
+            AmooChatItem::AssistantRich {
+                text: Some(text), ..
+            } => pages::markdown_images(text),
+            _ => vec![],
+        })
+        .filter(|a| seen.insert(a.url.clone()))
+        .collect()
+}
+
 impl Companion {
     /// Only a stable native message ID can alias renewed attachment URLs.
     pub(super) fn record_work_attachment_identities(&mut self, real: &RealAmooData) {
@@ -361,6 +418,18 @@ impl Companion {
             for message in &session.messages {
                 if message.message_id.is_empty() {
                     continue;
+                }
+                for attachment in pages::markdown_images(&message.text) {
+                    let identity = serde_json::json!([
+                        session.key,
+                        message.message_id,
+                        "inline",
+                        attachment.url
+                    ])
+                    .to_string();
+                    self.work
+                        .preview_identities
+                        .insert(attachment.url, identity);
                 }
                 for (index, attachment) in message.attachments.iter().enumerate() {
                     if attachment.url.is_empty() {
@@ -465,6 +534,7 @@ impl Companion {
                 } else {
                     format!("已导入 {name} 的流程文档；{omitted} 个脚本或非文本文件未导入")
                 };
+                self.workspace_skill_imported(&workspace);
                 self.work.mode = 1;
                 self.work.tab = 0;
                 self.work.capabilities_open = false;
@@ -481,7 +551,7 @@ impl Companion {
                     let _ = self.work_files();
                 }
                 if self.work.tab == 0 {
-                    Self::scroll_to_end(&self.scroll);
+                    self.reveal_latest_chat();
                 }
                 self.work.catalog_loading = false;
                 match catalog {
@@ -516,6 +586,10 @@ impl Companion {
                 if self.work.attachments == attachments {
                     self.work.attachments.clear();
                 }
+                if self.workspace.running.as_ref().is_some_and(|r| r.executor == stepx_companion::amoo_workspace::Executor::Image) {
+                    if self.fields[F_AMOO].text.trim() == draft.trim() { self.fields[F_AMOO].clear(); }
+                    if self.amoo_attachments.iter().filter_map(|a| a.local_path.as_ref()).eq(attachments.iter()) { self.amoo_attachments.clear(); }
+                }
                 self.apply(Outcome::AmooSent(receipt));
                 self.work.status = "手机已接收，正在等待回复".into();
             }
@@ -529,7 +603,7 @@ impl Companion {
         }
     }
 
-    fn work_files(&mut self) -> Result<()> {
+    pub(super) fn work_files(&mut self) -> Result<()> {
         let Some(root) = self.work.workspace.as_ref() else {
             return Ok(());
         };
@@ -584,11 +658,14 @@ impl Companion {
     fn do_work_action(&mut self, action: &WorkAction, ctx: &mut ViewContext<Self>) -> Result<()> {
         match action {
             WorkAction::Tab(tab) => {
-                self.page = Page::Work;
+                self.clear_text_interaction();
+                self.page = Page::Amoo;
+                self.workspace.panel=3;
                 self.work.tab = *tab;
                 self.work.capabilities_open = *tab > 0;
                 self.work.catalog_page = 0;
                 self.scroll = Default::default();
+                if *tab == 0 { self.reveal_latest_chat(); }
                 if self.work.catalog.is_none() && !self.busy {
                     self.refresh_work();
                 }
@@ -600,6 +677,7 @@ impl Companion {
                 self.work.capabilities_open = !self.work.capabilities_open;
                 self.work.tab = if self.work.capabilities_open { 2 } else { 0 };
                 self.scroll = Default::default();
+                if !self.work.capabilities_open { self.reveal_latest_chat(); }
                 if self.work.capabilities_open && self.work.catalog.is_none() && !self.busy {
                     self.refresh_work();
                 }
@@ -622,6 +700,7 @@ impl Companion {
                             return Ok(());
                         };
                         self.work.workspace = Some(path.canonicalize()?);
+                    self.remember_work_directory()?;
                     }
                     let root = self.work.workspace.as_ref().context("请选择工作文件夹")?;
                     let mut local_files = Vec::new();
@@ -708,6 +787,7 @@ impl Companion {
                         return Ok(());
                     };
                     self.work.workspace = Some(path.canonicalize()?);
+                    self.remember_work_directory()?;
                     self.work_files()?;
                 }
                 let workspace = self.work.workspace.clone().context("请选择工作文件夹")?;
@@ -753,6 +833,7 @@ impl Companion {
                 {
                     let path = path.canonicalize()?;
                     self.work.workspace = Some(path);
+                    self.remember_work_directory()?;
                     self.work.local_preview = None;
                     self.work.local_preview_loading = None;
                     self.work.local_preview_error = None;
@@ -778,6 +859,7 @@ impl Companion {
                         return Ok(());
                     };
                     self.work.workspace = Some(path.canonicalize()?);
+                    self.remember_work_directory()?;
                     self.work_files()?;
                 }
                 self.work.attach_menu_open = false;
@@ -894,6 +976,7 @@ impl Companion {
                     "正在同步或执行工作，请等待完成后切换会话"
                 );
                 if *index < self.amoo_sessions.len() {
+                    self.clear_text_interaction();
                     self.work.panel = 2;
                     self.work.capabilities_open = false;
                     self.work.remote_preview_url = None;
@@ -912,6 +995,7 @@ impl Companion {
                     self.work.tab = 0;
                     self.work.selected_model = None;
                     self.scroll = Default::default();
+                    self.reveal_latest_chat();
                     if !self.busy {
                         let key = self.amoo_sessions[*index].session_key.clone();
                         self.with_device("正在同步工作会话…", move |adb, device| {
@@ -973,7 +1057,9 @@ impl Companion {
                 mime,
                 url,
             } => {
-                anyhow::ensure!(self.work.preview_rx.is_none(), "图片正在载入，请稍候");
+                if self.work.preview_pending.contains(url) {
+                    return Ok(());
+                }
                 self.work.preview_attempted.remove(url);
                 self.work.preview_errors.remove(url);
                 self.begin_work_previews(vec![stepx_companion::openclaw::RealAttachment {
@@ -999,6 +1085,7 @@ impl Companion {
                 if let Some(path) = native_dialog::FileDialog::new()
                     .set_title("保存 Amoo 附件")
                     .set_filename(filename)
+                    .set_location(&stepx_companion::settings::downloads())
                     .show_save_single_file()?
                 {
                     anyhow::ensure!(!path.exists(), "该文件已存在，请选择新名称保存");
@@ -1058,12 +1145,17 @@ impl Companion {
                 }
             }
             WorkAction::OpenPreview(url) => {
-                let path = self
-                    .work
-                    .image_previews
-                    .get(url)
-                    .context("图片尚未载入，请重试")?;
-                open_work_path(path)?;
+                anyhow::ensure!(
+                    self.work
+                        .image_previews
+                        .get(url)
+                        .is_some_and(|p| p.is_file()),
+                    "图片尚未载入，请重试"
+                );
+                self.work.image_viewer = Some(url.clone());
+            }
+            WorkAction::CloseImagePreview => {
+                self.work.image_viewer = None;
             }
             WorkAction::OpenWorkspace => {
                 let path = self
@@ -1159,6 +1251,7 @@ impl Companion {
                 if let Some(destination) = native_dialog::FileDialog::new()
                     .set_title("导出工作成果")
                     .set_filename(filename)
+                    .set_location(&stepx_companion::settings::downloads())
                     .show_save_single_file()?
                 {
                     let source = preview.path.clone();
@@ -1190,7 +1283,7 @@ impl Companion {
         Ok(())
     }
 
-    fn preview_work_file(&mut self, path: PathBuf) -> Result<()> {
+    pub(super) fn preview_work_file(&mut self, path: PathBuf) -> Result<()> {
         anyhow::ensure!(!self.busy, "请等待当前操作完成后预览");
         let workspace = self.work.workspace.clone().context("请先选择工作文件夹")?;
         validate_open_path(Some(&workspace), &path)?;
@@ -1278,6 +1371,7 @@ impl Companion {
                     return Ok(());
                 };
                 self.work.workspace = Some(path.canonicalize()?);
+                    self.remember_work_directory()?;
                 self.work_files()?;
             }
             let workspace = self
@@ -1285,17 +1379,7 @@ impl Companion {
                 .workspace
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("桌面协作需要先选择工作文件夹"))?;
-            let mut attachments = Vec::new();
-            for path in &self.work.attachments {
-                let path = path.canonicalize()?;
-                if path.starts_with(&workspace) {
-                    attachments.push(path);
-                } else {
-                    attachments
-                        .push(workspace.join(work::import_file(&workspace, &path)?.relative_path));
-                }
-            }
-            self.work.attachments = attachments.clone();
+            let attachments=self.work.attachments.clone();
             let request = work::WorkRequest {
                 prompt: draft.clone(),
                 workspace,
@@ -1306,8 +1390,10 @@ impl Companion {
             let handle = work::start(Adb::discover()?, device, request);
             self.work.handle = Some(handle);
             self.work.submitted_draft = Some(draft);
+            self.work.final_reply = None;
             self.work.running = true;
             self.work.events.clear();
+            self.work.artifacts.clear();
             self.work.status = "正在启动桌面协作，使用手机模型处理工作文件…".into();
             self.fields[F_WORK_PROMPT].clear();
         }
@@ -1321,10 +1407,13 @@ impl Companion {
             loop {
                 match receiver.try_recv() {
                     Ok((url, Ok(path))) => {
+                        self.work.preview_pending.remove(&url);
+                        self.work.preview_errors.remove(&url);
                         self.work.image_previews.insert(url, path);
                         preview_changed = true;
                     }
                     Ok((url, Err(error))) => {
+                        self.work.preview_pending.remove(&url);
                         self.work.preview_errors.insert(url, error);
                         preview_changed = true;
                     }
@@ -1336,8 +1425,11 @@ impl Companion {
                 }
             }
         }
-        if preview_done {
+        if preview_done || (preview_changed && self.work.preview_pending.is_empty()) {
             self.work.preview_rx = None;
+            self.work.preview_tx = None;
+        }
+        if preview_changed {
             self.load_work_previews();
         }
         let mut events = Vec::new();
@@ -1370,6 +1462,7 @@ impl Companion {
         for event in events {
             match event {
                 work::WorkEvent::SessionReady(key) => {
+                    self.workspace_bind_session(&key);
                     self.work.active_key = Some(key.clone());
                     if let Some(index) = self
                         .amoo_sessions
@@ -1399,7 +1492,7 @@ impl Companion {
                     self.work.status = status.clone();
                     self.work.log(status);
                 }
-                work::WorkEvent::Assistant(text) => self.work.log(text),
+                work::WorkEvent::Assistant(text) => {self.work.final_reply=Some(text.clone());self.work.log(text);},
                 work::WorkEvent::Tool(log) => self.work.log(format!(
                     "{} · {} · {}{}",
                     log.step,
@@ -1408,6 +1501,7 @@ impl Companion {
                     log.detail
                 )),
                 work::WorkEvent::Artifact(file) => {
+                    self.workspace_output(stepx_companion::amoo_workspace::Output {path:file.path.clone(),name:file.path.file_name().unwrap_or_default().to_string_lossy().into_owned(),kind:file.kind.clone(),lab_id:None});
                     self.work.log(format!("已生成 {}", file.relative_path));
                     self.work.artifacts.push(WorkArtifactItem {
                         name: file.relative_path,
@@ -1416,6 +1510,17 @@ impl Companion {
                     });
                 }
                 work::WorkEvent::Complete(summary) => {
+                    if let Some(key)=&self.work.active_key {self.reply_motion.live.insert(key.clone());}
+                    if self.workspace.running.is_none() && self.settings.value.sync_work_outputs && !self.work.artifacts.is_empty() {
+                        if let (Some(root),Some(device))=(self.work.workspace.clone(),self.selected.clone()) {
+                            let paths=self.work.artifacts.iter().map(|a|a.path.clone()).collect::<Vec<_>>();
+                            let (tx,rx)=mpsc::channel();self.settings.staging=Some(rx);
+                            std::thread::spawn(move||{let _=tx.send(stepx_companion::work_sync::enqueue(&root,&paths,&device.serial).map(|n|format!("已准备 {n} 个成果，连接手机后发送")).map_err(|e|e.to_string()));});
+                        }
+                    }
+                    let delivered=!self.work.artifacts.is_empty();
+                    let reply = self.work.final_reply.take().unwrap_or_default();
+                    self.workspace_finish(if delivered{stepx_companion::amoo_workspace::Phase::Done}else{stepx_companion::amoo_workspace::Phase::Failed},if delivered{format!("{reply}\n\n{summary}")}else{format!("尚未收到实际文件，请补充要求后继续。{summary}")});
                     self.work.running = false;
                     self.work.submitted_draft = None;
                     self.work.status = summary.clone();
@@ -1425,6 +1530,7 @@ impl Companion {
                     self.last_amoo_poll = Instant::now() - Duration::from_secs(11);
                 }
                 work::WorkEvent::Failed(error) => {
+                    self.workspace_finish(stepx_companion::amoo_workspace::Phase::Failed,error.clone());
                     self.work.running = false;
                     if self.fields[F_WORK_PROMPT].text.is_empty() {
                         if let Some(draft) = self.work.submitted_draft.take() {
@@ -1436,6 +1542,7 @@ impl Companion {
                     self.last_amoo_poll = Instant::now() - Duration::from_secs(11);
                 }
                 work::WorkEvent::Cancelled => {
+                    self.workspace_finish(stepx_companion::amoo_workspace::Phase::Stopped,"桌面执行已停止；手机已接收的任务可能仍继续".into());
                     self.work.running = false;
                     if let Some(draft) = self.work.submitted_draft.take() {
                         if self.fields[F_WORK_PROMPT].text.is_empty() {
@@ -1454,46 +1561,37 @@ impl Companion {
     }
 
     pub(super) fn load_work_previews(&mut self) {
-        if (!matches!(self.page, Page::Amoo | Page::Work) && !self.work.running)
-            || self.work.preview_rx.is_some() || self.selected.is_none() {
+        if !matches!(self.page, Page::Amoo | Page::Work)
+            || self.selected.is_none()
+            || self.work.preview_pending.len() >= 3
+        {
             return;
         }
-        let attachments = self
-            .amoo_sessions
-            .iter()
-            .flat_map(|s| s.items.iter().rev())
-            .filter_map(|item| match item {
-                AmooChatItem::Attachment {
-                    name,
-                    kind,
-                    mime,
-                    url,
-                    path,
-                    ..
-                } if (kind == "image" || mime.starts_with("image/"))
-                    && !url.is_empty()
-                    && !self.work.preview_attempted.contains(url) =>
-                {
-                    Some(stepx_companion::openclaw::RealAttachment {
-                        name: name.clone(),
-                        kind: kind.clone(),
-                        mime: mime.clone(),
-                        url: url.clone(),
-                        path: path.clone(),
-                        ..Default::default()
-                    })
-                }
-                _ => None,
+        let Some(session) = self.amoo_sessions.get(self.amoo_session_idx) else {
+            return;
+        };
+        let attachments = conversation_images(&session.items)
+            .into_iter()
+            .filter(|a| {
+                !self.work.preview_attempted.contains(&a.url)
+                    && !self.work.image_previews.contains_key(&a.url)
             })
-            .take(3)
+            .take(3 - self.work.preview_pending.len())
             .collect::<Vec<_>>();
         if !attachments.is_empty() {
-            let _ = self.begin_work_previews(attachments);
+            if let Err(e) = self.begin_work_previews(attachments.clone()) {
+                for attachment in attachments {
+                    self.work.preview_attempted.insert(attachment.url.clone());
+                    self.work
+                        .preview_errors
+                        .insert(attachment.url, e.to_string());
+                }
+            }
         }
     }
 
     pub(super) fn work_previews_loading(&self) -> bool {
-        self.work.preview_rx.is_some()
+        !self.work.preview_pending.is_empty()
     }
 
     fn begin_work_previews(
@@ -1510,77 +1608,89 @@ impl Companion {
             .preview_cache
             .clone()
             .context("无法创建图片缓存")?;
-        for attachment in &attachments {
-            self.work.preview_attempted.insert(attachment.url.clone());
+        anyhow::ensure!(
+            self.work.preview_pending.len() + attachments.len() <= 3,
+            "其他图片正在载入，稍后自动重试"
+        );
+        if self.work.preview_rx.is_none() {
+            let (tx, rx) = mpsc::channel();
+            self.work.preview_tx = Some(tx);
+            self.work.preview_rx = Some(rx);
         }
-        let (sender, receiver) = mpsc::channel();
-        self.work.preview_rx = Some(receiver);
-        let expected_scope = self.amoo_ui.account_scope.clone();
-        let identities = self.work.preview_identities.clone();
-        std::thread::spawn(move || {
-            // Recheck the selected phone's account before opening private cached data.
-            let scope_matches = || {
-                expected_scope.is_none()
-                    || stepx_companion::amoo_usage::account_scope(&adb, &device)
-                        .ok()
-                        .flatten()
-                        == expected_scope
-            };
-            if !scope_matches() {
-                for attachment in attachments {
-                    let _ = sender.send((
-                        attachment.url,
-                        Err("手机账号已变化，请重新同步后查看图片".into()),
-                    ));
-                }
-                return;
-            }
-            let persistent = expected_scope
+        for attachment in attachments {
+            self.work.preview_attempted.insert(attachment.url.clone());
+            self.work.preview_pending.insert(attachment.url.clone());
+            let sender = self
+                .work
+                .preview_tx
                 .as_ref()
-                .and_then(|scope| preview_cache::root().map(|root| (root, scope.clone())));
-            for attachment in attachments {
-                let output = cache
-                    .path()
-                    .join(format!("amoo-{:016x}.png", rand::random::<u64>()));
-                let stored = persistent.as_ref().and_then(|(root, scope)| {
-                    preview_cache::load_with_identity(
-                        root,
-                        scope,
-                        &attachment.url,
-                        identities.get(&attachment.url).map(String::as_str),
-                    )
-                });
-                let result = if let Some(path) = stored {
+                .context("图片队列不可用")?
+                .clone();
+            let expected_scope = self.amoo_ui.account_scope.clone();
+            let identity = self.work.preview_identities.get(&attachment.url).cloned();
+            let adb = adb.clone();
+            let device = device.clone();
+            let cache = cache.clone();
+            std::thread::spawn(move || {
+                let started = Instant::now();
+                let mut cached = false;
+                let scope_matches = || {
+                    expected_scope.is_none()
+                        || stepx_companion::amoo_usage::account_scope(&adb, &device)
+                            .ok()
+                            .flatten()
+                            == expected_scope
+                };
+                let result = (|| -> Result<PathBuf> {
+                    anyhow::ensure!(scope_matches(), "手机账号已变化，请重新同步后查看图片");
+                    let persistent = expected_scope
+                        .as_ref()
+                        .and_then(|scope| preview_cache::root().map(|root| (root, scope.clone())));
+                    let stored = persistent.as_ref().and_then(|(root, scope)| {
+                        preview_cache::load_with_identity(
+                            root,
+                            scope,
+                            &attachment.url,
+                            identity.as_deref(),
+                        )
+                    });
+                    let path = if let Some(path) = stored {
+                        cached = true;
+                        path
+                    } else {
+                        let output = cache
+                            .path()
+                            .join(format!("amoo-{:016x}.png", rand::random::<u64>()));
+                        let file =
+                            amoo_media::download_artifact(&adb, &device, &attachment, &output)?;
+                        persistent
+                            .as_ref()
+                            .and_then(|(root, scope)| {
+                                preview_cache::save_with_identity(
+                                    root,
+                                    scope,
+                                    &attachment.url,
+                                    &file.path,
+                                    identity.as_deref(),
+                                )
+                                .ok()
+                            })
+                            .unwrap_or(file.path)
+                    };
+                    anyhow::ensure!(scope_matches(), "手机账号已变化，请重新同步后查看图片");
                     Ok(path)
-                } else {
-                    amoo_media::download_artifact(&adb, &device, &attachment, &output)
-                        .map(|file| {
-                            persistent
-                                .as_ref()
-                                .and_then(|(root, scope)| {
-                                    preview_cache::save_with_identity(
-                                        root,
-                                        scope,
-                                        &attachment.url,
-                                        &file.path,
-                                        identities.get(&attachment.url).map(String::as_str),
-                                    )
-                                    .ok()
-                                })
-                                .unwrap_or(file.path)
-                        })
-                        .map_err(|e| format!("{e:#}"))
-                };
-                let result = if scope_matches() {
-                    result
-                } else {
-                    Err("手机账号已变化，请重新同步后查看图片".into())
-                };
-                if sender.send((attachment.url, result)).is_err() {
-                    break;
+                })()
+                .map_err(|e| format!("{e:#}"));
+                if std::env::var_os("STEPX_IMAGE_TIMING").is_some() {
+                    eprintln!(
+                        "IMAGE_PREVIEW cached={cached} ok={} elapsed_ms={}",
+                        result.is_ok(),
+                        started.elapsed().as_millis()
+                    );
                 }
-            }
-        });
+                let _ = sender.send((attachment.url, result));
+            });
+        }
         Ok(())
     }
 
@@ -1655,6 +1765,15 @@ fn read_work_preview(root: &std::path::Path, path: &std::path::Path) -> Result<W
             "图片分辨率超过预览上限，请打开原图查看"
         );
         preview.note = format!("{width} × {height} · 原始图片");
+    } else if extension == "xlsx" {
+        preview.markdown = true;
+        match workspace.spreadsheet_preview(&relative.to_string_lossy()) {
+            Ok(data) => {
+                preview.text = Some(spreadsheet_preview_markdown(&data));
+                preview.note = "表格预览 · 显示已有计算结果，最多 3 张表、20 行、8 列；公式与完整内容请打开原文件。".into();
+            }
+            Err(error) => preview.note = format!("此表格暂不能内嵌预览：{error}。可打开原文件或导出。"),
+        }
     } else if matches!(extension.as_str(), "html" | "htm") {
         preview.note =
             "网页或小游戏已保存。点击“在浏览器运行”打开实际交互；源文件保留在工作文件夹内。".into();
@@ -1700,6 +1819,20 @@ fn read_work_preview(root: &std::path::Path, path: &std::path::Path) -> Result<W
         }
     }
     Ok(preview)
+}
+
+fn spreadsheet_preview_markdown(data: &serde_json::Value) -> String {
+    let escape = |s: &str| s.chars().take(160).collect::<String>().replace('\\',"\\\\").replace('|',"\\|").replace(['\r','\n']," ").replace('`',"\\`").replace('*',"\\*").replace('[',"\\[").replace(']',"\\]").replace('<',"&lt;");
+    let mut out=String::new();
+    if let Some(sheets)=data["sheets"].as_array() { for sheet in sheets.iter().take(3) {
+        out.push_str(&format!("### {}\n\n",escape(sheet["name"].as_str().unwrap_or("工作表"))));
+        let Some(rows)=sheet["rows"].as_array() else {continue;};
+        let columns=rows.iter().take(20).filter_map(|r|r["cells"].as_array()).flat_map(|r|r.iter().take(8).enumerate()).filter(|(_,c)|!c.as_str().unwrap_or("").is_empty()).map(|(i,_)|i+1).max().unwrap_or(1);
+        out.push_str(&format!("| 行 | {} |\n| {} |\n",(0..columns).map(|i|((b'A'+i as u8) as char).to_string()).collect::<Vec<_>>().join(" | "),vec!["---";columns+1].join(" | ")));
+        for row in rows.iter().take(20) {out.push_str(&format!("| {} | {} |\n",escape(row["row"].as_str().unwrap_or("")),(0..columns).map(|i|escape(row["cells"][i].as_str().unwrap_or(""))).collect::<Vec<_>>().join(" | ")));}
+        out.push('\n');
+    }}
+    out
 }
 
 /// Parse quoted CSV/TSV fields without evaluating formulas or embedding HTML.
@@ -1801,6 +1934,45 @@ fn validate_open_path(root: Option<&std::path::Path>, path: &std::path::Path) ->
 mod preview_tests {
     use super::*;
     #[test]
+    fn spreadsheet_grid_preserves_gaps_results_and_literal_cell_text() {
+        let data=serde_json::json!({"sheets":[{"name":"金额汇总","rows":[{"row":"2","cells":["A | B","","249","[链接](https://example.test)"]}]}]});
+        let text=spreadsheet_preview_markdown(&data);
+        assert!(text.contains("| 行 | A | B | C | D |"));
+        assert!(text.contains("A \\| B |  | 249"));
+        assert!(text.contains("\\[链接\\]"));
+    }
+    #[test]
+    fn latest_inline_images_are_prioritized_and_duplicates_do_not_block_queue() {
+        let reply = |text: &str| AmooChatItem::AssistantRich {
+            text: Some(text.into()),
+            thinking_time: String::new(),
+            thinking_steps: vec![],
+            tools_summary: String::new(),
+            has_bolt_artifact: false,
+            has_invoice_artifact: false,
+            has_safety_confirm: false,
+            time_label: String::new(),
+        };
+        let images = conversation_images(&[
+            reply("![old](https://example.test/old)"),
+            AmooChatItem::Attachment {
+                name: "latest".into(),
+                kind: "image".into(),
+                mime: String::new(),
+                url: "https://example.test/latest".into(),
+                path: String::new(),
+                size_bytes: None,
+            },
+            reply("![latest](https://example.test/latest)"),
+        ]);
+        assert_eq!(
+            images.iter().map(|i| i.url.as_str()).collect::<Vec<_>>(),
+            ["https://example.test/latest", "https://example.test/old"]
+        );
+        assert!(WorkAction::OpenPreview("image".into()).keeps_current_shell());
+        assert!(WorkAction::CloseImagePreview.keeps_current_shell());
+    }
+    #[test]
     fn device_disconnect_drops_previous_session_results_and_inflight_previews() {
         let workspace = tempfile::tempdir().unwrap();
         let document = workspace.path().join("private-result.md");
@@ -1831,6 +2003,8 @@ mod preview_tests {
         let url = "https://example.test/previous-phone.png".to_string();
         state.image_previews.insert(url.clone(), document.clone());
         state.preview_attempted.insert(url.clone());
+        state.preview_pending.insert(url.clone());
+        state.image_viewer = Some(url.clone());
         state.preview_errors.insert(url.clone(), "expired".into());
         state
             .preview_identities
@@ -1857,6 +2031,11 @@ mod preview_tests {
             .send((url.clone(), Ok(document.clone())))
             .is_err());
         assert!(!state.running && state.handle.is_none() && state.preview_rx.is_none());
+        assert!(
+            state.preview_pending.is_empty()
+                && state.image_viewer.is_none()
+                && state.preview_tx.is_none()
+        );
         assert!(state.local_preview.is_none());
         assert!(state.local_preview_loading.is_none());
         assert!(state.local_preview_error.is_none());
@@ -1920,12 +2099,9 @@ mod preview_tests {
         assert!(read_work_preview(root.path(), &linked).is_err());
     }
 }
-fn open_work_path(path: &std::path::Path) -> Result<()> {
-    let command = if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    };
-    std::process::Command::new(command).arg(path).spawn()?;
+pub(super) fn open_work_path(path: &std::path::Path) -> Result<()> {
+    let command = if cfg!(target_os = "macos") { "open" } else if cfg!(windows) { "explorer" } else { "xdg-open" };
+    let mut child = std::process::Command::new(command).arg(path).spawn()?;
+    std::thread::spawn(move || { let _ = child.wait(); });
     Ok(())
 }

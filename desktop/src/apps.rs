@@ -90,7 +90,7 @@ fn icon_cache_dir(device: &Device) -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .or_else(|| std::env::var_os("LOCALAPPDATA"))
         .map(PathBuf::from)
-        .or_else(|| crate::resources::user_home().map(|home| PathBuf::from(home).join(".cache")))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
         .unwrap_or_else(std::env::temp_dir);
     let mut hash = DefaultHasher::new();
     device.serial.hash(&mut hash);

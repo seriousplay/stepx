@@ -1,316 +1,706 @@
 use super::super::{
-    studio_state::{StudioAction as St, BRIEFS, CATEGORIES},
+    icons::UiIcon,
+    studio_state::{StudioAction as St, CATEGORIES},
     theme::*,
     widgets::*,
-    Action, Companion, F_STUDIO_NAME, F_STUDIO_URL,
+    Action, Companion, F_STUDIO_NAME, F_STUDIO_SEARCH, F_STUDIO_URL,
 };
 use facloud_ui::{assets::asset_cache::AssetSource, elements::*};
-use stepx_companion::studio::LinkKind;
+use stepx_companion::studio::{CloudWork, Work};
 
 impl Companion {
     pub(in super::super) fn studio_actions(&self) -> Vec<El> {
         vec![
-            self.button(
-                "st-web",
-                "打开 Studio",
-                Action::StudioOpenUrl("https://studio.stepx.com/".into()),
-                Btn::Secondary,
-            ),
-            self.button(
-                "st-projects",
-                "官网项目",
-                Action::StudioOpenUrl("https://studio.stepx.com/projects".into()),
-                Btn::Secondary,
-            ),
+            self.st_button("st-sync", "同步", St::CloudRefresh, Btn::Secondary),
+            if self.studio_lab.handle.is_some() {
+                self.st_button("st-create", "查看运行任务", St::Tab(2), Btn::Secondary)
+            } else if self.busy {
+                self.disabled_button("新建作品")
+            } else {
+                self.button_icon(
+                    "st-create",
+                    "新建作品",
+                    UiIcon::Plus,
+                    Action::StudioLab(super::super::studio_lab_state::StudioLabAction::Fresh),
+                    Btn::Secondary,
+                )
+            },
         ]
     }
     fn st_button(&self, id: &str, label: &str, action: St, style: Btn) -> El {
-        if self.busy {
+        let navigation = matches!(
+            action,
+            St::Tab(_)
+                | St::Source(_)
+                | St::CloudCategory(_)
+                | St::CloudSelect(_)
+                | St::WebSelect(_)
+                | St::Select(_)
+                | St::ListPage(_)
+                | St::Edit(_)
+        );
+        if self.busy && !navigation {
             self.disabled_button(label)
         } else {
-            self.button(id, label, Action::Studio(action), style)
+            let icon = match &action {
+                St::CloudRefresh | St::Refresh => Some(UiIcon::Refresh),
+                St::New => Some(UiIcon::Plus),
+                St::UsePhone(_) | St::OpenPhone | St::PhoneLibrary => Some(UiIcon::Smartphone),
+                St::SaveQr => Some(UiIcon::Download),
+                St::PasteLink => Some(UiIcon::Clipboard),
+                _ => None,
+            };
+            match icon {
+                Some(icon) => self.button_icon(id, label, icon, Action::Studio(action), style),
+                None => self.button(id, label, Action::Studio(action), style),
+            }
         }
     }
     pub(in super::super) fn studio_page(&self) -> El {
         let p = self.p();
         let tabs = self.segmented(
             "studio-tabs",
-            ["手机账号作品", "收藏与分享", "开始创作", "连接与上机"]
+            [(2, "工作台"), (0, "作品"), (3, "连接设置")]
                 .iter()
-                .enumerate()
-                .map(|(i, s)| {
+                .map(|(i, t)| {
                     (
-                        (*s).into(),
-                        self.studio.tab == i as u8,
-                        Action::Studio(St::Tab(i as u8)),
+                        (*t).into(),
+                        self.studio.tab == *i,
+                        Action::Studio(St::Tab(*i)),
                     )
                 })
                 .collect(),
         );
-        let body = match self.studio.tab {
-            1 => self.studio_library(),
-            2 => self.studio_create(),
-            3 => self.studio_guide(),
-            _ => self.studio_cloud(),
+        let web = self.studio.web.as_ref().is_some_and(|c| c.authorized);
+        let phone = self.studio.cloud.as_ref().is_some_and(|c| c.authorized);
+        let connection = if web {
+            "官网已连接"
+        } else if phone {
+            "手机作品已连接"
+        } else {
+            "等待连接"
         };
         self.vstack(
             S5,
             vec![
-                self.between(tabs, self.line("Step Studio × Companion", CAPTION, p.text3)),
-                body,
+                self.between(
+                    self.wrap(vec![tabs]),
+                    self.line(
+                        connection,
+                        CAPTION,
+                        if web || phone { p.success } else { p.text3 },
+                    ),
+                ),
+                match self.studio.tab {
+                    2 => self.studio_lab_page(),
+                    3 => self.studio_connections(),
+                    _ => self.studio_workspace(),
+                },
             ],
         )
     }
-    fn studio_cloud(&self) -> El {
-        let p=self.p();
-        let connected=self.selected.is_some();
-        let authorized=self.studio.cloud.as_ref().is_some_and(|c|c.authorized);
-        let mut rows=vec![self.panel(vec![
-            self.between(self.vstack(S1,vec![self.heading("手机账号 · 自动同步"),self.text("同步 Amoo「我的作品」里的应用、技能与智能体。官网提交真机测试后会出现在这里，无需逐个复制链接。",BODY,p.text2)]),
-                if connected {self.st_button("st-cloud-sync",if authorized {"同步作品"} else {"连接手机账号"},if authorized {St::CloudRefresh}else{St::ConnectAccount},Btn::Primary)}else{self.disabled_button("请先连接手机")}),
-            self.text("连接手机账号用于作品同步；官网编辑器仍使用浏览器登录。尚未提交真机测试的官网草稿不在此目录。",CAPTION,p.text3),
-        ])];
-        if let Some(error)=&self.studio.cloud_error {rows.push(self.panel(vec![self.heading("同步未完成"),self.text(error,BODY,p.text2),self.st_button("st-cloud-retry","重新同步",St::CloudRefresh,Btn::Secondary)]));}
-        let Some(cloud)=self.studio.cloud.as_ref().filter(|c|c.authorized) else{
-            rows.push(self.panel(vec![self.heading(if connected {"在手机确认一次，即可开始"}else{"连接你的 STEPX 手机"}),self.text("选择手机已有的 Amoo 账号，在系统授权页确认。之后进入此页面自动读取最新作品，离开页面停止刷新。账号令牌始终保留在手机。",BODY,p.text2)]));
-            return self.vstack(S4,rows);
-        };
-        let selected=self.studio.cloud_selected.and_then(|i|cloud.items.get(i));
-        let index=self.studio.cloud_category;
-        rows.push(self.between(self.segmented("st-cloud-types",CATEGORIES.iter().enumerate().map(|(i,c)|(format!("{} · {}",c,cloud.totals[i]),i==index,Action::Studio(St::CloudCategory(i)))).collect()),self.line(format!("更新于 {}",chrono::DateTime::from_timestamp(cloud.synced_at,0).map(|t|t.with_timezone(&chrono::Local).format("%H:%M:%S").to_string()).unwrap_or_default()),CAPTION,p.text3)));
-        let mut list=vec![];
-        for (i,w) in cloud.items.iter().enumerate().filter(|(_,w)|w.category==CATEGORIES[index]) {
-            list.push(self.list_row(format!("st-cloud-{i}"),self.vstack(S1,vec![self.heading(&w.name),self.line(format!("{}{}",w.category,if w.version.is_empty(){String::new()}else{format!(" · v{}",w.version)}),CAPTION,p.text2)]),self.studio.cloud_selected==Some(i),Some(Action::Studio(St::CloudSelect(i))),None));
-        }
-        if list.is_empty(){list.push(self.text("还没有可同步的作品。在 Studio 完成创作后，点击“真机测试”，再回到这里同步。",BODY,p.text2));}
-        if cloud.totals[index]>200 {list.push(self.text("当前展示前 200 个作品，其余可在 Amoo 我的作品查看。",CAPTION,p.text3));}
-        let details=if let Some(w)=selected {
-            let mut detail=vec![self.heading(&w.name),self.text(if w.description.is_empty(){"已从官方作品服务同步，可直接在手机验收。"}else{&w.description},BODY,p.text2)];
-            let mut actions=vec![self.st_button("st-cloud-open",if w.experience().is_some(){"在手机打开"}else{"在 Amoo 管理"},St::CloudOpen,Btn::Primary)];
-            if let Some(url)=w.editor(){actions.push(self.button("st-cloud-edit","继续创作",Action::StudioOpenUrl(url),Btn::Secondary));}
-            if w.experience().is_some(){actions.push(self.st_button("st-cloud-keep","收藏并分享",St::CloudKeep,Btn::Secondary));}
-            detail.push(self.wrap(actions));
-            detail.push(self.text(if w.category=="应用"{"体验地址随官网同步更新。若构建中或链接过期，请在官网重新提交真机测试。"}else{"安装、更新与授权由 Amoo 官方页面完成；同步目录不会自动安装或发布。"},CAPTION,p.text3));
-            self.panel(detail)
-        }else{self.panel(vec![self.heading("选择作品"),self.text("查看详情、继续创作，或在手机验证。",BODY,p.text2)])};
-        rows.push(Flex::row().with_spacing(S5).with_cross_axis_alignment(CrossAxisAlignment::Start).with_child(ConstrainedBox::new(self.panel(list)).with_width(260.).finish()).with_child(Expanded::new(1., details).finish()).finish());
-        rows.push(self.between(self.line("此页每分钟同步 · 使用手机官方账号",CAPTION,p.text3),self.st_button("st-cloud-disconnect","断开作品同步",St::DisconnectAccount,Btn::Ghost)));
-        self.vstack(S4,rows)
-    }
-    fn studio_library(&self) -> El {
+    fn studio_workspace(&self) -> El {
         let p = self.p();
-        let mut left = vec![self.between(
-            self.heading(format!("本机作品 · {}", self.studio.works.len())),
-            self.st_button("st-refresh", "刷新", St::Refresh, Btn::Ghost),
-        )];
-        if self.studio.works.is_empty() {
-            left.push(self.text(
-                "保存官网的作品地址。体验链接可直接发送到手机，也可生成二维码分享。",
-                BODY,
-                p.text2,
-            ));
-        }
-        for (i, w) in self.studio.works.iter().enumerate() {
-            left.push(self.list_row(
-                format!("st-work-{i}"),
-                self.vstack(
-                    S1,
-                    vec![
-                        self.heading(&w.name),
-                        self.line(
-                            format!(
-                                "{} · {}",
-                                w.category,
-                                if w.shareable() {
-                                    "体验链接"
-                                } else {
-                                    "创作项目"
-                                }
-                            ),
-                            CAPTION,
-                            p.text2,
-                        ),
-                    ],
-                ),
-                self.studio.selected == Some(i),
-                Some(Action::Studio(St::Select(i))),
-                None,
-            ));
-        }
-        left.push(self.st_button("st-new", "添加作品", St::New, Btn::Secondary));
-        let editor = self.panel(vec![
-            self.between(
-                self.heading(if self.studio.selected.is_some() {
-                    "作品地址"
-                } else {
-                    "添加作品"
-                }),
-                self.st_button("st-paste-link", "粘贴链接", St::PasteLink, Btn::Ghost),
-            ),
-            self.segmented(
-                "st-category",
-                CATEGORIES
-                    .iter()
-                    .enumerate()
-                    .map(|(i, c)| {
-                        (
-                            (*c).into(),
-                            self.studio.category == i,
-                            Action::Studio(St::Category(i)),
-                        )
-                    })
-                    .collect(),
-            ),
-            self.input(F_STUDIO_NAME, "作品名称", None),
-            self.input(F_STUDIO_URL, "粘贴官网的体验链接或构建器地址", None),
-            self.between(
-                self.text(
-                    "官网 → 真机测试或生成体验二维码 → 复制链接",
-                    CAPTION,
-                    p.text3,
-                ),
-                self.st_button("st-save", "保存链接", St::Save, Btn::Secondary),
-            ),
-        ]);
-        let mut right = vec![editor];
-        if let Some(w) = self.studio.selected.and_then(|i| self.studio.works.get(i)) {
-            let mut details = vec![
-                self.between(
-                    self.heading(&w.name),
-                    self.pill_badge(
-                        if w.shareable() {
-                            "可上机体验"
-                        } else {
-                            "编辑地址"
-                        },
-                        p.text2,
-                        p.surface,
-                    ),
-                ),
-                self.text(&w.url, CAPTION, p.text2),
-            ];
-            if w.shareable() {
-                details.push(self.wrap(vec![
-                    self.st_button("st-send", "发送到手机", St::Send, Btn::Primary),
-                    self.st_button("st-open-phone", "在手机打开", St::OpenPhone, Btn::Secondary),
-                    self.st_button("st-pin", "添加桌面图标", St::Pin, Btn::Secondary),
-                    self.st_button("st-share", "分享二维码", St::Share, Btn::Secondary),
-                ]));
-                details.push(self.text(
-                    "保存在手机 StepX伴侣的作品库。网页需要联网；添加图标可能需要在手机确认。",
-                    CAPTION,
-                    p.text3,
-                ));
+        let source = self.studio.source;
+        let count = |web: bool| {
+            if web {
+                self.studio.web.as_ref()
             } else {
-                details.push(self.text(
-                    match w.kind {
-                        LinkKind::Project => {
-                            "这是创作项目，需要官网账号。生成官方体验链接后再上机或分享。"
-                        }
-                        _ => {
-                            "这是编辑器预览地址。请使用官网生成的体验链接，避免分享需要登录的页面。"
-                        }
-                    },
-                    BODY,
-                    p.text2,
+                self.studio.cloud.as_ref()
+            }
+            .filter(|c| c.authorized)
+            .map(|c| c.items.len())
+        };
+        let label = |title: &str, n: Option<usize>| {
+            n.map(|n| format!("{title} · {n}")).unwrap_or(title.into())
+        };
+        let sources = self.segmented(
+            "st-sources",
+            [
+                label("官网项目", count(true)),
+                label("手机可用", count(false)),
+                format!("我的收藏 · {}", self.studio.works.len()),
+            ]
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                (
+                    t.clone(),
+                    source == i as u8,
+                    Action::Studio(St::Source(i as u8)),
+                )
+            })
+            .collect(),
+        );
+        let mut content = vec![self.between(
+            self.wrap(vec![sources]),
+            self.st_button("st-add-link", "添加链接", St::New, Btn::Ghost),
+        )];
+        let query = self.fields[F_STUDIO_SEARCH].text.trim().to_lowercase();
+        content.push(
+            self.between(
+                self.input(F_STUDIO_SEARCH, "搜索作品名称或描述…", None),
+                self.segmented(
+                    "st-types",
+                    [(3, "全部"), (0, "应用"), (1, "智能体"), (2, "技能")]
+                        .iter()
+                        .map(|(i, t)| {
+                            (
+                                (*t).into(),
+                                self.studio.cloud_category == *i,
+                                Action::Studio(St::CloudCategory(*i)),
+                            )
+                        })
+                        .collect(),
+                ),
+            ),
+        );
+        if self.studio.editing {
+            content.push(self.studio_link_form());
+        }
+        if source == 2 {
+            content.push(self.studio_saved(&query));
+            return self.vstack(S4, content);
+        }
+        let library = if source == 0 {
+            self.studio.web.as_ref()
+        } else {
+            self.studio.cloud.as_ref()
+        };
+        let error = if source == 0 {
+            self.studio.web_error.as_ref()
+        } else {
+            self.studio.cloud_error.as_ref()
+        };
+        if let Some(e) = error {
+            content.push(self.panel(vec![
+                self.heading("暂未同步成功"),
+                self.text(e, BODY, p.text2),
+                self.st_button("st-retry", "重新同步", St::CloudRefresh, Btn::Secondary),
+            ]));
+        }
+        let Some(library) = library.filter(|c| c.authorized) else {
+            content.push(self.panel(vec![
+                self.ui_icon(if source==0{UiIcon::Monitor}else{UiIcon::Smartphone},36.,p.text2),
+                self.heading(if source==0{"把官网项目带到工作台"}else{"连接 Amoo 的手机作品"}),
+                self.text(if source==0{"在手机伴侣中完成一次 Studio 官网登录，应用、技能与智能体项目会自动出现在这里，包含尚未提交真机测试的草稿。"}else{"使用手机已有的 Amoo 账号授权，自动读取已提交真机测试的作品。"},BODY,p.text2),
+                if self.selected.is_some(){self.st_button("st-connect-source",if source==0{"连接 Studio 官网"}else{"连接手机账号"},if source==0{St::WebsiteLogin}else{St::ConnectAccount},Btn::Primary)}else{self.button("st-device","连接手机",Action::Page(super::super::Page::Connect),Btn::Primary)},
+                self.text(if source==0{"官网仍要求首次身份验证；连接 ADB 不代表已登录官网。登录会话保留在手机伴侣中。"}else{"官网创作 → 真机测试 → 自动同步 → 手机验收"},CAPTION,p.text3),
+            ]));
+            return self.vstack(S4, content);
+        };
+        let mut filtered: Vec<_> = library
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| {
+                self.studio_matches(
+                    &w.category,
+                    &format!("{} {}", w.name, w.description),
+                    &query,
+                )
+            })
+            .collect();
+        filtered.sort_by(|a, b| b.1.updated.cmp(&a.1.updated).then(a.1.name.cmp(&b.1.name)));
+        let current = if source == 0 {
+            self.studio.web_selected
+        } else {
+            self.studio.cloud_selected
+        };
+        let page = self
+            .studio
+            .list_page
+            .min(filtered.len().saturating_sub(1) / 12);
+        let selected = filtered
+            .iter()
+            .skip(page * 12)
+            .take(12)
+            .find(|(i, _)| Some(*i) == current)
+            .copied()
+            .or_else(|| filtered.get(page * 12).copied());
+        let mut list = vec![];
+        for (i, w) in filtered.iter().skip(page * 12).take(12) {
+            list.push(
+                self.list_row(
+                    format!("st-item-{source}-{i}"),
+                    self.between(
+                        self.lead(
+                            S3,
+                            self.ui_icon(Self::studio_icon(&w.category), 20., p.text2),
+                            Expanded::new(
+                                1.,
+                                self.vstack(
+                                    S1,
+                                    vec![
+                                        self.heading(&w.name),
+                                        self.line(
+                                            format!(
+                                                "{} · {}",
+                                                w.category,
+                                                if source == 0 {
+                                                    "官网项目"
+                                                } else if w.experience().is_some() {
+                                                    "可上机体验"
+                                                } else {
+                                                    "在 Amoo 管理"
+                                                }
+                                            ),
+                                            MICRO,
+                                            p.text3,
+                                        ),
+                                    ],
+                                ),
+                            )
+                            .finish(),
+                        ),
+                        self.ui_icon(UiIcon::ChevronRight, 14., p.text3),
+                    ),
+                    selected.is_some_and(|(j, _)| j == *i),
+                    Some(Action::Studio(if source == 0 {
+                        St::WebSelect(*i)
+                    } else {
+                        St::CloudSelect(*i)
+                    })),
+                    None,
+                ),
+            );
+        }
+        if list.is_empty() {
+            content.push(self.studio_empty(
+                if query.is_empty() {
+                    "此分类还没有作品"
+                } else {
+                    "没有匹配的作品"
+                },
+                if query.is_empty() {
+                    "从“新建作品”开始创作；官网完成真机测试后，可以在手机验收。"
+                } else {
+                    "试试其他名称，或切换到“全部”。"
+                },
+            ));
+        } else {
+            let (selected_index, selected_work) = selected.unwrap();
+            let details = self.studio_cloud_detail(selected_work, source, selected_index);
+            let mut left = vec![self.list(list)];
+            if filtered.len() > 12 {
+                left.push(self.between(
+                    self.st_button(
+                        "st-prev",
+                        "上一页",
+                        St::ListPage(page.saturating_sub(1)),
+                        Btn::Ghost,
+                    ),
+                    self.hstack(
+                        S2,
+                        vec![
+                            self.line(
+                                format!("{} / {}", page + 1, filtered.len().div_ceil(12)),
+                                MICRO,
+                                p.text3,
+                            ),
+                            self.st_button(
+                                "st-next",
+                                "下一页",
+                                St::ListPage((page + 1).min(filtered.len().saturating_sub(1) / 12)),
+                                Btn::Ghost,
+                            ),
+                        ],
+                    ),
                 ));
             }
-            details.push(self.wrap(vec![
-                self.button(
-                    "st-edit-web",
-                    "电脑打开",
-                    Action::StudioOpenUrl(w.url.clone()),
-                    Btn::Ghost,
-                ),
-                self.button(
-                    "st-copy-link",
-                    "复制链接",
-                    Action::CopyText(w.url.clone(), "已复制作品地址".into()),
-                    Btn::Ghost,
-                ),
-            ]));
-            if let Some(note) = &self.studio.phone_note {
-                details.push(self.text(note, CAPTION, p.text2));
-            }
-            right.push(self.panel(details));
-            if let Some((id, path)) = &self.studio.qr {
-                if id == &w.id {
-                    let qr = ConstrainedBox::new(
-                        Image::new(
-                            AssetSource::LocalFile {
-                                path: path.to_string_lossy().into_owned(),
-                            },
-                            CacheOption::BySize,
-                        )
-                        .contain()
-                        .finish(),
-                    )
-                    .with_width(180.)
-                    .with_height(180.)
-                    .finish();
-                    right.push(self.panel(vec![self.heading("分享作品"),self.hstack(S5,vec![qr,Expanded::new(1.,self.vstack(S3,vec![self.text(format!("扫码体验「{}」",w.name),BODY,p.text),self.text("发送给朋友前请确认作品中没有私人数据。二维码使用官方体验链接，过期后请在官网重新生成。",CAPTION,p.text2),self.wrap(vec![self.st_button("st-export-qr","保存二维码",St::SaveQr,Btn::Secondary),self.button("st-copy-share","复制分享文案",Action::CopyText(format!("试试我用 Step Studio 制作的「{}」\n{}",w.name,w.url),"已复制分享文案".into()),Btn::Secondary)])])).finish()]) ]));
-                }
-            }
+            content.push(self.studio_columns(self.vstack(S3, left), details));
         }
-        right.push(self.wrap(vec![
-            self.st_button(
-                "st-phone-library",
-                "手机作品库",
-                St::PhoneLibrary,
-                Btn::Ghost,
+        let time = chrono::DateTime::from_timestamp(library.synced_at, 0)
+            .map(|t| t.with_timezone(&chrono::Local).format("%H:%M").to_string())
+            .unwrap_or_default();
+        content.push(self.line(
+            format!(
+                "{} 个作品  ·  {} 更新  ·  当前页面自动同步",
+                filtered.len(),
+                time
             ),
-            self.st_button("st-amoo-works", "Amoo 我的作品", St::AmooWorks, Btn::Ghost),
-            self.st_button("st-check-phone", "核对手机状态", St::CheckPhone, Btn::Ghost),
-        ]));
+            MICRO,
+            p.text3,
+        ));
+        self.vstack(S4, content)
+    }
+    fn studio_matches(&self, category: &str, text: &str, query: &str) -> bool {
+        (self.studio.cloud_category == 3 || category == CATEGORIES[self.studio.cloud_category])
+            && (query.is_empty() || format!("{category} {text}").to_lowercase().contains(query))
+    }
+    fn studio_icon(category: &str) -> UiIcon {
+        match category {
+            "技能" => UiIcon::Bolt,
+            "智能体" => UiIcon::Star,
+            _ => UiIcon::Apps,
+        }
+    }
+    fn studio_columns(&self, list: El, details: El) -> El {
         Flex::row()
             .with_spacing(S5)
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
-            .with_child(
-                ConstrainedBox::new(self.panel(left))
-                    .with_width(240.)
-                    .finish(),
-            )
-            .with_child(Expanded::new(1., self.vstack(S4, right)).finish())
+            .with_child(Expanded::new(1., list).finish())
+            .with_child(Expanded::new(1.25, details).finish())
             .finish()
     }
-    fn studio_create(&self) -> El {
+    fn studio_empty(&self, title: &str, description: &str) -> El {
+        self.panel(vec![
+            self.ui_icon(UiIcon::Folder, 28., self.p().text3),
+            self.heading(title),
+            self.text(description, BODY, self.p().text2),
+        ])
+    }
+    fn studio_cloud_detail(&self, w: &CloudWork, source: u8, index: usize) -> El {
         let p = self.p();
-        let mut rows=vec![self.heading("从一个真正能用的小作品开始"),self.text("先在官网创作，再回到这里上机验证和分享。下面提供可修改的需求起点，不是已经生成的成品。",BODY,p.text2)];
-        for (i, (title, desc, _)) in BRIEFS.iter().enumerate() {
-            rows.push(self.panel(vec![
-                self.between(
+        let website = source == 0;
+        let title = self.between(
+            self.lead(
+                S3,
+                self.ui_icon(Self::studio_icon(&w.category), 32., p.text),
+                Expanded::new(
+                    1.,
                     self.vstack(
                         S1,
-                        vec![self.heading(*title), self.line(*desc, CAPTION, p.text2)],
+                        vec![
+                            self.heading(&w.name),
+                            self.line(&w.category, CAPTION, p.text3),
+                        ],
                     ),
-                    self.st_button(
-                        &format!("st-brief-{i}"),
-                        "复制需求并打开",
-                        St::Brief(i),
-                        Btn::Secondary,
-                    ),
+                )
+                .finish(),
+            ),
+            self.pill_badge(
+                if website {
+                    "官网项目"
+                } else if w.experience().is_some() {
+                    "可验收"
+                } else {
+                    "手机作品"
+                },
+                p.text2,
+                p.surface,
+            ),
+        );
+        let mut children = vec![
+            title,
+            self.text(
+                if w.description.is_empty() {
+                    "打开作品，继续你的创作。"
+                } else {
+                    &w.description
+                },
+                BODY,
+                p.text2,
+            ),
+            self.divider(),
+        ];
+        if website {
+            if let Some(url) = w.editor() {
+                children.push(self.button_icon(
+                    "st-edit-project",
+                    "继续编辑",
+                    UiIcon::ExternalLink,
+                    Action::StudioOpenUrl(url),
+                    Btn::Primary,
+                ));
+            }
+            children.push(self.text(
+                "直接在独立工作窗口打开对应项目，自动复用伴侣内的官网登录。",
+                CAPTION,
+                p.text3,
+            ));
+            let phone = self.studio.cloud.as_ref().and_then(|c| {
+                c.items
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.id == w.id && p.category == w.category)
+            });
+            if let Some((i, item)) = phone {
+                children.push(self.heading("手机验收"));
+                children.push(self.text("已在 Amoo 我的作品找到此项目。", BODY, p.text2));
+                children.push(self.st_button(
+                    "st-switch-phone",
+                    "查看手机版本",
+                    St::PhoneItem(i),
+                    Btn::Secondary,
+                ));
+                if item.experience().is_none() {
+                    children.push(self.caption("技能与智能体需要在 Amoo 中确认安装。"));
+                }
+            } else {
+                children.push(self.heading("下一步 · 真机测试"));
+                children.push(self.text("在官网点击“真机测试”，测试包构建后可同步到手机验收。测试包已构建不代表手机运行已验证；未生成体验链接的草稿不会作为公开作品分享。",BODY,p.text2));
+            }
+            children.push(self.st_button(
+                "st-keep-project",
+                "收藏项目入口",
+                St::KeepWeb(index),
+                Btn::Ghost,
+            ));
+        } else {
+            children.push(self.st_button(
+                "st-use-phone",
+                if w.experience().is_some() {
+                    "在手机打开"
+                } else {
+                    "在 Amoo 管理"
+                },
+                St::UsePhone(index),
+                Btn::Primary,
+            ));
+            let mut actions = vec![];
+            if w.experience().is_some() {
+                actions.push(self.st_button(
+                    "st-share-phone",
+                    "分享作品",
+                    St::KeepPhone(index),
+                    Btn::Secondary,
+                ));
+            }
+            if let Some(url) = w.editor() {
+                actions.push(self.button_icon(
+                    "st-edit-phone",
+                    "继续编辑",
+                    UiIcon::ExternalLink,
+                    Action::StudioOpenUrl(url),
+                    Btn::Secondary,
+                ));
+            }
+            if !actions.is_empty() {
+                children.push(self.wrap(actions));
+            }
+            if !w.version.is_empty() {
+                children.push(self.line(format!("版本 {}", w.version), CAPTION, p.text3));
+            }
+            children.push(self.text(
+                if w.experience().is_some() {
+                    "打开后会保留手机入口；官方体验作品是否需要联网，由作品本身决定。"
+                } else {
+                    "安装和更新由 Amoo 官方页面完成，请在手机确认权限。"
+                },
+                CAPTION,
+                p.text3,
+            ));
+        }
+        if let Some(note) = &self.studio.phone_note {
+            children.push(self.caption(note));
+        }
+        self.panel(children)
+    }
+    fn studio_link_form(&self) -> El {
+        self.panel(vec![
+            self.between(
+                self.heading("添加作品链接"),
+                self.st_button("st-cancel-link", "收起", St::Edit(false), Btn::Ghost),
+            ),
+            self.input(F_STUDIO_NAME, "作品名称", None),
+            self.input(F_STUDIO_URL, "官方项目或体验链接", None),
+            self.between(
+                self.segmented(
+                    "st-link-kind",
+                    CATEGORIES
+                        .iter()
+                        .enumerate()
+                        .map(|(i, c)| {
+                            (
+                                (*c).into(),
+                                self.studio.category == i,
+                                Action::Studio(St::Category(i)),
+                            )
+                        })
+                        .collect(),
                 ),
-                self.text(
-                    match i {
-                        0 => "重点验收：添加与撤销、导出、重新打开后数据保留。",
-                        1 => "重点验收：缺少信息、没有权限、任务中途修改。",
-                        _ => "重点验收：模糊图片、重复票据、真实文件交付。",
-                    },
-                    CAPTION,
-                    p.text3,
+                self.wrap(vec![
+                    self.st_button("st-paste", "粘贴链接", St::PasteLink, Btn::Ghost),
+                    self.st_button("st-save", "保存", St::Save, Btn::Primary),
+                ]),
+            ),
+        ])
+    }
+    fn studio_saved(&self, query: &str) -> El {
+        let p = self.p();
+        let filtered: Vec<_> = self
+            .studio
+            .works
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| self.studio_matches(&w.category, &w.name, query))
+            .collect();
+        if filtered.is_empty() {
+            return self.studio_empty(
+                "还没有收藏的作品",
+                "在官网项目中收藏编辑入口，或从手机作品中选择分享；也可以添加官方体验链接。",
+            );
+        }
+        let selected = filtered
+            .iter()
+            .skip(
+                self.studio
+                    .list_page
+                    .min(filtered.len().saturating_sub(1) / 12)
+                    * 12,
+            )
+            .take(12)
+            .find(|(i, _)| Some(*i) == self.studio.selected)
+            .copied();
+        let page = self
+            .studio
+            .list_page
+            .min(filtered.len().saturating_sub(1) / 12);
+        let rows = filtered
+            .iter()
+            .skip(page * 12)
+            .take(12)
+            .map(|(i, w)| {
+                self.list_row(
+                    format!("st-saved-{i}"),
+                    self.vstack(
+                        S1,
+                        vec![
+                            self.heading(&w.name),
+                            self.line(
+                                format!(
+                                    "{} · {}",
+                                    w.category,
+                                    if w.shareable() {
+                                        "体验链接"
+                                    } else {
+                                        "项目入口"
+                                    }
+                                ),
+                                MICRO,
+                                p.text3,
+                            ),
+                        ],
+                    ),
+                    self.studio.selected == Some(*i),
+                    Some(Action::Studio(St::Select(*i))),
+                    None,
+                )
+            })
+            .collect();
+        let mut left = vec![self.list(rows)];
+        if filtered.len() > 12 {
+            left.push(self.wrap(vec![
+                self.st_button(
+                    "st-saved-prev",
+                    "上一页",
+                    St::ListPage(page.saturating_sub(1)),
+                    Btn::Ghost,
+                ),
+                self.st_button(
+                    "st-saved-next",
+                    "下一页",
+                    St::ListPage((page + 1).min(filtered.len().saturating_sub(1) / 12)),
+                    Btn::Ghost,
                 ),
             ]));
         }
-        rows.push(self.panel(vec![self.heading("把手机变成测试设备"),self.text("应用：先验证小屏布局、键盘、返回与数据保存。智能体与技能：在官网配置平台可用的连接器，真机测试后到 Amoo 我的作品安装。背屏与 GUI 等手机能力需通过固件支持的工具接入，普通网页不会自动获得系统权限。",BODY,p.text2),self.st_button("st-go-guide","查看上机流程",St::Tab(3),Btn::Secondary)]));
-        self.vstack(S4, rows)
+        self.studio_columns(
+            self.vstack(S3, left),
+            selected
+                .map(|(_, w)| self.studio_saved_detail(w))
+                .unwrap_or_else(|| {
+                    self.studio_empty("选择一个作品", "打开、发送到手机，或生成分享二维码。")
+                }),
+        )
     }
-    fn studio_guide(&self) -> El {
+    fn studio_saved_detail(&self, w: &Work) -> El {
         let p = self.p();
+        let mut content = vec![
+            self.heading(&w.name),
+            self.line(
+                format!(
+                    "{} · {}",
+                    w.category,
+                    if w.shareable() {
+                        "体验链接"
+                    } else {
+                        "私有编辑入口"
+                    }
+                ),
+                CAPTION,
+                p.text3,
+            ),
+        ];
+        if w.shareable() {
+            content.push(self.st_button(
+                "st-open-saved",
+                "在手机打开",
+                St::OpenPhone,
+                Btn::Primary,
+            ));
+            content.push(self.wrap(vec![
+                self.st_button("st-qr", "分享二维码", St::Share, Btn::Secondary),
+                self.st_button("st-pin", "添加手机桌面图标", St::Pin, Btn::Secondary),
+            ]));
+        } else {
+            content.push(self.button_icon(
+                "st-open-editor",
+                "继续编辑",
+                UiIcon::ExternalLink,
+                Action::StudioOpenUrl(w.url.clone()),
+                Btn::Primary,
+            ));
+            content.push(self.caption("项目入口需要官网账号，不能当作公开体验链接分享。"));
+        }
+        content.push(self.wrap(vec![
+            self.button(
+                "st-copy-url",
+                "复制链接",
+                Action::CopyText(w.url.clone(), "已复制作品地址".into()),
+                Btn::Ghost,
+            ),
+            self.st_button("st-edit-link", "编辑收藏", St::Edit(true), Btn::Ghost),
+        ]));
+        if let Some((id, path)) = &self.studio.qr {
+            if id == &w.id {
+                let qr = ConstrainedBox::new(
+                    Image::new(
+                        AssetSource::LocalFile {
+                            path: path.to_string_lossy().into_owned(),
+                        },
+                        CacheOption::BySize,
+                    )
+                    .contain()
+                    .finish(),
+                )
+                .with_width(180.)
+                .with_height(180.)
+                .finish();
+                content.extend(vec![
+                    self.divider(),
+                    qr,
+                    self.caption("扫码体验；链接有效期与访问权限由官网决定。"),
+                    self.wrap(vec![
+                        self.st_button("st-save-qr", "保存二维码", St::SaveQr, Btn::Secondary),
+                        self.button(
+                            "st-copy-share",
+                            "复制分享文案",
+                            Action::CopyText(
+                                format!("试试我用 Step Studio 制作的「{}」\n{}", w.name, w.url),
+                                "已复制分享文案".into(),
+                            ),
+                            Btn::Secondary,
+                        ),
+                    ]),
+                ]);
+            }
+        }
+        if let Some(note) = &self.studio.phone_note {
+            content.push(self.caption(note));
+        }
+        self.panel(content)
+    }
+    fn studio_connections(&self) -> El {
+        let p = self.p();
+        let web = self.studio.web.as_ref().filter(|c| c.authorized);
+        let phone = self.studio.cloud.as_ref().is_some_and(|c| c.authorized);
         self.vstack(S4,vec![
-            self.panel(vec![self.heading("手机账号与官网登录"),self.text("使用与手机 Amoo 相同的账号登录官方 Studio。desktop 调用系统默认浏览器，浏览器会保留自己的登录状态；下次打开可继续使用。",BODY,p.text2),self.text("连接手机只代表设备已授权。手机系统授权后可自动同步 Amoo 我的作品，令牌不会传到电脑。官网编辑会话独立，当前固件的手机令牌不能直接登录官网；浏览器登录一次后保留其自己的会话。",CAPTION,p.text3),self.button("st-login","打开官方登录入口",Action::StudioOpenUrl("https://studio.stepx.com/".into()),Btn::Secondary)]),
-            self.panel(vec![self.heading("应用与网页游戏"),self.text("1. 在官网创建应用，检查预览并生成“真机测试 / 体验二维码”。\n2. 回到“手机账号作品”自动同步。\n3. 选择作品并点击“在手机打开”，测试触摸、返回、横竖屏与网络。\n4. 满意后保存分享二维码；需要长期使用时在官网发布并更新作品链接。",BODY,p.text2),self.text("发送链接不会伪装成安装 APK；原生安装包按官网提示安装。体验链接可能失效，手机作品库会保留入口以便更新。",CAPTION,p.text3)]),
-            self.panel(vec![self.heading("智能体与技能"),self.text("1. 在官网切换智能体或技能构建器，选择需要的连接器。\n2. 完成调试，使用官网“真机测试”。\n3. 同账号手机打开 Amoo → 我的作品，查看构建状态并确认安装。\n4. 回到 Amoo 对话验收，核对实际结果。",BODY,p.text2),self.st_button("st-guide-amoo","打开手机我的作品",St::AmooWorks,Btn::Primary)]),
-            self.panel(vec![self.heading("断开电脑，也能用"),self.text("已发送的体验链接保存在 StepX伴侣 → 任务 → Studio 作品，可打开、分享、添加桌面图标。这里只管理作品入口；平台发布、云端构建和账号权限仍由官方 Studio 管理。",BODY,p.text2),self.wrap(vec![self.st_button("st-guide-phone","打开手机作品库",St::PhoneLibrary,Btn::Secondary),self.st_button("st-guide-check","检查手机支持",St::CheckPhone,Btn::Secondary)])]),
+            self.studio_lab_settings(),
+            self.panel(vec![self.between(self.heading("Studio 官网"),self.pill_badge(if web.is_some(){"已连接"}else{"未登录"},p.text2,p.surface)),self.text(web.map(|c|format!("{} · {} 个官网项目",c.name,c.items.len())).unwrap_or("同步应用、技能与智能体项目，包含官网草稿。首次需在手机完成官网验证。".into()),BODY,p.text2),self.wrap(vec![self.st_button("st-web-login",if web.is_some(){"管理官网登录"}else{"连接官网"},St::WebsiteLogin,Btn::Primary),self.st_button("st-web-off","断开官网",St::WebsiteDisconnect,Btn::Ghost)]),self.caption("点击继续编辑会连接独立的桌面工作窗口，复用伴侣内的官网登录，无需再次登录；不会读取系统浏览器账号。")]),
+            self.panel(vec![self.between(self.heading("Amoo 手机作品"),self.pill_badge(if phone{"已授权"}else{"未连接"},p.text2,p.surface)),self.text("读取已提交真机测试的作品。应用可直接上机，技能与智能体可前往 Amoo 确认安装。",BODY,p.text2),self.wrap(vec![self.st_button("st-native-login","连接手机账号",St::ConnectAccount,Btn::Secondary),self.st_button("st-native-off","断开作品同步",St::DisconnectAccount,Btn::Ghost)])]),
+            self.panel(vec![self.heading("手机与分享"),self.text("作品发送到手机后可独立打开、分享和添加桌面图标。分享只使用官方体验地址；编辑入口和登录信息不会进入二维码。",BODY,p.text2),self.wrap(vec![self.st_button("st-phone-library","手机作品库",St::PhoneLibrary,Btn::Secondary),self.st_button("st-amoo-library","Amoo 我的作品",St::AmooWorks,Btn::Secondary),self.st_button("st-phone-check","检查连接",St::CheckPhone,Btn::Ghost)])]),
         ])
     }
 }

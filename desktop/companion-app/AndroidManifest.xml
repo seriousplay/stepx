@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.stepx.companion.app" android:versionCode="11" android:versionName="0.1.10">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.stepx.companion.app" android:versionCode="27" android:versionName="0.1.26">
   <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="35" />
   <uses-permission android:name="com.stepos.permission.MANAGE_BACK_SCREEN" />
   <uses-permission android:name="com.stepos.cloud.push.permission.MESSAGE" />
@@ -15,9 +15,31 @@
   <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
   <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
   <uses-feature android:name="android.hardware.camera" android:required="false" />
-  <queries><package android:name="com.stepos.agentbus" /><intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent></queries>
-  <application android:label="StepX伴侣" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:supportsRtl="true" android:icon="@drawable/ic_companion">
+  <queries>
+    <package android:name="com.stepx.companion.neo" />
+    <package android:name="com.stepos.agentbus" />
+    <package android:name="com.tencent.mm" />
+    <package android:name="com.tencent.wework" />
+    <package android:name="com.alibaba.android.rimet" />
+    <package android:name="com.ss.android.lark" />
+    <package android:name="com.larksuite.suite" />
+    <package android:name="com.tencent.mobileqq" />
+    <package android:name="com.tencent.tim" />
+    <package android:name="org.telegram.messenger" />
+    <package android:name="com.whatsapp" />
+    <package android:name="com.Slack" />
+    <package android:name="com.discord" />
+    <package android:name="com.xingin.xhs" />
+    <package android:name="com.ss.android.ugc.aweme" />
+    <package android:name="com.taobao.idlefish" />
+    <package android:name="com.taobao.taobao" />
+    <package android:name="com.google.android.apps.messaging" />
+    <package android:name="com.android.mms" />
+    <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
+  </queries>
+  <application android:label="StepX伴侣" android:theme="@style/CompanionTheme" android:allowBackup="false" android:supportsRtl="true" android:icon="@drawable/ic_companion">
     <service android:name=".PhoneGuiAgent" android:exported="false" android:foregroundServiceType="specialUse" android:stopWithTask="false">
       <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Explicit user-initiated on-device visual task agent. Notification provides pause, resume and stop; no automatic task restart." />
     </service>
@@ -28,13 +50,40 @@
     </service>
     <provider android:name=".McpScreenshotProvider" android:authorities="com.stepx.companion.app.mcp.screenshot" android:exported="true" android:readPermission="com.stepos.mcp.sdk.permission.ACCESS_MCP_SERVICES" />
     <provider android:name=".GuiControlProvider" android:authorities="com.stepx.companion.app.gui" android:exported="true" android:permission="android.permission.DUMP" />
+    <provider android:name=".PushControlProvider" android:authorities="com.stepx.companion.app.push" android:exported="true" android:permission="android.permission.DUMP" />
     <provider android:name=".StudioProvider" android:authorities="com.stepx.companion.app.studio" android:exported="true" android:permission="android.permission.DUMP" />
+    <activity android:name=".NeoSettingsActivity" android:exported="true" />
     <activity android:name=".StudioActivity" android:exported="true" />
+    <activity android:name=".StudioLocalActivity" android:exported="true" android:permission="android.permission.DUMP" />
+    <activity android:name=".StudioWebActivity" android:exported="true" android:permission="android.permission.DUMP" />
     <activity android:name=".StudioAccountActivity" android:exported="true" android:permission="android.permission.DUMP" />
     <service android:name=".GuiAccessibilityService" android:label="StepX伴侣 · 看屏操作" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true">
       <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
       <meta-data android:name="android.accessibilityservice" android:resource="@xml/gui_accessibility" />
     </service>
+    <service android:name=".PushNotificationService" android:label="StepX伴侣 · 消息与推送同步" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" android:exported="true">
+      <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
+    </service>
+    <activity android:name=".ExpansionShortcutActivity" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" />
+        <data android:scheme="content" /><data android:scheme="file" /><data android:host="*" />
+        <data android:mimeType="application/octet-stream" /><data android:mimeType="application/x-stepx-shortcut" />
+        <data android:pathPattern=".*\\.stepxlink" />
+      </intent-filter>
+    </activity>
+    <activity android:name=".ExpansionGalleryActivity" android:label="取回电脑原图" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="image/*" />
+      </intent-filter>
+    </activity>
+    <activity android:name=".ExpansionActivity" android:exported="true" />
+    <provider android:name=".ExpansionProvider" android:authorities="com.stepx.companion.app.expansion" android:exported="true" android:permission="android.permission.DUMP" />
+    <provider android:name=".ExpansionDocumentsProvider" android:authorities="com.stepx.companion.app.expansion.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
+      <intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER" /></intent-filter>
+    </provider>
     <activity android:name=".MainActivity" android:exported="true">
       <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
     </activity>

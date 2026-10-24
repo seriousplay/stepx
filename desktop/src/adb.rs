@@ -160,13 +160,22 @@ pub fn run_process(
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let program=command.get_program().to_owned();
+    let program = command.get_program().to_owned();
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| anyhow::anyhow!("无法启动 {}：{}。请完整解压安装包，并检查安全软件是否隔离了组件。",Path::new(&program).file_name().unwrap_or(&program).to_string_lossy(),e))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "无法启动 {}：{}。请完整解压安装包，并检查安全软件是否隔离了组件。",
+                Path::new(&program)
+                    .file_name()
+                    .unwrap_or(&program)
+                    .to_string_lossy(),
+                e
+            )
+        })?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let out = thread::spawn(move || read_bounded(&mut stdout));
@@ -248,7 +257,8 @@ pub fn bundled_tool(name: &str) -> Option<PathBuf> {
         .map(|p| p.join("Resources/tools/bin").join(exe(name)))
         .filter(|p| p.is_file());
     installed.or(macos_bundle).or_else(|| {
-        let path = crate::resources::root().join(".tools/bin")
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../.tools/bin")
             .join(exe(name));
         path.is_file().then_some(path)
     })
@@ -256,7 +266,7 @@ pub fn bundled_tool(name: &str) -> Option<PathBuf> {
 
 pub fn platform_tool_candidate(name: &str) -> Option<PathBuf> {
     let binary = exe(name);
-    let home = crate::resources::user_home()
+    let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
     let local_appdata = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);

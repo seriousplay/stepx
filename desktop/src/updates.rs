@@ -49,7 +49,6 @@ pub struct Release {
     /// Allows releases with the same semver to distinguish a newer compiled build.
     #[serde(default)]
     pub build_unix_seconds: Option<u64>,
-
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

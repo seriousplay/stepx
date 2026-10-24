@@ -1,0 +1,10 @@
+Source: connected StepX PZ261A, com.stepos.ailauncher
+APK: /system_ext/app/AiLauncher/AiLauncher.apk
+Version: 1.0.0_20261002_221513 (versionCode 100001)
+Android manifest application icon: res/IY.png (aapt dump badging)
+Extracted unchanged: 2026-10-22
+SHA-256: 8c87ce371a0c02924af186256e892359a2cd1f77e50129437c75a6ae793cc62e
+Original reference retained unchanged.
+Desktop application / launcher / Dock now uses amoo_desktop_icon.png, generated from this reference.
+The in-app Amoo navigation uses its original star glyph.
+The icon remains the property of its original rights holder.

@@ -279,11 +279,13 @@ impl Companion {
         if !std::env::args().any(|arg| arg == "--verify-mirror-controls") {
             return;
         }
-        static LAST_TICK:std::sync::Mutex<Option<Instant>>=std::sync::Mutex::new(None);
-        static MAX_GAP:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
-        static CYCLES:AtomicUsize=AtomicUsize::new(0);
-        if let Ok(mut last)=LAST_TICK.lock() {
-            if let Some(previous)=last.replace(Instant::now()) {MAX_GAP.fetch_max(previous.elapsed().as_millis() as u64,Ordering::Relaxed);}
+        static LAST_TICK: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+        static MAX_GAP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        static CYCLES: AtomicUsize = AtomicUsize::new(0);
+        if let Ok(mut last) = LAST_TICK.lock() {
+            if let Some(previous) = last.replace(Instant::now()) {
+                MAX_GAP.fetch_max(previous.elapsed().as_millis() as u64, Ordering::Relaxed);
+            }
         }
         let Ok(expected) = std::env::var("STEPX_VERIFY_DEVICE") else {
             return;
@@ -413,9 +415,15 @@ impl Companion {
             }
         } else if step == 11 && self.mirror.is_none() && self.mirror_controls.is_none() {
             eprintln!("MIRROR_UI_CHECK: PASS — toolbar actions and native close both end the mirror session");
-            eprintln!("MIRROR_UI_CHECK: maximum UI tick gap {} ms",MAX_GAP.load(Ordering::Relaxed));
-            if CYCLES.fetch_add(1,Ordering::SeqCst)<2 {STEP.store(0,Ordering::SeqCst);}
-            else {std::process::exit(0);}
+            eprintln!(
+                "MIRROR_UI_CHECK: maximum UI tick gap {} ms",
+                MAX_GAP.load(Ordering::Relaxed)
+            );
+            if CYCLES.fetch_add(1, Ordering::SeqCst) < 2 {
+                STEP.store(0, Ordering::SeqCst);
+            } else {
+                std::process::exit(0);
+            }
         }
     }
 }

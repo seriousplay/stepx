@@ -1,8 +1,8 @@
+import os, shutil
 #!/usr/bin/env python3
 """Seal an existing local Step Plan key to this companion's Android Keystore key.
 No plaintext credential goes into adb arguments, phone files, or diagnostic output.
 """
-import os
 import base64
 import json
 from pathlib import Path
@@ -12,8 +12,7 @@ import tempfile
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 
-ADB=[os.environ.get('STEPX_ADB','adb'),'-s',os.environ.get('STEPX_SERIAL','')]
-if not ADB[-1]: raise SystemExit('Set STEPX_SERIAL to the authorized device serial')
+ADB=[os.environ.get('STEPX_ADB', shutil.which('adb') or 'adb'),'-s',os.environ['STEPX_SERIAL']]
 def call(q):
     raw=subprocess.check_output(ADB+['shell','content','call','--uri','content://com.stepx.companion.app.gui','--method','request','--arg',base64.b64encode(json.dumps(q).encode()).decode()],text=True)
     match=re.search(r'result=([A-Za-z0-9+/=]+)',raw)

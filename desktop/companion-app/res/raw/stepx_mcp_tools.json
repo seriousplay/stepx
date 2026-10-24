@@ -1,7 +1,7 @@
 [
   {
     "name": "stepx_gui_agent",
-    "description": "把手机界面任务委派给 StepX伴侣的完整 GELab-Zero GUI Agent。独立 Step Plan 视觉模型自动看屏、规划、点击、滑动、输入、重试并核验。start(goal)返回task，随后约5秒查询status；支持pause/resume/stop。完整执行器在手机本地运行，不需要desktop或USB连接；需要手机联网、解锁并已配置Step Plan。仅phase=completed且result.verified=true且result.phoneStopped=true表示完成。不用Amoo自己截图或逐步点击，不用exec或image。",
+    "description": "把手机界面任务委派给 StepX伴侣的完整 GUI Agent（安装并启用 Neo Agent Touch 后使用 Neo 执行器）。已配置的独立视觉模型自动看屏、规划、点击、滑动、输入、重试并核验。start(goal)返回task，随后约5秒查询status；支持pause/stop；接管后的resume需用户从伴侣或desktop确认。完整执行器在手机本地运行，不需要desktop或USB连接；需要手机联网、解锁并已配置模型与应用授权范围。仅phase=completed且result.verified=true且result.phoneStopped=true表示完成。reported仅表示模型自述，不能报告已验证成功；needs_input需要用户接管。不用Amoo自己截图或逐步点击，不用exec或image。",
     "inputSchema": {
       "type": "object",
       "properties": {

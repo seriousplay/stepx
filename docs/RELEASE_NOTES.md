@@ -37,4 +37,6 @@ Linux + PZ261A 已从客户端界面完成：混合附件对话、Excel/Word/三
 
 [跨平台验证与已知限制](https://github.com/xydzf520/stepx/blob/main/docs/CROSS_PLATFORM_0_2_25.md)。
 
+发布后已在本机通过真实 GitHub 下载、SHA-256 校验、0.2.24 → 0.2.25 安装与原生窗口启动回执验证；旧安装保留用于回滚。
+
 完整变化见 [CHANGELOG.md](https://github.com/xydzf520/stepx/blob/main/CHANGELOG.md)。

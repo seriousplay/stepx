@@ -1,7 +1,7 @@
 //! A compact LED studio: edit locally, inspect the result, then play on the phone.
 use super::super::{
     backscreen_state::BackScreenAction as BsAction, icons::UiIcon, theme::*, widgets::*, Action,
-    Companion, F_BACK_MARQUEE, F_BACK_PROMPT,
+    Companion, Page, F_BACK_MARQUEE, F_BACK_PROMPT,
 };
 use facloud_ui::{elements::*, fonts::Weight, platform::Cursor};
 use std::time::Duration;
@@ -476,8 +476,38 @@ impl Companion {
                 self.bs_button("prompt-cat", "猫咪陪伴", BsAction::Prompt("做一只会眨眼的猫咪，低亮度，播放 20 秒".into()), Btn::Secondary),
                 self.bs_button("prompt-focus", "专注倒计时", BsAction::Prompt("我要专注 25 分钟，背屏显示倒计时，亮度柔和".into()), Btn::Secondary),
                 self.bs_button("prompt-image", "宇航员像素画", BsAction::Prompt("生成一张宇航员抱着月亮的图片，单色，纯黑背景，白色轮廓，主体居中，适合 17 列 23 行的背屏".into()), Btn::Secondary),
+                self.bs_button("prompt-meteor", "赛博流星雨", BsAction::Prompt("设计一组动感斜向划过的赛博流星雨，呼吸感尾迹，中高亮度循环播放".into()), Btn::Secondary),
+                self.bs_button("prompt-breath", "极简呼吸灯", BsAction::Prompt("极简中心光晕缓慢呼吸明暗交替，低亮度适合桌面静置陪伴".into()), Btn::Secondary),
+                self.bs_button("prompt-shiba", "像素萌宠柴犬", BsAction::Prompt("生成一张高对比度单色像素柴犬笑脸，纯黑背景，白色清晰轮廓，适合背屏灯珠显示".into()), Btn::Secondary),
             ]),
             if state.generating {self.bs_button("cancel-generation", "取消生成", BsAction::CancelGenerate, Btn::Secondary)} else {self.bs_button("amoo-generate", "生成背屏方案", BsAction::Generate, Btn::Secondary)},
+            Container::new(
+                self.between(
+                    self.hstack(
+                        S2,
+                        vec![
+                            self.pill_badge("跨页直达", p.accent, p.accent_soft),
+                            self.line(
+                                "可在「文件与扩容」中任选手机照片、GIF 或视频一键推送到背屏创作工坊",
+                                MICRO,
+                                p.text2,
+                            ),
+                        ],
+                    ),
+                    self.button(
+                        "bs-amoo-goto-files",
+                        "去文件与扩容挑选素材",
+                        Action::Page(Page::Files),
+                        Btn::Ghost,
+                    ),
+                ),
+            )
+            .with_horizontal_padding(S3)
+            .with_vertical_padding(S2)
+            .with_background_color(p.surface)
+            .with_border(Border::all(1.).with_border_color(p.border))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+            .finish(),
         ];
         if !state.generator_status.is_empty() {
             parts.push(self.panel(vec![
@@ -548,12 +578,20 @@ impl Companion {
                 CAPTION,
                 p.text2,
             ),
-            self.bs_button(
-                "choose-image",
-                "选择图片…",
-                BsAction::PickImage,
-                Btn::Secondary,
-            ),
+            self.wrap(vec![
+                self.bs_button(
+                    "choose-image",
+                    "选择图片…",
+                    BsAction::PickImage,
+                    Btn::Secondary,
+                ),
+                self.button(
+                    "bs-image-goto-files",
+                    "从文件与扩容推送手机照片/GIF/视频",
+                    Action::Page(Page::Files),
+                    Btn::Ghost,
+                ),
+            ]),
         ];
         if state.image_path.is_some() {
             parts.push(self.bs_source_image());
@@ -956,6 +994,26 @@ impl Companion {
                 ),
             ]),
             self.input(F_BACK_MARQUEE, "输入英文或数字个性文字", None),
+            self.wrap(vec![
+                self.button(
+                    "bs-marquee-preset-stepx",
+                    "预设: STEPX AI",
+                    Action::CopyText("背屏跑马灯预设".into(), "STEPX AI".into()),
+                    Btn::Ghost,
+                ),
+                self.button(
+                    "bs-marquee-preset-focus",
+                    "预设: FOCUS ON",
+                    Action::CopyText("背屏跑马灯预设".into(), "FOCUS ON".into()),
+                    Btn::Ghost,
+                ),
+                self.button(
+                    "bs-marquee-preset-coffee",
+                    "预设: COFFEE TIME",
+                    Action::CopyText("背屏跑马灯预设".into(), "COFFEE TIME".into()),
+                    Btn::Ghost,
+                ),
+            ]),
             self.wrap(vec![
                 self.bs_button(
                     "native-scroll",

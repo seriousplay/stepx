@@ -1,4 +1,3 @@
-import os, shutil
 #!/usr/bin/env python3
 """Real-device lifecycle verification against the companion executor (no model)."""
 import base64,json,subprocess,time,pathlib

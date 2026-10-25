@@ -1,4 +1,3 @@
-import os, shutil
 #!/usr/bin/env python3
 """Seal an existing local Step Plan key to this companion's Android Keystore key.
 No plaintext credential goes into adb arguments, phone files, or diagnostic output.

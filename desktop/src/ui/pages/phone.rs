@@ -877,7 +877,7 @@ impl Companion {
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_PANEL)))
         .finish();
 
-        Container::new(
+        let columns = Container::new(
             Flex::row()
                 .with_main_axis_size(MainAxisSize::Max)
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -888,7 +888,14 @@ impl Companion {
                 .finish(),
         )
         .with_uniform_padding(S5)
-        .finish()
+        .finish();
+
+        Flex::column()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_child(self.comm_mode_bar())
+            .with_child(Expanded::new(1., columns).finish())
+            .finish()
     }
 
     fn phone_empty(

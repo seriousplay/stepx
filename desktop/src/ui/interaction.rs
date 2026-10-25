@@ -181,7 +181,8 @@ impl Companion {
             ctx.notify();
             return true;
         }
-        // Notification preferences use the same draft/save contract from every entry point.
+        // Notification preferences use the same draft/save contract on Settings,
+        // while direct toggles on notification surfaces apply in place without jumping away.
         if let Action::Push(a) = action {
             let p = &mut self.settings.notify_draft;
             match a {
@@ -191,12 +192,15 @@ impl Companion {
                 PushAction::ToggleAutoCopyOtp => p.auto_copy_otp = !p.auto_copy_otp,
                 _ => return self.review_effect(action, ctx),
             }
-            self.set_compact_mode(ShellMode::Full, ctx);
-            self.page = Page::Settings;
-            self.settings.tab = 3;
-            self.settings.feedback = "通知偏好尚未保存，请确认保存。只影响这台电脑。".into();
-            ctx.notify();
-            return true;
+            if self.page == Page::Settings {
+                self.set_compact_mode(ShellMode::Full, ctx);
+                self.page = Page::Settings;
+                self.settings.tab = 3;
+                self.settings.feedback = "通知偏好尚未保存，请确认保存。只影响这台电脑。".into();
+                ctx.notify();
+                return true;
+            }
+            return false;
         }
         self.review_effect(action, ctx)
     }
@@ -233,7 +237,7 @@ impl Companion {
             },
             Action::Expansion(E::Pause)=>("暂停自动迁移？",vec!["保存暂停状态到当前手机，不再开始新文件的迁移。已完成的电脑原件和手机入口保留；正在校验的单个文件可能先完成。".into()],"确认暂停",true),
             Action::Expansion(E::Restore(id))=>("将原件恢复到手机？",vec![self.expansion.snapshot.files.iter().find(|j|j["id"]==*id).map(|j|format!("文件：{} · {}",j["name"].as_str().unwrap_or(""),storage::format_bytes(j["size"].as_u64().unwrap_or(0)))).unwrap_or_else(||"文件记录需要重新检查".into()),"通过当前连接传回手机，占用手机存储空间。电脑副本保留。".into()],"恢复到手机",true),
-            Action::BackScreen(BackScreenAction::Play|BackScreenAction::SaveBrightness|BackScreenAction::SaveMarquee|BackScreenAction::DisplayMode(_)|BackScreenAction::GameArm|BackScreenAction::GameStart)=>("应用到手机背屏？",vec![format!("选择：{}",self.back_screen.title),format!("亮度：{}/8 · 帧率：{} 帧/秒 · 临时播放时长：{} 秒",self.back_screen.config.brightness,self.back_screen.config.fps,self.back_screen.config.duration_secs),"将应用到手机背屏，替换当前效果。原生功能与游戏按各自运行规则持续；关闭电脑预览不会撤销手机设置。".into(),"可以在背屏页面停止或重新选择效果。".into()],"确认应用到手机",true),
+            Action::BackScreen(BackScreenAction::Play|BackScreenAction::SaveMarquee|BackScreenAction::GameArm|BackScreenAction::GameStart)=>("应用到手机背屏？",vec![format!("选择：{}",self.back_screen.title),format!("亮度：{}/8 · 帧率：{} 帧/秒 · 临时播放时长：{} 秒",self.back_screen.config.brightness,self.back_screen.config.fps,self.back_screen.config.duration_secs),"将应用到手机背屏，替换当前效果。原生功能与游戏按各自运行规则持续；关闭电脑预览不会撤销手机设置。".into(),"可以在背屏页面停止或重新选择效果。".into()],"确认应用到手机",true),
             Action::Studio(StudioAction::Send|StudioAction::Pin|StudioAction::UsePhone(_))|Action::StudioLab(StudioLabAction::DeliverPhone)=>("发送作品到手机？",vec!["将所选作品传入当前手机，安装或更新对应入口。传输与手机接收结果会在页面显示。".into()],"确认发送",true),
             Action::StudioLab(StudioLabAction::SyncCloud)=>("同步作品到 Studio？",vec!["将所选本地作品上传到已登录的 Studio 账号。同步成功后可继续编辑官网项目。".into()],"确认同步",false),
             Action::StudioLab(StudioLabAction::Save|StudioLabAction::Test|StudioLabAction::Models)=>("保存模型服务配置？",vec!["将保存当前 API 地址、协议和模型到本机；测试或获取模型目录会使用此配置连接服务。后续任务会将输入与附件发送给该服务。密钥不会显示在操作记录中。".into()],"确认保存",false),

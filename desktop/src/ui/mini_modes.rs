@@ -268,7 +268,7 @@ impl Companion {
         ));
         controls.push(self.button_icon(
             "compact-expand",
-            "展开",
+            "完整工作台",
             UiIcon::Maximize,
             Action::Push(PushAction::SetShellMode(ShellMode::Full)),
             Btn::Secondary,
@@ -286,21 +286,26 @@ impl Companion {
             S3
         })
         .finish();
-        let tabs = self.segmented(
-            "compact-tabs",
-            vec![
-                (
-                    "Amoo".into(),
-                    self.push.shell_mode == ShellMode::MiniAi,
-                    Action::Push(PushAction::SetShellMode(ShellMode::MiniAi)),
-                ),
-                (
-                    "手机通知".into(),
-                    self.push.shell_mode == ShellMode::MiniNotify,
-                    Action::Push(PushAction::SetShellMode(ShellMode::MiniNotify)),
-                ),
-            ],
-        );
+        let mut tab_items = vec![
+            (
+                "AI 简洁窗".into(),
+                self.push.shell_mode == ShellMode::MiniAi,
+                Action::Push(PushAction::SetShellMode(ShellMode::MiniAi)),
+            ),
+            (
+                "通知小窗".into(),
+                self.push.shell_mode == ShellMode::MiniNotify,
+                Action::Push(PushAction::SetShellMode(ShellMode::MiniNotify)),
+            ),
+        ];
+        if self.workspace.viewport.x() >= 420. {
+            tab_items.push((
+                "完整工作台".into(),
+                self.push.shell_mode == ShellMode::Full,
+                Action::Push(PushAction::SetShellMode(ShellMode::Full)),
+            ));
+        }
+        let tabs = self.segmented("compact-tabs", tab_items);
         let links = self.button_icon(
             "compact-workspace-history",
             "会话记录",

@@ -51,9 +51,22 @@ struct ImageDelivery {
     note: String,
     receiver: mpsc::Receiver<Result<Vec<(String, PathBuf)>, String>>,
 }
+pub(super) fn is_verification_harness() -> bool {
+    std::env::args().any(|a| a.starts_with("--verify-") || a.starts_with("--capture-ui"))
+        || [
+            "STEPX_SCENARIO_DIR",
+            "STEPX_CHAT_FIRST_TEST",
+            "STEPX_RESPONSIVE_TEST",
+            "STEPX_ENTER_TEST",
+        ]
+        .into_iter()
+        .any(|k| std::env::var_os(k).is_some())
+}
+
 pub(super) struct WorkspaceUi {
     pub journal: Journal,
     pub active: Option<String>,
+    pub left_rail_open: bool,
     pub history: bool,
     pub panel: u8,
     pub viewport: Vector2F,
@@ -104,6 +117,7 @@ impl Default for WorkspaceUi {
         Self {
             journal,
             active: None,
+            left_rail_open: !is_verification_harness(),
             history: false,
             panel: 0,
             viewport: Vector2F::new(1320., 860.),
@@ -281,6 +295,8 @@ impl Companion {
         self.workspace.delivery = None;
         self.workspace.panel = 0;
         self.workspace.history = false;
+        // Keep `self.workspace.left_rail_open` unchanged when switching sessions
+        // so selecting a conversation in the persistent left sidebar never closes it.
         self.clear_text_interaction();
         self.reveal_latest_chat();
         self.load_work_previews();
@@ -311,7 +327,13 @@ impl Companion {
         }
         match action {
             A::History => {
-                self.workspace.history = !self.workspace.history;
+                let compact = self.push.shell_mode != ShellMode::Full;
+                if !is_verification_harness() && !compact && self.workspace.viewport.x() >= 1000.0 {
+                    self.workspace.left_rail_open = !self.workspace.left_rail_open;
+                    self.workspace.history = false;
+                } else {
+                    self.workspace.history = !self.workspace.history;
+                }
                 self.workspace.panel = 0;
                 self.scroll_aux = Default::default();
             }

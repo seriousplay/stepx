@@ -327,7 +327,7 @@ impl Companion {
         let p = self.p();
         let e = &self.expansion;
         let q = e.draft.as_ref().unwrap_or(&e.snapshot.status["policy"]);
-        let mut sections = vec![];
+        let mut sections = vec![self.storage_mode_bar()];
         if e.settings {
             sections.push(self.between(
                 self.heading("设置自动迁移"),
@@ -475,6 +475,90 @@ impl Companion {
             if e.snapshot.online {
                 sections.push(self.expansion_report_card(&e.snapshot.report, false));
             }
+            let archived_photos = e
+                .snapshot
+                .files
+                .iter()
+                .filter(|j| j["state"] == "archived" && j["kind"] == "photos")
+                .count() as u64;
+            let archived_videos = e
+                .snapshot
+                .files
+                .iter()
+                .filter(|j| j["state"] == "archived" && j["kind"] == "videos")
+                .count() as u64;
+            let archived_docs = e
+                .snapshot
+                .files
+                .iter()
+                .filter(|j| j["state"] == "archived" && j["kind"] == "documents")
+                .count() as u64;
+            let browse_pc_btn = if let Some(folder) = &self.expansion.config.folder {
+                self.button(
+                    "exp-browse-pc-folder",
+                    "打开电脑扩容目录浏览原件",
+                    Action::StudioOpenUrl(folder.to_string_lossy().into_owned()),
+                    Btn::Secondary,
+                )
+            } else {
+                self.ex_button(
+                    "exp-browse-pc-folder",
+                    "打开电脑扩容目录浏览原件",
+                    EA::OpenFolder,
+                    Btn::Secondary,
+                )
+            };
+            sections.push(self.panel(vec![
+                self.between(
+                    self.heading("电脑扩容媒体库概览与直达"),
+                    self.button(
+                        "exp-jump-phone-files",
+                        "浏览手机文件",
+                        Action::Page(Page::Files),
+                        Btn::Ghost,
+                    ),
+                ),
+                self.hstack(
+                    S3,
+                    [
+                        ("照片", archived_photos, UiIcon::Image),
+                        ("视频", archived_videos, UiIcon::Video),
+                        ("文档", archived_docs, UiIcon::File),
+                    ]
+                    .into_iter()
+                    .map(|(cat_label, cnt, icon)| {
+                        Expanded::new(
+                            1.,
+                            Container::new(self.vstack(
+                                S1,
+                                vec![
+                                    self.hstack(
+                                        S1,
+                                        vec![
+                                            self.ui_icon(icon, 16., p.text2),
+                                            self.line(cat_label, CAPTION, p.text2),
+                                        ],
+                                    ),
+                                    self.line_w(
+                                        format!("{cnt} 项已归档"),
+                                        SUBHEAD,
+                                        p.text,
+                                        Weight::Semibold,
+                                    ),
+                                ],
+                            ))
+                            .with_uniform_padding(S3)
+                            .with_background_color(p.surface)
+                            .with_border(Border::all(1.).with_border_color(p.border))
+                            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+                            .finish(),
+                        )
+                        .finish()
+                    })
+                    .collect(),
+                ),
+                self.wrap(vec![browse_pc_btn]),
+            ]));
         }
         if !e.feedback.is_empty() {
             sections.push(self.text(

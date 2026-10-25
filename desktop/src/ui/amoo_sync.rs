@@ -18,16 +18,19 @@ struct SyncRequest {
 pub(super) struct SyncWorker {
     transport: String,
     sender: mpsc::Sender<SyncRequest>,
+    reset_baseline: Arc<std::sync::atomic::AtomicBool>,
 }
 impl SyncWorker {
     fn start(adb: Adb, device: Device) -> Self {
         let (sender, receiver) = mpsc::channel::<SyncRequest>();
         let transport = device.transport.clone();
+        let reset_baseline = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_reset = reset_baseline.clone();
         std::thread::spawn(move || {
             let mut bus: Option<(bool, amoo::AgentBus)> = None;
-            let mut previous: Option<(u64, u64)> = None;
+            let mut previous: Option<(u64, Option<String>, u64)> = None;
             loop {
-                let request = match receiver.recv_timeout(Duration::from_secs(12)) {
+                let mut request = match receiver.recv_timeout(Duration::from_secs(12)) {
                     Ok(request) => request,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         bus = None;
@@ -35,6 +38,12 @@ impl SyncWorker {
                     }
                     Err(_) => break,
                 };
+                while let Ok(newer) = receiver.try_recv() {
+                    request = newer;
+                }
+                if worker_reset.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    previous = None;
+                }
                 // Escalation/de-escalation releases the previous task lease on this worker,
                 // never on the UI thread. An idle observer must not keep the phone awake.
                 if bus.as_ref().is_some_and(|(task, _)| *task != request.task) {
@@ -70,14 +79,15 @@ impl SyncWorker {
                         started.elapsed().as_millis()
                     );
                 }
+                let key_sig = request.key.clone();
                 let result = result.map(|data| {
                     use std::hash::{Hash, Hasher};
                     let mut hash = std::collections::hash_map::DefaultHasher::new();
                     serde_json::to_vec(&data)
                         .unwrap_or_default()
                         .hash(&mut hash);
-                    let signature = (request.generation, hash.finish());
-                    if previous == Some(signature) {
+                    let signature = (request.generation, key_sig, hash.finish());
+                    if previous == Some(signature.clone()) {
                         None
                     } else {
                         previous = Some(signature);
@@ -90,7 +100,11 @@ impl SyncWorker {
                 let _ = request.reply.send(result);
             }
         });
-        Self { transport, sender }
+        Self {
+            transport,
+            sender,
+            reset_baseline,
+        }
     }
 }
 fn matches_request(
@@ -179,8 +193,15 @@ impl Companion {
         ) {
             // A newer foreground operation or session switch owns the state.
             // A discarded result must not become the deduplication baseline:
-            // recreate the worker so the next accepted read is delivered in full.
-            self.amoo_ui.snapshot_worker = None;
+            // reset the worker baseline while keeping its warm AgentBus tunnel.
+            if let Some(worker) = &self.amoo_ui.snapshot_worker {
+                worker
+                    .reset_baseline
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            if self.selected.as_ref().map(|d| d.serial.as_str()) != Some(job.serial.as_str()) {
+                self.amoo_ui.snapshot_worker = None;
+            }
             return false;
         }
         match result {

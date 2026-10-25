@@ -109,6 +109,81 @@ impl Companion {
         ]
     }
 
+    pub(in super::super) fn comm_mode_bar(&self) -> El {
+        let p = self.p();
+        let im_unread: usize = self
+            .push
+            .snapshot
+            .threads
+            .iter()
+            .map(|t| t.unread_count)
+            .sum();
+        let push_unread: usize = self
+            .push
+            .snapshot
+            .notifications
+            .iter()
+            .filter(|n| !n.dismissed && !n.read && !n.is_ongoing)
+            .count();
+        let missed_calls: usize = self.call_logs.iter().filter(|r| r.call_type == 3).count();
+
+        let mode_seg = self.segmented(
+            "comm-mode-bar",
+            vec![
+                (
+                    "即时消息与短信".into(),
+                    self.page == Page::Sms,
+                    Action::Page(Page::Sms),
+                ),
+                (
+                    "手机推送通知".into(),
+                    self.page == Page::Notifications,
+                    Action::Page(Page::Notifications),
+                ),
+                (
+                    "电话与通讯录".into(),
+                    self.page == Page::Phone,
+                    Action::Page(Page::Phone),
+                ),
+            ],
+        );
+
+        let mut right_badges: Vec<El> = Vec::new();
+        if im_unread > 0 {
+            right_badges.push(self.pill_badge(
+                format!("{im_unread} 未读会话"),
+                p.success_text,
+                p.success_soft,
+            ));
+        }
+        if push_unread > 0 {
+            right_badges.push(self.pill_badge(
+                format!("{push_unread} 未读推送"),
+                p.warning,
+                p.warning_soft,
+            ));
+        }
+        if missed_calls > 0 {
+            right_badges.push(self.pill_badge(
+                format!("{missed_calls} 未接来电"),
+                p.danger,
+                p.danger_soft,
+            ));
+        }
+        right_badges.push(self.line(
+            "消息与通知 · 即时消息与短信 · 手机推送通知 · 电话与通讯录",
+            MICRO,
+            p.text3,
+        ));
+
+        Container::new(self.between(mode_seg, self.hstack(S2, right_badges)))
+            .with_horizontal_padding(S4)
+            .with_vertical_padding(8.)
+            .with_background_color(if p.dark { p.sidebar } else { p.bg })
+            .with_border(Border::bottom(1.).with_border_color(p.border))
+            .finish()
+    }
+
     fn im_channel_pill(
         &self,
         id: impl Into<String>,
@@ -340,31 +415,7 @@ impl Companion {
                     format!("{sender_name} · {ts}")
                 };
 
-                let mut bubble_children = vec![self.text(msg_text, BODY, p.text)];
-                if !self.push.prefs.privacy_mask {
-                    let mut inline_actions: Vec<El> = Vec::new();
-                    if let Some(code) = extract_otp_code(&m.text) {
-                        inline_actions.push(self.button(
-                            format!("im-msg-otp-{idx}"),
-                            format!("复制验证码 {code}"),
-                            Action::Push(PushAction::CopyOtp(code)),
-                            Btn::Primary,
-                        ));
-                    }
-                    if let Some(url) = extract_first_url(&m.text) {
-                        inline_actions.push(self.button(
-                            format!("im-msg-url-{idx}"),
-                            "打开链接",
-                            Action::Push(PushAction::OpenUrl(url)),
-                            Btn::Secondary,
-                        ));
-                    }
-                    if !inline_actions.is_empty() {
-                        bubble_children.push(self.wrap(inline_actions));
-                    }
-                }
-
-                let bubble_box = Container::new(self.vstack(S2, bubble_children))
+                let bubble_box = Container::new(self.text(msg_text, BODY, p.text))
                     .with_horizontal_padding(16.)
                     .with_vertical_padding(10.)
                     .with_background_color(p.bg)
@@ -372,22 +423,44 @@ impl Companion {
                     .with_corner_radius(CornerRadius::with_all(Radius::Pixels(16.)))
                     .finish();
 
-                msg_items.push(
-                    Flex::column()
-                        .with_spacing(4.)
-                        .with_cross_axis_alignment(CrossAxisAlignment::Start)
-                        .with_child(
-                            Container::new(self.line_w(meta, MICRO, p.text2, Weight::Medium))
-                                .with_padding_left(4.)
-                                .finish(),
-                        )
-                        .with_child(
-                            ConstrainedBox::new(bubble_box)
-                                .with_max_width(560.)
-                                .finish(),
-                        )
-                        .finish(),
-                );
+                let mut msg_col = Flex::column()
+                    .with_spacing(4.)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                    .with_child(
+                        Container::new(self.line_w(meta, MICRO, p.text2, Weight::Medium))
+                            .with_padding_left(4.)
+                            .finish(),
+                    )
+                    .with_child(
+                        ConstrainedBox::new(bubble_box)
+                            .with_max_width(560.)
+                            .finish(),
+                    );
+
+                if !self.push.prefs.privacy_mask {
+                    let mut inline_actions: Vec<El> = Vec::new();
+                    if let Some(code) = extract_otp_code(&m.text) {
+                        inline_actions.push(self.button(
+                            format!("im-msg-otp-{idx}"),
+                            format!("复制验证码: {code}"),
+                            Action::CopyText("验证码".into(), code),
+                            Btn::Primary,
+                        ));
+                    }
+                    if let Some(url) = extract_first_url(&m.text) {
+                        inline_actions.push(self.button(
+                            format!("im-msg-url-{idx}"),
+                            "打开链接",
+                            Action::StudioOpenUrl(url),
+                            Btn::Secondary,
+                        ));
+                    }
+                    if !inline_actions.is_empty() {
+                        msg_col = msg_col.with_child(self.wrap(inline_actions));
+                    }
+                }
+
+                msg_items.push(msg_col.finish());
             }
         }
 
@@ -488,7 +561,18 @@ impl Companion {
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_PANEL)))
         .finish();
 
-        let bottom_composer = Container::new(self.vstack(8., vec![quick_bar, composer_input_row]))
+        let mut composer_rows = vec![quick_bar];
+        if !t.can_reply() || !t.can_remote_reply {
+            composer_rows.push(self.button(
+                "im-fallback-open-app",
+                "通知快捷句柄已过期 · 在手机打开应用回复",
+                Action::OpenApp(t.package_name.clone()),
+                Btn::Secondary,
+            ));
+        }
+        composer_rows.push(composer_input_row);
+
+        let bottom_composer = Container::new(self.vstack(8., composer_rows))
             .with_horizontal_padding(S4)
             .with_padding_bottom(S4)
             .with_padding_top(S2)
@@ -508,16 +592,27 @@ impl Companion {
     pub(in super::super) fn sms_page(&self) -> El {
         let p = self.p();
         if !self.demo_mode && self.selected.is_none() {
-            return self.empty(
-                "连接手机后查看消息与短信",
-                "连接后将同步微信、企业微信、钉钉、飞书会话以及手机原生短信。",
-                Some(self.button(
-                    "sms-connect",
-                    "连接设备",
-                    Action::Page(Page::Connect),
-                    Btn::Primary,
-                )),
-            );
+            return Flex::column()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_child(self.comm_mode_bar())
+                .with_child(
+                    Expanded::new(
+                        1.,
+                        self.empty(
+                            "连接手机后查看消息与短信",
+                            "连接后将同步微信、企业微信、钉钉、飞书会话以及手机原生短信。",
+                            Some(self.button(
+                                "sms-connect",
+                                "连接设备",
+                                Action::Page(Page::Connect),
+                                Btn::Primary,
+                            )),
+                        ),
+                    )
+                    .finish(),
+                )
+                .finish();
         }
 
         let demo_fallback: PushSnapshot;
@@ -1039,11 +1134,17 @@ impl Companion {
         // If an IM thread is selected, render the IM chat bubble dialog & direct reply composer
         if let Some(im_thread) = active_im_thread {
             let right_pane = self.im_thread_dialog(im_thread, snapshot);
-            return Flex::row()
+            let split = Flex::row()
                 .with_main_axis_size(MainAxisSize::Max)
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                 .with_child(left_pane)
                 .with_child(Expanded::new(1., right_pane).finish())
+                .finish();
+            return Flex::column()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_child(self.comm_mode_bar())
+                .with_child(Expanded::new(1., split).finish())
                 .finish();
         }
 
@@ -1448,11 +1549,18 @@ impl Companion {
         }
         let right_pane = right_pane.finish();
 
-        Flex::row()
+        let split = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(left_pane)
             .with_child(Expanded::new(1., right_pane).finish())
+            .finish();
+
+        Flex::column()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_child(self.comm_mode_bar())
+            .with_child(Expanded::new(1., split).finish())
             .finish()
     }
 }

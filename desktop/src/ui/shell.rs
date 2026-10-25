@@ -93,7 +93,7 @@ impl Companion {
                     .with_main_axis_size(MainAxisSize::Max)
                     .with_main_axis_alignment(MainAxisAlignment::Center)
                     .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_child(self.line_w("📱", TITLE, p.text, Weight::Semibold))
+                    .with_child(self.ui_icon(UiIcon::Smartphone, 22., p.text2))
                     .finish(),
             )
             .with_background_color(icon_bg)
@@ -221,6 +221,35 @@ impl Companion {
         active: bool,
         action: Action,
     ) -> El {
+        let resolved_icon = if icon == "✦" {
+            UiIcon::Star
+        } else {
+            icons::symbol(icon).unwrap_or(UiIcon::Apps)
+        };
+        self.nav_item_icon(id, resolved_icon, label, badge, active, action)
+    }
+
+    pub(super) fn nav_item_with_match(
+        &self,
+        id: &str,
+        icon: UiIcon,
+        label: &'static str,
+        target: Page,
+        is_active: bool,
+        badge: Option<String>,
+    ) -> El {
+        self.nav_item_icon(id, icon, label, badge, is_active, Action::Page(target))
+    }
+
+    fn nav_item_icon(
+        &self,
+        id: &str,
+        icon: UiIcon,
+        label: &'static str,
+        badge: Option<String>,
+        active: bool,
+        action: Action,
+    ) -> El {
         let p = self.p();
         let state = self.mouse_state(format!("nav:{id}"));
         let font = self.font;
@@ -251,21 +280,10 @@ impl Companion {
                 .with_spacing(10.)
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_child(
-                    ConstrainedBox::new(
-                        Align::new(icons::draw_icon(
-                            if icon == "✦" {
-                                UiIcon::Star
-                            } else {
-                                icons::symbol(icon).unwrap_or(UiIcon::Apps)
-                            },
-                            if icon == "✦" { 18. } else { 16. },
-                            icon_fg,
-                        ))
+                    ConstrainedBox::new(Align::new(icons::draw_icon(icon, 16., icon_fg)).finish())
+                        .with_width(20.)
+                        .with_height(20.)
                         .finish(),
-                    )
-                    .with_width(20.)
-                    .with_height(20.)
-                    .finish(),
                 )
                 .with_child(
                     facloud_ui::elements::Text::new(label, font, CAPTION)
@@ -337,7 +355,9 @@ impl Companion {
         } else {
             ColorU::white()
         };
-        let card_border = if p.dark {
+        let card_border = if self.page == Page::Connect {
+            p.accent
+        } else if p.dark {
             rgb(0x2E, 0x2E, 0x36)
         } else {
             rgb(0xE4, 0xE4, 0xE7)
@@ -352,9 +372,9 @@ impl Companion {
             Some(d) => {
                 let metrics = stepx_companion::device::DeviceMetrics::from_summary(&self.summary);
                 let transport = if is_wireless(&d.transport) {
-                    "无线直连"
+                    "局域网无线直连"
                 } else {
-                    "USB 直连"
+                    "USB 有线连接"
                 };
                 let detail = match metrics.battery_level {
                     Some(b) => format!("{transport} · {b}%"),
@@ -371,7 +391,7 @@ impl Companion {
                             .with_main_axis_size(MainAxisSize::Max)
                             .with_main_axis_alignment(MainAxisAlignment::Center)
                             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                            .with_child(self.line("📱", CAPTION, p.text))
+                            .with_child(self.ui_icon(UiIcon::Smartphone, 15., p.text))
                             .finish(),
                     )
                     .with_background_color(icon_bg)
@@ -395,7 +415,7 @@ impl Companion {
 
                 self.between(
                     self.hstack(10., vec![icon_box, text_col]),
-                    self.line("⇅", CAPTION, p.text3),
+                    self.ui_icon(UiIcon::Connect, 14., p.text3),
                 )
             }
             None => {
@@ -405,7 +425,7 @@ impl Companion {
                             .with_main_axis_size(MainAxisSize::Max)
                             .with_main_axis_alignment(MainAxisAlignment::Center)
                             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                            .with_child(self.line("📱", CAPTION, p.text2))
+                            .with_child(self.ui_icon(UiIcon::Smartphone, 15., p.text3))
                             .finish(),
                     )
                     .with_background_color(icon_bg)
@@ -425,7 +445,7 @@ impl Companion {
 
                 self.between(
                     self.hstack(10., vec![icon_box, text_col]),
-                    self.line("›", CAPTION, p.text3),
+                    self.ui_icon(UiIcon::ChevronRight, 14., p.text3),
                 )
             }
         };
@@ -449,24 +469,30 @@ impl Companion {
 
     pub(super) fn sidebar(&self) -> El {
         let p = self.p();
-        let sms_badge =
-            (self.sms_loaded && self.sms_error.is_none()).then(|| format!("{} 条", self.sms.len()));
-        let push_badge = if self.push.loaded {
-            let unread = self
-                .push
+        let im_unread: usize = self
+            .push
+            .snapshot
+            .threads
+            .iter()
+            .map(|t| t.unread_count)
+            .sum();
+        let sms_unread = if self.sms_loaded && self.sms_error.is_none() {
+            self.sms.iter().filter(|m| m.kind == 1 && !m.read).count()
+        } else {
+            0
+        };
+        let push_unread = if self.push.loaded {
+            self.push
                 .snapshot
                 .notifications
                 .iter()
                 .filter(|n| !n.dismissed && !n.read && !n.is_ongoing)
-                .count();
-            if unread > 0 {
-                Some(format!("{unread} 未读"))
-            } else {
-                Some(format!("{} 条", self.push.snapshot.notifications.len()))
-            }
+                .count()
         } else {
-            None
+            0
         };
+        let total_unread = im_unread + sms_unread + push_unread;
+        let msg_badge = (total_unread > 0).then(|| total_unread.to_string());
         let app_badge = (self.apps_loaded && self.apps_error.is_none()).then(|| {
             self.apps
                 .iter()
@@ -520,96 +546,64 @@ impl Companion {
                     .with_spacing(2.)
                     .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                     .with_children(vec![
-                        self.nav_group_title("设备与硬件", true),
-                        self.nav_item_badge(
+                        self.nav_group_title("工作台", true),
+                        self.nav_item_with_match(
                             "overview",
-                            Page::Overview.icon(),
-                            Page::Overview.title(),
-                            None,
+                            UiIcon::Home,
+                            "概览",
+                            Page::Overview,
                             matches!(self.page, Page::Overview | Page::Account),
-                            Action::Page(Page::Overview),
+                            None,
                         ),
-                        self.nav_item_badge(
+                        self.nav_item_with_match(
                             "backscreen",
-                            Page::BackScreen.icon(),
-                            Page::BackScreen.title(),
-                            Some("点阵".into()),
+                            UiIcon::Matrix,
+                            "背屏",
+                            Page::BackScreen,
                             self.page == Page::BackScreen,
-                            Action::Page(Page::BackScreen),
+                            Some("点阵".into()),
                         ),
-                        self.nav_group_title("智能与开发", false),
-                        self.nav_item_badge(
+                        self.nav_item_with_match(
                             "amoo",
-                            Page::Amoo.icon(),
-                            Page::Amoo.title(),
+                            UiIcon::Chat,
+                            "Amoo",
+                            Page::Amoo,
+                            matches!(self.page, Page::Amoo | Page::Work | Page::Studio),
                             None,
-                            self.page == Page::Amoo,
-                            Action::Page(Page::Amoo),
                         ),
-                        self.nav_group_title("通信与数据", false),
-                        self.nav_item_badge(
+                        self.nav_group_title("通信与通知", false),
+                        self.nav_item_with_match(
                             "sms",
-                            Page::Sms.icon(),
-                            Page::Sms.title(),
-                            sms_badge,
-                            self.page == Page::Sms,
-                            Action::Page(Page::Sms),
+                            UiIcon::Sms,
+                            "消息与通知",
+                            Page::Sms,
+                            matches!(self.page, Page::Sms | Page::Notifications | Page::Phone),
+                            msg_badge,
                         ),
-                        self.nav_item_badge(
-                            "notifications",
-                            Page::Notifications.icon(),
-                            Page::Notifications.title(),
-                            push_badge,
-                            self.page == Page::Notifications,
-                            Action::Page(Page::Notifications),
-                        ),
-                        self.nav_item_badge(
-                            "phone",
-                            Page::Phone.icon(),
-                            Page::Phone.title(),
-                            None,
-                            self.page == Page::Phone,
-                            Action::Page(Page::Phone),
-                        ),
-                        self.nav_item_badge(
+                        self.nav_group_title("设备与工具", false),
+                        self.nav_item_with_match(
                             "files",
-                            Page::Files.icon(),
-                            Page::Files.title(),
+                            UiIcon::Folder,
+                            "文件与扩容",
+                            Page::Files,
+                            matches!(self.page, Page::Files | Page::Expansion),
                             None,
-                            self.page == Page::Files,
-                            Action::Page(Page::Files),
                         ),
-                        self.nav_item_badge(
-                            "expansion",
-                            Page::Expansion.icon(),
-                            Page::Expansion.title(),
-                            None,
-                            self.page == Page::Expansion,
-                            Action::Page(Page::Expansion),
-                        ),
-                        self.nav_item_badge(
+                        self.nav_item_with_match(
                             "apps",
-                            Page::Apps.icon(),
-                            Page::Apps.title(),
-                            app_badge,
+                            UiIcon::Apps,
+                            "应用",
+                            Page::Apps,
                             self.page == Page::Apps,
-                            Action::Page(Page::Apps),
+                            app_badge,
                         ),
-                        self.nav_item_badge(
+                        self.nav_item_with_match(
                             "tools",
-                            Page::Tools.icon(),
-                            Page::Tools.title(),
-                            None,
+                            UiIcon::Tools,
+                            "小工具",
+                            Page::Tools,
                             self.page == Page::Tools,
-                            Action::Page(Page::Tools),
-                        ),
-                        self.nav_item_badge(
-                            "connect",
-                            Page::Connect.icon(),
-                            Page::Connect.title(),
                             None,
-                            self.page == Page::Connect,
-                            Action::Page(Page::Connect),
                         ),
                     ])
                     .finish(),
@@ -624,13 +618,13 @@ impl Companion {
                     .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
                     .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                     .with_child(top_group)
-                    .with_child(self.nav_item_badge(
+                    .with_child(self.nav_item_with_match(
                         "sidebar-settings",
-                        "⚙",
+                        UiIcon::Settings,
                         "设置",
-                        None,
+                        Page::Settings,
                         matches!(self.page, Page::Settings | Page::About),
-                        Action::Page(Page::Settings),
+                        None,
                     ))
                     .finish(),
             )
@@ -794,9 +788,10 @@ impl Companion {
             if self.selected.is_none() && self.page.needs_device() && self.page != Page::Overview {
                 vec![
                     self.button("hdr-rescan", "重新扫描", Action::Refresh, Btn::Secondary),
-                    self.button(
+                    self.button_icon(
                         "hdr-connect",
-                        "⇄ 连接设备",
+                        "连接设备",
+                        UiIcon::Connect,
                         Action::Page(Page::Connect),
                         Btn::Primary,
                     ),

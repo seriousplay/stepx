@@ -1,4 +1,3 @@
-import os, shutil
 #!/usr/bin/env python3
 import subprocess,json,time,pathlib,base64
 ROOT=pathlib.Path(__file__).resolve().parents[1]; binary=ROOT/'desktop/target/debug/examples/verify_gui_remote'; report=ROOT/'diagnostics/gui-agent-20261023/lifecycle.json'

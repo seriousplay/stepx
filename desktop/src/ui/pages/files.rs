@@ -1,5 +1,5 @@
 use super::super::{
-    icons::UiIcon, theme::*, widgets::*, Action, Companion, FileModal, FileSort, F_FILE_NAME,
+    icons::UiIcon, theme::*, widgets::*, Action, Companion, FileModal, FileSort, Page, F_FILE_NAME,
     F_FILE_SEARCH,
 };
 use facloud_ui::{color::ColorU, elements::*, fonts::Weight, platform::Cursor};
@@ -132,6 +132,57 @@ impl Companion {
             ),
             self.button("files-upload", "↑ 上传文件", Action::Upload, Btn::Primary),
         ]
+    }
+
+    pub(in super::super) fn storage_mode_bar(&self) -> El {
+        let p = self.p();
+        let mode_seg = self.segmented(
+            "storage-mode-bar",
+            vec![
+                (
+                    "手机文件管理".into(),
+                    self.page == Page::Files,
+                    Action::Page(Page::Files),
+                ),
+                (
+                    "电脑存储扩容".into(),
+                    self.page == Page::Expansion,
+                    Action::Page(Page::Expansion),
+                ),
+            ],
+        );
+        let archived_count = self.expansion.snapshot.status["count"]
+            .as_u64()
+            .unwrap_or_else(|| {
+                self.expansion
+                    .snapshot
+                    .files
+                    .iter()
+                    .filter(|j| j["state"] == "archived")
+                    .count() as u64
+            });
+        let right_info = self.hstack(
+            S2,
+            vec![
+                if archived_count > 0 {
+                    self.pill_badge(
+                        format!("电脑已归档 {archived_count} 项"),
+                        p.success_text,
+                        p.success_soft,
+                    )
+                } else {
+                    self.pill_badge("双向文件与无感扩容", p.text2, p.tag_bg)
+                },
+                self.line("手机文件管理 · 电脑存储扩容", MICRO, p.text3),
+            ],
+        );
+        Container::new(self.between(mode_seg, right_info))
+            .with_horizontal_padding(S3)
+            .with_vertical_padding(6.)
+            .with_background_color(p.bg)
+            .with_border(Border::all(1.).with_border_color(p.border))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_PANEL)))
+            .finish()
     }
 
     fn file_grid_row(
@@ -731,9 +782,145 @@ impl Companion {
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_PANEL)))
         .finish();
 
-        let mut page_children = vec![top_bar];
+        let selected_entry: Option<stepx_companion::storage::Entry> = self
+            .selected_file
+            .and_then(|idx| self.files.get(idx).cloned())
+            .or_else(|| {
+                if !real_files.is_empty() {
+                    real_files.first().map(|&(_, e)| e.clone())
+                } else if self.demo_mode {
+                    let idx = self
+                        .selected_file
+                        .unwrap_or(2)
+                        .min(FILE_MOCKS.len().saturating_sub(1));
+                    let m = &FILE_MOCKS[idx];
+                    Some(stepx_companion::storage::Entry {
+                        name: m.name.to_string(),
+                        path: format!("{}/{}", self.directory.trim_end_matches('/'), m.name),
+                        bytes: 2_516_582,
+                        directory: m.is_dir,
+                        symlink: false,
+                    })
+                } else {
+                    None
+                }
+            });
+
+        let detail_panel = if let Some(entry) = selected_entry.as_ref() {
+            let (symbol, kind_label) = file_symbol(entry);
+            let size_label = if entry.directory {
+                "文件夹目录".to_string()
+            } else {
+                stepx_companion::storage::format_bytes(entry.bytes)
+            };
+            let mut cross_actions: Vec<El> = Vec::new();
+            if !entry.directory {
+                if matches!(entry.kind_badge(), "图片" | "视频") {
+                    cross_actions.push(self.button(
+                        "file-detail-push-bs",
+                        "推送到背屏创作",
+                        Action::FilePushToBackScreen(entry.path.clone()),
+                        Btn::Primary,
+                    ));
+                }
+                cross_actions.push(self.button(
+                    "file-detail-copy-path",
+                    "复制手机路径",
+                    Action::CopyText("文件手机路径".into(), entry.path.clone()),
+                    Btn::Secondary,
+                ));
+                cross_actions.push(self.button(
+                    "file-detail-to-amoo",
+                    "去 Amoo 分析",
+                    Action::Page(Page::Amoo),
+                    Btn::Secondary,
+                ));
+            } else {
+                cross_actions.push(self.button(
+                    "file-detail-open-dir",
+                    "进入此文件夹",
+                    Action::Browse(entry.path.clone()),
+                    Btn::Primary,
+                ));
+                cross_actions.push(self.button(
+                    "file-detail-copy-path",
+                    "复制手机路径",
+                    Action::CopyText("文件手机路径".into(), entry.path.clone()),
+                    Btn::Secondary,
+                ));
+            }
+
+            self.panel(vec![
+                self.between(
+                    self.heading("所选文件详情"),
+                    self.pill_badge(kind_label, p.text2, p.tag_bg),
+                ),
+                self.hstack(
+                    S2,
+                    vec![
+                        self.ui_icon(symbol, 22., if entry.directory { p.blue } else { p.text }),
+                        Expanded::new(
+                            1.,
+                            self.vstack(
+                                2.,
+                                vec![
+                                    self.line_w(&entry.name, BODY, p.text, Weight::Semibold),
+                                    self.mono(size_label, MICRO, p.text2),
+                                ],
+                            ),
+                        )
+                        .finish(),
+                    ],
+                ),
+                self.divider(),
+                self.vstack(
+                    4.,
+                    vec![
+                        self.line("手机存储路径", MICRO, p.text3),
+                        self.mono(&entry.path, CAPTION, p.text2),
+                    ],
+                ),
+                self.divider(),
+                self.line_w("跨页快捷流转", CAPTION, p.text, Weight::Medium),
+                self.wrap(cross_actions),
+                self.divider(),
+                self.between(
+                    self.line("需要自动释放手机空间？", MICRO, p.text3),
+                    self.link_action(
+                        "file-detail-go-exp",
+                        "电脑存储扩容 →",
+                        Action::Page(Page::Expansion),
+                    ),
+                ),
+            ])
+        } else {
+            self.panel(vec![
+                self.heading("所选文件详情"),
+                self.text(
+                    "单击左侧列表中的任意文件，即可复制手机路径、一键推送到背屏点阵创作，或交由 Amoo 分析。",
+                    CAPTION,
+                    p.text2,
+                ),
+                self.button(
+                    "file-detail-empty-exp",
+                    "前往电脑存储扩容",
+                    Action::Page(Page::Expansion),
+                    Btn::Secondary,
+                ),
+            ])
+        };
+
+        let main_split = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_spacing(S3)
+            .with_child(Expanded::new(1., table_card).finish())
+            .with_child(self.fixed_w(276., detail_panel))
+            .finish();
+
+        let mut page_children = vec![self.storage_mode_bar(), top_bar];
         page_children.extend(modal_banners);
-        page_children.push(Expanded::new(1., table_card).finish());
+        page_children.push(Expanded::new(1., main_split).finish());
 
         Flex::column()
             .with_main_axis_size(MainAxisSize::Max)

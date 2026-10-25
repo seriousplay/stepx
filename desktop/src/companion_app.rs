@@ -764,10 +764,7 @@ fn finish_installation_status(result: &mut CompanionStatus, service: Result<()>)
             result.pairing_message
         );
     } else {
-        result.message = format!(
-            "手机界面、权限和扫码服务配置完成。{}",
-            result.message
-        );
+        result.message = format!("手机界面、权限和扫码服务配置完成。{}", result.message);
     }
 }
 
@@ -849,27 +846,47 @@ fn install_boot_adapter(adb: &Adb, device: &Device, apk: &Path) -> Result<()> {
     let script = crate::resources::root().join("scripts/companion-boot.py");
     ensure!(script.is_file(), "缺少伴侣开机恢复组件");
     let mut command = crate::resources::python_command();
-    command.arg(script).arg("install").arg("--apk").arg(apk)
-        .env("STEPX_SERIAL", &device.transport).env("STEPX_DEVICE_SERIAL", &device.serial)
-        .env("STEPX_ADB", &adb.path).env_remove("PYTHONOPTIMIZE");
+    command
+        .arg(script)
+        .arg("install")
+        .arg("--apk")
+        .arg(apk)
+        .env("STEPX_SERIAL", &device.transport)
+        .env("STEPX_DEVICE_SERIAL", &device.serial)
+        .env("STEPX_ADB", &adb.path)
+        .env_remove("PYTHONOPTIMIZE");
     let output = run_process(command, None, Duration::from_secs(100))?;
     let result: Value = serde_json::from_slice(&output.stdout).context("开机恢复未返回有效回执")?;
-    ensure!(output.status.success() && result["status"] == "installed"
-        && result["config"]["package"] == PACKAGE && result["config"]["version"] == 1,
-        "开机恢复未完成：{}", result["error"].as_str().unwrap_or("回读校验失败"));
+    ensure!(
+        output.status.success()
+            && result["status"] == "installed"
+            && result["config"]["package"] == PACKAGE
+            && result["config"]["version"] == 1,
+        "开机恢复未完成：{}",
+        result["error"].as_str().unwrap_or("回读校验失败")
+    );
     Ok(())
 }
 
 fn start_pairing_service(adb: &Adb, device: &Device, apk: &Path) -> Result<()> {
     // The boot adapter runs a scoped Binder in system_server, not a disposable shell process.
     // A fresh successful roundtrip to the signed app is sufficient; don't spawn a duplicate.
-    if let Ok(raw) = adb.shell(&device.transport, &["cat", &format!("{FILES}/pairing.json")]) {
+    if let Ok(raw) = adb.shell(
+        &device.transport,
+        &["cat", &format!("{FILES}/pairing.json")],
+    ) {
         if let Ok(state) = serde_json::from_str::<Value>(&raw) {
-            let system_pid = adb.shell(&device.transport, &["pidof", "system_server"]).ok()
+            let system_pid = adb
+                .shell(&device.transport, &["pidof", "system_server"])
+                .ok()
                 .and_then(|pid| pid.trim().parse::<u64>().ok());
             if state["pairingProcessUid"] == 1000
-                && system_pid.is_some() && state["pairingProcessPid"].as_u64() == system_pid
-                && read_pairing_readiness(adb, device).0 { return Ok(()); }
+                && system_pid.is_some()
+                && state["pairingProcessPid"].as_u64() == system_pid
+                && read_pairing_readiness(adb, device).0
+            {
+                return Ok(());
+            }
         }
     }
 

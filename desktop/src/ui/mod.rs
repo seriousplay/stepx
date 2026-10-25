@@ -2123,7 +2123,10 @@ impl Companion {
             let completed_page = self.job_page;
             let completed_tool = self.job_tool;
             let tool_result = result.as_ref().map_or(true, |outcome| {
-                !matches!(outcome, Outcome::Transports(..) | Outcome::Selected(..) | Outcome::Reattached(..))
+                !matches!(
+                    outcome,
+                    Outcome::Transports(..) | Outcome::Selected(..) | Outcome::Reattached(..)
+                )
             });
             self.busy = false;
             if let Ok(mut progress) = self.google_progress.lock() {
@@ -2461,7 +2464,8 @@ impl Companion {
                 }
             }
             Outcome::Reattached(device) => {
-                if self.connection_watch.detached_serial.as_deref() == Some(device.serial.as_str()) {
+                if self.connection_watch.detached_serial.as_deref() == Some(device.serial.as_str())
+                {
                     self.connection_watch.detached_serial = None;
                     self.connection_watch.identity_at = None;
                     self.selected = Some(device);
@@ -3778,6 +3782,10 @@ impl Keyboard {
                     "4" if cmd => Some(Action::Page(Page::Files)),
                     "5" if cmd => Some(Action::Page(Page::Apps)),
                     "6" if cmd => Some(Action::Page(Page::Connect)),
+                    "7" if cmd => Some(Action::Page(Page::Tools)),
+                    "8" if cmd => Some(Action::Page(Page::BackScreen)),
+                    "," if cmd => Some(Action::Page(Page::Settings)),
+                    "k" if cmd => Some(Action::FocusSearch),
                     "r" if cmd => Some(Action::ContextRefresh),
                     "f5" => Some(Action::ContextRefresh),
                     "m" if cmd => Some(Action::Mirror),

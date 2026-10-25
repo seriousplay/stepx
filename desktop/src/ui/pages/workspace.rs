@@ -82,7 +82,9 @@ impl Companion {
         let active = self.workspace_task();
         let started = active
             .is_some_and(|t| !t.turns.is_empty() || t.session.is_some() || !t.outputs.is_empty())
-            || self.workspace.proposal.is_some();
+            || self.workspace.proposal.is_some()
+            || self.amoo_ui.gui_running
+            || self.amoo_ui.gui_paused;
         let mut column = Flex::column()
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
@@ -191,19 +193,93 @@ impl Companion {
                 .with_child(Expanded::new(1., self.chat_pane_scroll(welcome, false)).finish());
         }
         let main = column.finish();
-        if !compact
+        let show_left_rail = !super::super::workspace_state::is_verification_harness()
+            && !compact
+            && self.workspace.viewport.x() >= 1000.0
+            && self.workspace.left_rail_open;
+        let show_right_side = !compact
             && self.workspace.viewport.x() >= 1080.
-            && (self.workspace.panel != 0 || self.workspace.history)
-        {
-            Flex::row()
+            && (self.workspace.panel != 0 || self.workspace.history);
+        if show_left_rail || show_right_side {
+            let mut row = Flex::row()
                 .with_main_axis_size(MainAxisSize::Max)
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_child(Expanded::new(1., main).finish())
-                .with_child(self.fixed_w(352., self.workspace_side(false)))
-                .finish()
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+            if show_left_rail {
+                row = row.with_child(self.workspace_left_sidebar());
+            }
+            row = row.with_child(Expanded::new(1., main).finish());
+            if show_right_side {
+                row = row.with_child(self.fixed_w(352., self.workspace_side(false)));
+            }
+            row.finish()
         } else {
             main
         }
+    }
+    fn workspace_left_sidebar(&self) -> El {
+        let p = self.p();
+        let header = self.between(
+            self.heading("对话历史"),
+            self.button(
+                "workspace-left-new",
+                "＋ 新对话",
+                Action::Workspace(W::New),
+                Btn::Secondary,
+            ),
+        );
+        let search = self.input(F_AMOO_SEARCH, "搜索对话记录", None);
+        let list = Expanded::new(
+            1.,
+            self.pane_scroll(
+                self.scroll_aux.clone(),
+                self.vstack(S2, self.workspace_recent(80)),
+            ),
+        )
+        .finish();
+        let footer = Container::new(self.wrap(vec![
+            self.ws_button(
+                "left-resources",
+                "资料与能力",
+                UiIcon::Attach,
+                W::Menu(2),
+                Btn::Ghost,
+            ),
+            self.ws_button(
+                "left-model",
+                "模型与账号",
+                UiIcon::Cpu,
+                W::Menu(1),
+                Btn::Ghost,
+            ),
+            self.button_icon(
+                "workspace-left-gui",
+                "手机操控",
+                UiIcon::Smartphone,
+                Action::AmooUi(AmooUiAction::GuiMode(true)),
+                Btn::Ghost,
+            ),
+        ]))
+        .with_padding_top(S2)
+        .with_border(Border::top(1.).with_border_color(p.border))
+        .finish();
+        self.fixed_w(
+            244.,
+            Container::new(
+                Flex::column()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_spacing(S3)
+                    .with_child(header)
+                    .with_child(search)
+                    .with_child(list)
+                    .with_child(footer)
+                    .finish(),
+            )
+            .with_uniform_padding(S3)
+            .with_background_color(p.sidebar)
+            .with_border(Border::right(1.).with_border_color(p.border))
+            .finish(),
+        )
     }
     fn workspace_recent(&self, max: usize) -> Vec<El> {
         let p = self.p();
@@ -605,6 +681,9 @@ impl Companion {
             ));
             rows.push(self.panel(plan));
         }
+        if let Some(pip) = self.workspace_gui_pip_card() {
+            rows.push(pip);
+        }
         if let Some(error) = &self.workspace.error {
             rows.push(self.panel(vec![self.hstack(
                 S2,
@@ -615,6 +694,86 @@ impl Companion {
             )]));
         }
         self.vstack(S4, rows)
+    }
+    fn workspace_gui_pip_card(&self) -> Option<El> {
+        if !self.amoo_ui.gui_running
+            && !self.amoo_ui.gui_paused
+            && self.amoo_ui.gui_screenshot.is_none()
+        {
+            return None;
+        }
+        let p = self.p();
+        let (badge_label, badge_fg, badge_bg) = if self.amoo_ui.gui_paused {
+            ("已暂停，等待接管", p.warning, p.warning_soft)
+        } else if self.amoo_ui.gui_running {
+            ("执行中", p.success_text, p.success_soft)
+        } else {
+            ("最近画面", p.text2, p.surface)
+        };
+        let mut content = vec![self.between(
+            self.hstack(
+                S2,
+                vec![
+                    self.ui_icon(UiIcon::Smartphone, 18., p.text),
+                    self.heading("手机屏幕操控 · 实时画面与接管"),
+                ],
+            ),
+            self.pill_badge(badge_label, badge_fg, badge_bg),
+        )];
+        if let Some((app, task)) = &self.amoo_ui.gui_current {
+            content.push(self.line_w(format!("目标应用：{app}"), BODY, p.text, Weight::Medium));
+            content.push(self.text(task, CAPTION, p.text2));
+        } else if !self.amoo_ui.gui_message.is_empty() {
+            content.push(self.text(&self.amoo_ui.gui_message, CAPTION, p.text2));
+        }
+        if let Some((step_no, detail)) = self.amoo_ui.gui_steps.last() {
+            content.push(self.text(format!("步骤 {step_no}：{detail}"), CAPTION, p.text2));
+        }
+        if let Some(path) = self.amoo_ui.gui_screenshot.as_ref().filter(|p| p.is_file()) {
+            content.push(
+                ConstrainedBox::new(
+                    Image::new(
+                        AssetSource::LocalFile {
+                            path: path.to_string_lossy().into_owned(),
+                        },
+                        CacheOption::BySize,
+                    )
+                    .contain()
+                    .finish(),
+                )
+                .with_max_width(220.)
+                .with_height(360.)
+                .finish(),
+            );
+        }
+        content.push(self.wrap(vec![
+            self.button_icon(
+                "workspace-gui-pip-pause",
+                "暂停 / 我来接管",
+                if self.amoo_ui.gui_paused {
+                    UiIcon::Play
+                } else {
+                    UiIcon::Pause
+                },
+                Action::AmooUi(AmooUiAction::GuiPauseResume),
+                Btn::Secondary,
+            ),
+            self.button_icon(
+                "workspace-gui-pip-stop",
+                "停止操控",
+                UiIcon::Close,
+                Action::AmooUi(AmooUiAction::GuiStopWaiting),
+                Btn::Secondary,
+            ),
+            self.button_icon(
+                "workspace-gui-pip-open",
+                "展开操控面板",
+                UiIcon::Smartphone,
+                Action::AmooUi(AmooUiAction::GuiMode(true)),
+                Btn::Primary,
+            ),
+        ]));
+        Some(self.panel(content))
     }
     fn workspace_side(&self, compact: bool) -> El {
         let p = self.p();

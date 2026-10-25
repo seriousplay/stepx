@@ -1763,7 +1763,10 @@ impl Companion {
                 self.allow_first_connect = false;
                 self.preferences.first_connect_done = true;
                 self.pairing_hosts.clear();
-                let serial = self.selected.take().map(|d| d.serial)
+                let serial = self
+                    .selected
+                    .take()
+                    .map(|d| d.serial)
                     .or_else(|| self.preferences.selected_serial.clone());
                 self.connection_watch.detached_serial = None;
                 if let Some(serial) = serial {

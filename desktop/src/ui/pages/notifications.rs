@@ -157,16 +157,27 @@ impl Companion {
     pub(in super::super) fn notifications_page(&self) -> El {
         let p = self.p();
         if !self.demo_mode && self.selected.is_none() {
-            return self.empty(
-                "连接手机后查看全部推送",
-                "连接同一 Wi-Fi 或 USB 后，将实时同步手机通知栏的全部应用推送、验证码与快捷回复。",
-                Some(self.button(
-                    "push-connect",
-                    "连接设备",
-                    Action::Page(Page::Connect),
-                    Btn::Primary,
-                )),
-            );
+            return Flex::column()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with_child(self.comm_mode_bar())
+                .with_child(
+                    Expanded::new(
+                        1.,
+                        self.empty(
+                            "连接手机后查看全部推送",
+                            "连接同一 Wi-Fi 或 USB 后，将实时同步手机通知栏的全部应用推送、验证码与快捷回复。",
+                            Some(self.button(
+                                "push-connect",
+                                "连接设备",
+                                Action::Page(Page::Connect),
+                                Btn::Primary,
+                            )),
+                        ),
+                    )
+                    .finish(),
+                )
+                .finish();
         }
 
         let demo_fallback: PushSnapshot;
@@ -752,11 +763,18 @@ impl Companion {
             .finish()
         };
 
-        Flex::row()
+        let split = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(left_column)
             .with_child(Expanded::new(1., right_column).finish())
+            .finish();
+
+        Flex::column()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_child(self.comm_mode_bar())
+            .with_child(Expanded::new(1., split).finish())
             .finish()
     }
 }

@@ -233,6 +233,9 @@ mod tests {
     }
 }
 
+static SCOPE_CACHE: std::sync::Mutex<Option<(String, String, std::time::Instant, Option<String>)>> =
+    std::sync::Mutex::new(None);
+
 /// Non-secret, account-scoped cache key for the Android foreground user.
 /// Reads the account registry only; no credential or auth-token API is used.
 pub fn account_scope(
@@ -240,6 +243,25 @@ pub fn account_scope(
     device: &crate::device::Device,
 ) -> anyhow::Result<Option<String>> {
     use anyhow::{anyhow, Context};
+    use std::time::{Duration, Instant};
+    let can_cache = device.serial != "phone"
+        && adb
+            .path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case("adb"));
+    if can_cache {
+        if let Ok(guard) = SCOPE_CACHE.lock() {
+            if let Some((transport, serial, at, Some(cached))) = guard.as_ref() {
+                if transport == &device.transport
+                    && serial == &device.serial
+                    && at.elapsed() < Duration::from_millis(2500)
+                {
+                    return Ok(Some(cached.clone()));
+                }
+            }
+        }
+    }
     let user = adb
         .shell(&device.transport, &["am", "get-current-user"])
         .map_err(|_| anyhow!("无法确定手机当前用户"))?
@@ -250,6 +272,11 @@ pub fn account_scope(
         .shell(&device.transport, &["dumpsys", "account"])
         .map_err(|_| anyhow!("无法读取手机账号状态"))?;
     let Some(account) = account_name(&dump, user) else {
+        if can_cache {
+            if let Ok(mut guard) = SCOPE_CACHE.lock() {
+                *guard = None;
+            }
+        }
         return Ok(None);
     };
     let domain = format!(
@@ -257,7 +284,18 @@ pub fn account_scope(
         device.serial, user, account
     );
     let digest = crate::device::sha256(domain.as_bytes());
-    Ok(Some(digest.iter().map(|b| format!("{b:02x}")).collect()))
+    let scope: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    if can_cache {
+        if let Ok(mut guard) = SCOPE_CACHE.lock() {
+            *guard = Some((
+                device.transport.clone(),
+                device.serial.clone(),
+                Instant::now(),
+                Some(scope.clone()),
+            ));
+        }
+    }
+    Ok(Some(scope))
 }
 
 fn account_name(dump: &str, user: u32) -> Option<String> {

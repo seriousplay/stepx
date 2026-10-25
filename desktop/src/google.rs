@@ -569,17 +569,23 @@ pub fn inspect(device: &Device, adb: &Adb) -> Result<GoogleSuiteStatus> {
             status.health_needs_repair = report["needs_repair"].as_bool().unwrap_or(true);
             status.google_accounts = report["account_count"].as_u64().unwrap_or(0) as u32;
             if let Some(checks) = report["checks"].as_array() {
-                status.health_checks = checks.iter().filter_map(|c| Some(crate::device::GoogleHealthCheck {
-                    title: c["title"].as_str()?.to_string(),
-                    state: c["state"].as_str()?.to_string(),
-                    detail: c["detail"].as_str()?.to_string(),
-                })).collect();
+                status.health_checks = checks
+                    .iter()
+                    .filter_map(|c| {
+                        Some(crate::device::GoogleHealthCheck {
+                            title: c["title"].as_str()?.to_string(),
+                            state: c["state"].as_str()?.to_string(),
+                            detail: c["detail"].as_str()?.to_string(),
+                        })
+                    })
+                    .collect();
             }
         }
         Err(_) => {
             status.health_needs_repair = true;
             status.health_checks.push(crate::device::GoogleHealthCheck {
-                title: "通用登录检测".into(), state: "unknown".into(),
+                title: "通用登录检测".into(),
+                state: "unknown".into(),
                 detail: "读取未完成，请重新检测；不会据此清除账号或重新安装".into(),
             });
         }
@@ -665,7 +671,10 @@ pub fn install(device: &Device, adb: &Adb, progress: impl Fn(&str)) -> Result<Go
         message.push(' ');
         message.push_str(&google.compatibility_note);
     }
-    if plan == GoogleInstallPlan::Existing && google.compatibility_supported && !google.boot_module_ready {
+    if plan == GoogleInstallPlan::Existing
+        && google.compatibility_supported
+        && !google.boot_module_ready
+    {
         progress("恢复 Google 组件更新后的运行权限…");
         run_script(device, adb, "manage.py", &["repair-runtime"])?;
         google = inspect(device, adb)?;

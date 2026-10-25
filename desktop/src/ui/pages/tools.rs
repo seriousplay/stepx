@@ -1397,7 +1397,10 @@ impl Companion {
                     "fail" => ("需要处理", p.warning),
                     _ => ("待确认", p.text3),
                 };
-                rows.push(self.between(self.line(&check.title, BODY, p.text), self.line(label, CAPTION, color)));
+                rows.push(self.between(
+                    self.line(&check.title, BODY, p.text),
+                    self.line(label, CAPTION, color),
+                ));
                 rows.push(self.text(&check.detail, CAPTION, p.text2));
             }
             rows.push(self.text("以上检测的是共用服务。各应用的登录结果和设备认证仍由对应服务验证；修复保留现有账号。", CAPTION, p.text3));
@@ -1449,6 +1452,122 @@ impl Companion {
         if !buttons.is_empty() {
             rows.push(self.hstack(S2, buttons));
         }
+        let (l1_label, l1_color) = if !g.checked {
+            ("待检测", p.text3)
+        } else if g.installed
+            && !g.gsf_version.is_empty()
+            && !g.gms_version.is_empty()
+            && !g.play_version.is_empty()
+        {
+            ("已就绪", p.success)
+        } else {
+            ("需安装 / 修复", p.warning)
+        };
+        let (l2_label, l2_color) = if !g.checked {
+            ("待检测", p.text3)
+        } else if g.total_permissions > 0
+            && g.granted_count >= g.total_permissions
+            && g.boot_module_ready
+        {
+            (
+                if g.total_permissions == 153 {
+                    "153/153 已守护"
+                } else {
+                    "权限已就绪"
+                },
+                p.success,
+            )
+        } else if g.installed {
+            ("需恢复权限", p.warning)
+        } else {
+            ("未安装", p.text3)
+        };
+        let l3_ready = g.checked
+            && g.installed
+            && !g.health_needs_repair
+            && g.health_checks.iter().all(|c| c.state == "pass");
+        let (l3_label, l3_color) = if !g.checked {
+            ("待检测", p.text3)
+        } else if l3_ready {
+            ("通用登录正常", p.success)
+        } else if g.installed {
+            ("建议修复服务", p.warning)
+        } else {
+            ("待安装", p.text3)
+        };
+        let (l4_label, l4_color) = if g.play_protect.checked && g.play_protect.certified {
+            ("官方认证通过", p.success)
+        } else {
+            ("出厂硬件根边界", p.warning)
+        };
+        let matrix = vec![
+            self.heading("Google 服务四层能力与认证边界矩阵"),
+            self.text(
+                "清晰区分已打通的系统级通用能力与受出厂硬件密钥限制的强校验场景：",
+                BODY,
+                p.text2,
+            ),
+            self.divider(),
+            self.between(
+                self.line_w(
+                    "L1 基础框架与商店组件（GSF / GMS / Play 商店）",
+                    BODY,
+                    p.text,
+                    Weight::Medium,
+                ),
+                self.line(l1_label, CAPTION, l1_color),
+            ),
+            self.text(
+                "检测系统预装与 mtg16 适配组件状态，Google Play 商店应用浏览、下载与更新均可正常使用。",
+                CAPTION,
+                p.text2,
+            ),
+            self.divider(),
+            self.between(
+                self.line_w(
+                    "L2 运行时权限与自愈守护（153 项权限 + 重启/更新自愈）",
+                    BODY,
+                    p.text,
+                    Weight::Medium,
+                ),
+                self.line(l2_label, CAPTION, l2_color),
+            ),
+            self.text(
+                "StepX伴侣与特权桥接在手机重启解锁、GMS 或 Play 商店自动更新后自动恢复全套 153 项权限，无需重新插拔 USB。",
+                CAPTION,
+                p.text2,
+            ),
+            self.divider(),
+            self.between(
+                self.line_w(
+                    "L3 通用账号凭据与应用链接（Credential Manager + App Links）",
+                    BODY,
+                    p.text,
+                    Weight::Medium,
+                ),
+                self.line(l3_label, CAPTION, l3_color),
+            ),
+            self.text(
+                "已补齐 GoogleIdService 凭据回退与域名验证代理，Google Play、Gmail、Chrome、Gemini 原生对话均可正常登录使用。",
+                CAPTION,
+                p.text2,
+            ),
+            self.divider(),
+            self.between(
+                self.line_w(
+                    "L4 硬件级密钥证明边界（Key Attestation / Play Integrity 强校验）",
+                    BODY,
+                    p.text,
+                    Weight::Medium,
+                ),
+                self.line(l4_label, CAPTION, l4_color),
+            ),
+            self.text(
+                "StepX 工程机出厂硬件证书链（Stepx Root CA）非 Google 官方认证根；针对强制校验硬件证明链的接口（如 X 原生 Google 一键登录返回 214 Validation Failed），系统无法在无内核模块环境下伪造硬件根证书，建议在 X 内使用「账号密码 + 通行密钥」或官方网页版登录。",
+                CAPTION,
+                p.text2,
+            ),
+        ];
         let mut compatibility = vec![
             self.between(
                 self.heading("Google Play 兼容补丁"),
@@ -1477,8 +1596,10 @@ impl Companion {
         ];
         if g.checked && g.installed && self.tool_confirmation.is_none() {
             let mut actions = vec![];
-            if g.compatibility_checked && g.compatibility_supported
-                && (!g.compatibility_active || !g.boot_module_ready || g.health_needs_repair) {
+            if g.compatibility_checked
+                && g.compatibility_supported
+                && (!g.compatibility_active || !g.boot_module_ready || g.health_needs_repair)
+            {
                 actions.push(self.utility_button(
                     "tool-google-compat-apply",
                     "修复 Google 服务",
@@ -1674,6 +1795,7 @@ impl Companion {
             S4,
             vec![
                 self.panel(rows),
+                self.panel(matrix),
                 self.panel(compatibility),
                 self.panel(certification),
             ],

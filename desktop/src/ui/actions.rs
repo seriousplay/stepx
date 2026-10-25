@@ -1763,8 +1763,12 @@ impl Companion {
                 self.allow_first_connect = false;
                 self.preferences.first_connect_done = true;
                 self.pairing_hosts.clear();
-                if let Some(d) = self.selected.take() {
-                    self.preferences.devices.retain(|p| p.serial != d.serial);
+                let serial = self.selected.take().map(|d| d.serial)
+                    .or_else(|| self.preferences.selected_serial.clone());
+                self.connection_watch.detached_serial = None;
+                if let Some(serial) = serial {
+                    self.preferences.devices.retain(|p| p.serial != serial);
+                    self.preferences.wireless.remove(&serial);
                     self.preferences.selected_serial = None;
                     if let Err(e) = self.preferences.save() {
                         self.status = e.to_string();

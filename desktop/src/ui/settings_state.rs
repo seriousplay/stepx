@@ -68,7 +68,15 @@ impl Companion {
         action: &SettingsAction,
         ctx: &mut ViewContext<Self>,
     ) -> Result<()> {
-        if self.shortcuts.recording && matches!(action, SettingsAction::Tab(_) | SettingsAction::Apply | SettingsAction::Expansion | SettingsAction::Models) {
+        if self.shortcuts.recording
+            && matches!(
+                action,
+                SettingsAction::Tab(_)
+                    | SettingsAction::Apply
+                    | SettingsAction::Expansion
+                    | SettingsAction::Models
+            )
+        {
             self.shortcuts.resume()?;
             self.shortcuts.recording = false;
         }
@@ -88,7 +96,8 @@ impl Companion {
             }
             SettingsAction::CaptureShortcut(value) => {
                 if !value.valid() {
-                    self.settings.feedback = "请使用 Ctrl/Command + Alt/Shift + 字母、数字或 F1–F12；Esc 取消".into();
+                    self.settings.feedback =
+                        "请使用 Ctrl/Command + Alt/Shift + 字母、数字或 F1–F12；Esc 取消".into();
                     return Ok(());
                 }
                 self.shortcuts.resume()?;
@@ -127,7 +136,7 @@ impl Companion {
             }
             SettingsAction::Models => {
                 self.page = Page::Amoo;
-                self.workspace.panel=5;
+                self.workspace.panel = 5;
                 return Ok(());
             }
             SettingsAction::RetrySync => {
@@ -184,7 +193,11 @@ impl Companion {
                 }
             }
             SettingsAction::OpenDownloads => {
-                let p = if let Some(p)=&self.settings.draft.download_directory {p.clone()}else{stepx_companion::companion_link::receive_directory()?};
+                let p = if let Some(p) = &self.settings.draft.download_directory {
+                    p.clone()
+                } else {
+                    stepx_companion::companion_link::receive_directory()?
+                };
                 return work_state::open_work_path(&p);
             }
         }
@@ -205,7 +218,13 @@ impl Companion {
         let a = &self.settings.value;
         let b = &self.settings.draft;
         let mut rows = vec![];
-        if a.compact_shortcut != b.compact_shortcut { rows.push(format!("简洁对话快捷键：{} → {}", a.compact_shortcut.label(), b.compact_shortcut.label())); }
+        if a.compact_shortcut != b.compact_shortcut {
+            rows.push(format!(
+                "简洁对话快捷键：{} → {}",
+                a.compact_shortcut.label(),
+                b.compact_shortcut.label()
+            ));
+        }
         let flag = |v: bool| if v { "开启" } else { "关闭" };
         if a.appearance != b.appearance {
             rows.push(format!(
@@ -288,15 +307,21 @@ impl Companion {
             }
         }
         let shortcut_changed = old.compact_shortcut != next.compact_shortcut;
-        if shortcut_changed { self.shortcuts.replace(&next.compact_shortcut)?; }
+        if shortcut_changed {
+            self.shortcuts.replace(&next.compact_shortcut)?;
+        }
         if let Err(error) = settings::save(&next) {
-            if shortcut_changed { let _ = self.shortcuts.replace(&old.compact_shortcut); }
+            if shortcut_changed {
+                let _ = self.shortcuts.replace(&old.compact_shortcut);
+            }
             return Err(error);
         }
         if let Err(e) =
             stepx_companion::desktop_notify::save_preferences(&self.settings.notify_draft)
         {
-            if shortcut_changed { let _ = self.shortcuts.replace(&old.compact_shortcut); }
+            if shortcut_changed {
+                let _ = self.shortcuts.replace(&old.compact_shortcut);
+            }
             let rollback = settings::save(&old);
             anyhow::bail!(
                 "通知设置未保存：{e}；电脑设置{}。更改已保留，可重试",

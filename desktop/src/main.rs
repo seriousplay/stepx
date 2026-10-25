@@ -4,8 +4,10 @@
 mod ui;
 
 fn main() -> anyhow::Result<()> {
-    #[cfg(target_os="linux")]
-    if std::env::args().any(|a|a=="--speech-helper") {return stepx_companion::speech::helper();}
+    #[cfg(target_os = "linux")]
+    if std::env::args().any(|a| a == "--speech-helper") {
+        return stepx_companion::speech::helper();
+    }
     #[cfg(all(windows, feature = "desktop-ui"))]
     if std::env::args().any(|a| {
         matches!(

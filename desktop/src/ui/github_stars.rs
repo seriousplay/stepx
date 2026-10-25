@@ -71,10 +71,9 @@ impl Companion {
             } else {
                 p.text3
             };
-            Container::new(
-                self.hstack(
-                    theme::S1,
-                    vec![
+            Container::new(self.hstack(
+                theme::S1,
+                vec![
                         self.ui_icon(icons::UiIcon::GithubStar, 13., fg),
                         Text::new(label.clone(), self.mono_font, theme::CAPTION)
                             .with_color(fg)
@@ -83,8 +82,7 @@ impl Companion {
                             .with_saved_char_position(0, "github-star-count".into())
                             .finish(),
                     ],
-                ),
-            )
+            ))
             .with_horizontal_padding(6.)
             .with_background_color(if mouse.is_mouse_over_element() {
                 p.hover

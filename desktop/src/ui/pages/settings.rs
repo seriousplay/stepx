@@ -164,18 +164,52 @@ impl Companion {
                     self.setting_row(
                         "快速打开 Amoo 对话",
                         "呼出简洁窗口并定位输入框，会话和草稿保持不变。",
-                        self.setting_button("settings-shortcut-record",
-                            &if self.shortcuts.recording { "按下组合键…".into() } else { format!("{}  · 更改", s.compact_shortcut.label()) },
-                            S::RecordShortcut),
+                        self.setting_button(
+                            "settings-shortcut-record",
+                            &if self.shortcuts.recording {
+                                "按下组合键…".into()
+                            } else {
+                                format!("{}  · 更改", s.compact_shortcut.label())
+                            },
+                            S::RecordShortcut,
+                        ),
                     ),
-                    self.text(if self.shortcuts.recording { "Ctrl / Command + Alt / Shift + 字母、数字或 F1–F12；Esc 取消。" }
-                        else if self.shortcuts.note.is_empty() { "程序运行时可呼出简洁对话；系统不支持时仅在窗口内生效。" }
-                        else { &self.shortcuts.note }, CAPTION, p.text2),
+                    self.text(
+                        if self.shortcuts.recording {
+                            "Ctrl / Command + Alt / Shift + 字母、数字或 F1–F12；Esc 取消。"
+                        } else if self.shortcuts.note.is_empty() {
+                            "程序运行时可呼出简洁对话；系统不支持时仅在窗口内生效。"
+                        } else {
+                            &self.shortcuts.note
+                        },
+                        CAPTION,
+                        p.text2,
+                    ),
                     self.wrap(vec![
-                        self.setting_button("settings-shortcut-default", "恢复默认", S::ResetShortcut),
-                        self.setting_button("settings-shortcut-cancel", if self.shortcuts.recording { "取消录入" } else { "重新录入" }, if self.shortcuts.recording { S::CancelShortcut } else { S::RecordShortcut }),
+                        self.setting_button(
+                            "settings-shortcut-default",
+                            "恢复默认",
+                            S::ResetShortcut,
+                        ),
+                        self.setting_button(
+                            "settings-shortcut-cancel",
+                            if self.shortcuts.recording {
+                                "取消录入"
+                            } else {
+                                "重新录入"
+                            },
+                            if self.shortcuts.recording {
+                                S::CancelShortcut
+                            } else {
+                                S::RecordShortcut
+                            },
+                        ),
                     ]),
-                    self.text("更改后点击页面底部“确认保存”，确认后生效。", CAPTION, p.text3),
+                    self.text(
+                        "更改后点击页面底部“确认保存”，确认后生效。",
+                        CAPTION,
+                        p.text3,
+                    ),
                 ]));
                 cards.push(self.setting_row(
                     "连接手机",
@@ -373,7 +407,11 @@ impl Companion {
         ];
         content.extend(cards);
         if !self.settings.feedback.is_empty() {
-            content.push(self.text(&self.settings.feedback, CAPTION, if self.error {p.danger}else{p.text2}));
+            content.push(self.text(
+                &self.settings.feedback,
+                CAPTION,
+                if self.error { p.danger } else { p.text2 },
+            ));
         }
         let body = Align::new(
             ConstrainedBox::new(self.vstack(S5, content))

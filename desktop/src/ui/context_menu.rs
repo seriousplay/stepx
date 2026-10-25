@@ -19,7 +19,11 @@ impl Companion {
         let Some(anchor) = ctx.element_position_by_id("workspace-intent-anchor".to_string()) else {
             return;
         };
-        let Some(size) = ctx.windows().platform_window(ctx.window_id()).map(|w| w.size()) else {
+        let Some(size) = ctx
+            .windows()
+            .platform_window(ctx.window_id())
+            .map(|w| w.size())
+        else {
             return;
         };
         let (x, y) = intent_menu_position(

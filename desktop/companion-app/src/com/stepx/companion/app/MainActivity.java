@@ -56,7 +56,7 @@ public final class MainActivity extends Activity {
         header=new LinearLayout(this);header.setGravity(Gravity.CENTER_VERTICAL);header.setPadding(dp(12),dp(4),dp(16),dp(4));header.setMinimumHeight(dp(56));header.setBackgroundColor(Color.WHITE);root.addView(header);
         content=new FrameLayout(this);root.addView(content,new LinearLayout.LayoutParams(-1,0,1));navigation=new LinearLayout(this);navigation.setPadding(dp(12),dp(6),dp(12),dp(6));navigation.setBackgroundColor(Color.WHITE);root.addView(navigation,new LinearLayout.LayoutParams(-1,dp(64)));setContentView(root);root.requestApplyInsets();
         getWindow().getInsetsController().setSystemBarsAppearance(WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
-        showTab(tab);
+        AutoConnectService.resume(this);showTab(tab);
     }
     private void showTab(int next){
         endLoading();CompanionMotion.stop(content);rememberDraft();hostSurface(false);if(next==8&&tab<4)historyOrigin=tab;if(next==4&&tab<4)connectionOrigin=tab;tab=next;pageGeneration++;content.removeAllViews();navigation.removeAllViews();linkTitle=linkHint=connectionFoot=transferHint=amooState=gameState=notice=null;guiState=taskReadiness=taskBadge=taskMetrics=taskGoal=homeStatus=homeComputer=homeTask=null;guiStart=guiPause=guiResume=guiStop=taskDetails=null;taskInput=null;taskSteps=taskHistory=taskDock=composeCard=liveCard=null;pageScroll=null;send=null;amooSwitch=null;transferList=null;historyTitle=null;permissionLabels.clear();lastListing=lastTaskRender=lastHistoryRender="";
@@ -83,7 +83,7 @@ public final class MainActivity extends Activity {
         homeStatus=text(hero,"正在检查连接…",12,secondary,0);homeComputer=heading(hero,"连接你的电脑",6);
         text(hero,"连接后，在电脑使用 Amoo、文件与手机工具。",13,secondary,8);
         Button scan=button(hero,"扫码连接",true,()->startActivity(new Intent(this,PairingActivity.class)));UiGlyph.attach(scan,UiGlyph.SCAN,Color.WHITE,dp(18));
-        row(hero,UiGlyph.COMPUTER,"连接管理","USB、无线连接与配对帮助",()->showTab(4));
+        row(hero,UiGlyph.COMPUTER,"连接管理","自动重连、USB 与无线配对",()->showTab(4));
         LinearLayout agent=group(p,"手机独立执行");row(agent,UiGlyph.TASK,"手机任务","输入目标，由 GUI Agent 看屏操作",()->showTab(3));homeTask=text(agent,"正在检查任务状态…",12,secondary,0);homeTask.setPadding(dp(40),0,0,dp(12));homeTask.setMaxLines(2);homeTask.setEllipsize(android.text.TextUtils.TruncateAt.END);
         LinearLayout tools=group(p,"更多工具");row(tools,UiGlyph.FOLDER,"存储扩容","原件存电脑 · 手机保留文件入口",()->startActivity(new Intent(this,ExpansionActivity.class)));row(tools,UiGlyph.STUDIO,"Studio 作品","打开电脑推送的作品与官网项目",()->startActivity(new Intent(this,StudioActivity.class)));row(tools,UiGlyph.SCREEN,"背屏与游戏","三敲启动，倾斜手机游玩",()->showTab(5));
     }
@@ -104,7 +104,7 @@ public final class MainActivity extends Activity {
     }
     private void fillTask(String value){taskDraft=value;if(taskInput!=null){taskInput.setText(value);taskInput.setSelection(value.length());taskInput.requestFocus();}}
     private void rememberDraft(){if(taskInput!=null)taskDraft=taskInput.getText().toString();getSharedPreferences("phone_ui",0).edit().putString("taskDraft",taskDraft).apply();}
-    private void openModelSettings(){try{if(NeoAgent.installed(this))NeoAgent.openSettings(this);else guiKeyDialog();}catch(Exception e){toast(e.getMessage());}}
+    private void openModelSettings(){try{if(NeoAgent.installed(this))NeoAgent.openSettings(this);else if(NeoAgent.selected(this))new AlertDialog.Builder(this).setTitle("需要恢复任务组件").setMessage("当前安装包缺少已选择的 GUI Agent。请连接电脑，在小工具中更新带内置 GUI Agent 的 StepX伴侣。已有的模型配置与任务草稿会保留。").setPositiveButton("知道了",null).show();else guiKeyDialog();}catch(Exception e){toast(e.getMessage());}}
     private void showTaskDetails(){taskDetail(lastAgent);}
     private void taskDetail(JSONObject value){
         JSONObject result=value.optJSONObject("result");String phase=value.optString("phase");
@@ -133,7 +133,13 @@ public final class MainActivity extends Activity {
         final String message=result;ui.post(()->{officialSkillPending=false;if(!destroyed)target.setText(message);});},"Official-GUI-skill").start();
     }
     private void connectionPage(){LinearLayout p=page("连接管理","");LinearLayout c=card(p,24);text(c,"当前连接",12,secondary,0);linkTitle=heading(c,"正在读取连接状态…",12);linkHint=text(c,"",14,secondary,8);button(c,"扫码连接",true,()->startActivity(new Intent(this,PairingActivity.class)));connectionFoot=text(c,"",12,secondary,12);
-        LinearLayout guide=card(p,18);heading(guide,"两种连接方式",0);text(guide,"无线连接",15,ink,16);text(guide,"1. 手机和电脑连接同一 Wi-Fi。\n2. desktop 打开“连接设备”并显示二维码。\n3. 在此扫码，确认要连接的电脑。",14,secondary,8);text(guide,"USB 连接",15,ink,18);text(guide,"使用 USB 数据线连接，在手机上确认这台电脑。desktop 连接成功后，此处会显示电脑名称。",14,secondary,8);
+        LinearLayout automatic=card(p,18);heading(automatic,"同一局域网自动连接",0);text(automatic,AutoConnectService.enabled(this)?"已开启 · 电脑打开后自动连接，无需再次扫码。手机重启后完成首次解锁，连接服务自动恢复。":"配对一次后可自动重连，不需要每次扫码。",14,secondary,8);
+        button(automatic,AutoConnectService.enabled(this)?"暂停自动连接":"开启自动连接",!AutoConnectService.enabled(this),()->{
+            boolean on=!AutoConnectService.enabled(this);
+            new AlertDialog.Builder(this).setTitle(on?"开启自动连接？":"暂停自动连接？").setMessage(on?"同一局域网内，电脑运行 StepX Companion 后自动连接。仅使用已授权的电脑和 Android 安全无线调试；首次使用新 Wi-Fi 时，系统仍可能要求确认。后台会显示连接通知。":"暂停后台自动恢复无线连接，保留已配对记录与当前连接。要断开当前无线连接，可在系统无线调试中关闭。").setNegativeButton("取消",null).setPositiveButton(on?"开启":"暂停",(d,w)->{if(on&&checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS")!=PackageManager.PERMISSION_GRANTED){repairHelp("自动连接");return;}AutoConnectService.setEnabled(this,on);showTab(4);}).show();
+        });
+        row(automatic,UiGlyph.LINK,"系统无线调试","查看已配对电脑、撤销授权或关闭无线连接",()->{try{startActivity(new Intent("android.settings.WIRELESS_DEBUGGING_SETTINGS"));}catch(Exception e){startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));}});
+        LinearLayout guide=card(p,18);heading(guide,"首次连接",0);text(guide,"无线连接",15,ink,16);text(guide,"1. 手机和电脑连接同一 Wi-Fi。\n2. desktop 打开“连接设备”并显示二维码。\n3. 在此扫码，确认要连接的电脑。",14,secondary,8);text(guide,"USB 连接",15,ink,18);text(guide,"使用 USB 数据线连接，在手机上确认这台电脑。desktop 连接成功后，此处会显示电脑名称。",14,secondary,8);
         
     }
     private void filesPage(){LinearLayout p=page("文件","与已连接的电脑互传文件。");row(p,UiGlyph.FOLDER,"存储扩容","自动迁移 · 文件分类 · 查看与恢复",()->startActivity(new Intent(this,ExpansionActivity.class)));LinearLayout c=card(p,22);transferHint=text(c,"正在读取电脑连接…",14,secondary,0);send=button(c,busy?"正在准备文件…":"选择文件，发送到电脑",true,this::chooseFiles);text(c,"单个文件最多 256 MB，一次可选择 10 个。",12,secondary,10);notice=text(c,"",13,secondary,8);
@@ -152,9 +158,10 @@ public final class MainActivity extends Activity {
         LinearLayout p=page("权限与服务","只在使用对应功能时生效；可随时在系统设置中管理。");
         LinearLayout core=group(p,"手机操作");permissionRow(core,"gui",UiGlyph.SCREEN,"看屏操作",()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));permissionRow(core,"notifications",UiGlyph.TASK,"手机通知同步",()->startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
         LinearLayout device=group(p,"连接与背屏");Runnable app=()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));
-        permissionRow(device,"camera",UiGlyph.SCAN,"扫码相机",app);permissionRow(device,"notice",UiGlyph.TASK,"服务通知",app);permissionRow(device,"screen",UiGlyph.SCREEN,"背屏控制",()->repairHelp("背屏控制"));permissionRow(device,"pairing",UiGlyph.LINK,"安全扫码服务",()->repairHelp("安全扫码"));permissionRow(device,"power",UiGlyph.CLOCK,"后台电量管理",()->startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
+        permissionRow(device,"camera",UiGlyph.SCAN,"扫码相机",app);permissionRow(device,"notice",UiGlyph.TASK,"服务通知",app);permissionRow(device,"screen",UiGlyph.SCREEN,"背屏控制",()->repairHelp("背屏控制"));permissionRow(device,"pairing",UiGlyph.LINK,"安全扫码服务",()->startActivity(new Intent(this,PairingActivity.class)));permissionRow(device,"power",UiGlyph.CLOCK,"后台电量管理",()->startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
     }
-    private void repairHelp(String feature){new AlertDialog.Builder(this).setTitle(feature).setMessage("用 USB 连接电脑，在 StepX Companion 的连接设备页点击“更新 / 修复 StepX伴侣”。完成手机上的系统确认后返回，此处会自动刷新。").setPositiveButton("知道了",null).show();}
+    private boolean bootRecovering(){return android.os.SystemClock.elapsedRealtime()<180000||AutoConnectService.state(this).startsWith("正在恢复开机");}
+    private void repairHelp(String feature){new AlertDialog.Builder(this).setTitle(feature).setMessage(bootRecovering()?"手机正在恢复开机服务，请完成首次解锁后等待片刻。已配对电脑会自动连接，不需要再次扫码。":"权限检查未通过。请先确认已安装最新版伴侣并完成首次解锁；仍未恢复时，在电脑连接设备页选择“更新 / 修复 StepX伴侣”。修复会同时配置后续的开机恢复。").setPositiveButton("知道了",null).show();}
     private void backgroundPage(){
         LinearLayout p=page("后台协作","电脑连接期间，按需维持 Amoo 任务。断开后自动释放。");LinearLayout c=card(p,16);
         amooSwitch=new Switch(this);amooSwitch.setText("允许后台协作");amooSwitch.setTextSize(15);amooSwitch.setTextColor(ink);amooSwitch.setMinHeight(dp(48));c.addView(amooSwitch,new LinearLayout.LayoutParams(-1,-2));amooState=text(c,"正在检查…",13,secondary,8);
@@ -192,29 +199,31 @@ public final class MainActivity extends Activity {
     private void guiKeyDialog(){EditText input=new EditText(this);input.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);input.setHint("Step Plan API Key");input.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);new AlertDialog.Builder(this).setTitle("Step Plan 模型").setMessage("模型：step-3.7-flash\nAPI：api.stepfun.com/step_plan/v1\n密钥仅加密保存在手机，不写入 Amoo 技能或对话。").setView(input).setNegativeButton("取消",null).setPositiveButton("保存",(d,w)->{try{GuiModelVault.save(this,input.getText().toString());input.setText("");toast("密钥已加密保存");refresh();}catch(Exception e){toast(e.getMessage());}}).show();}
     private String grant(String permission){return checkSelfPermission(permission)==PackageManager.PERMISSION_GRANTED?"已授权":"未授权，可在系统权限中恢复";}
     private void notifications(){if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},1);}
-    private void game(String operation){try{if(!operation.equals("stop")){List<String> missing=new ArrayList<>();if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)missing.add(Manifest.permission.POST_NOTIFICATIONS);if(checkSelfPermission(Manifest.permission.READ_PHONE_STATE)!=PackageManager.PERMISSION_GRANTED)missing.add(Manifest.permission.READ_PHONE_STATE);if(!missing.isEmpty())requestPermissions(missing.toArray(new String[0]),2);}startForegroundService(new Intent(this,CompanionService.class).putExtra("op",operation).putExtra("request_id","phone-"+System.currentTimeMillis()));}catch(Exception e){toast("无法启动背屏："+e.getMessage());}}
+    private void game(String operation){if(!operation.equals("stop")&&checkSelfPermission("com.stepos.permission.MANAGE_BACK_SCREEN")!=PackageManager.PERMISSION_GRANTED){repairHelp("背屏控制");return;}try{if(!operation.equals("stop")){List<String> missing=new ArrayList<>();if(checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)missing.add(Manifest.permission.POST_NOTIFICATIONS);if(checkSelfPermission(Manifest.permission.READ_PHONE_STATE)!=PackageManager.PERMISSION_GRANTED)missing.add(Manifest.permission.READ_PHONE_STATE);if(!missing.isEmpty())requestPermissions(missing.toArray(new String[0]),2);}startForegroundService(new Intent(this,CompanionService.class).putExtra("op",operation).putExtra("request_id","phone-"+System.currentTimeMillis()));}catch(Exception e){toast("无法启动背屏："+e.getMessage());}}
     private JSONObject state(String name){try{return TransferStore.readJson(new File(store.root(),name));}catch(Exception ignored){return new JSONObject();}}
     private void refresh(){
         if(destroyed||refreshPending)return;refreshPending=true;final int generation=pageGeneration,viewTab=tab;
         statusWorker.execute(()->{
             TransferStore.Link link=store.link();JSONObject agent=null;String error="";JSONArray history=new JSONArray();JSONObject amoo=new JSONObject(),pairing=new JSONObject(),game=new JSONObject();
-            if(viewTab==0||viewTab==3)try{agent=NeoAgent.selected(this)?NeoAgent.status(this):PhoneGuiAgent.status(this);if(viewTab==3)history=AgentHistory.list(this);}catch(Exception e){error=e.getMessage();}
+            if(viewTab==0||viewTab==3)try{agent=NeoAgent.selected(this)?NeoAgent.status(this):PhoneGuiAgent.status(this);}catch(Exception e){error=e.getMessage()==null?"任务服务未返回状态，请稍后重试。":e.getMessage();}
+            if(viewTab==3)try{history=AgentHistory.list(this);}catch(Exception ignored){/* A service outage must not hide readable task history. */}
             if(viewTab==6||viewTab==7){amoo=state("amoo-connection.json");pairing=state("pairing.json");}if(viewTab==5)game=state("status.json");
             if(viewTab==8)try{history=AgentHistory.list(this);}catch(Exception e){history=null;error="记录读取失败，请返回后重试。";}
             final JSONObject a=agent,as=amoo,ps=pairing,gs=game;final JSONArray hs=history;final String failure=error;
             ui.post(()->{refreshPending=false;if(destroyed)return;cachedLink=link;if(generation!=pageGeneration){refresh();return;}if(viewTab!=1)endLoading();
                 if(a!=null){lastAgent=a;guiReady=a.optBoolean("ready");guiPhase=a.optString("phase");}else if(viewTab==0||viewTab==3){guiReady=false;guiPhase="";}
-                if(homeStatus!=null){homeStatus.setText(link.online?"● 已连接":"尚未连接");homeStatus.setTextColor(link.online?green:secondary);homeComputer.setText(link.online?link.name:"连接你的电脑");homeTask.setText(a==null?"暂时无法读取任务状态":NeoPolicy.active(guiPhase)?phaseLabel(guiPhase)+" · "+a.optString("goal"):guiReady?"已就绪 · 无需连接电脑即可运行":readiness(a));}
-                if(guiState!=null){if(a!=null)renderAgent(a,hs);else{liveCard.setVisibility(View.VISIBLE);taskBadge.setText("状态暂不可用");guiState.setText(failure.isEmpty()?"请稍后重试":failure);}updateGuiControls();}
-                if(linkTitle!=null){linkTitle.setText(link.online?"已连接 · "+link.name:"尚未连接电脑");linkTitle.setTextColor(link.online?green:ink);linkHint.setText(link.online?"可以互传文件，在电脑使用 Amoo 与 Amoo Work。":"扫码或 USB 连接后，即可开始协作。");connectionFoot.setText(link.online?"连接状态由电脑实时确认。":"已配对电脑也需运行 desktop。");}
+                AutoConnectService.rememberFirstConnection(this,link.online);
+                if(homeStatus!=null){homeStatus.setText(link.online?"● 已连接":"尚未连接");homeStatus.setTextColor(link.online?green:secondary);homeComputer.setText(link.online?link.name:"连接你的电脑");homeTask.setText(a==null?(failure.isEmpty()?"暂时无法读取任务状态":failure):NeoPolicy.active(guiPhase)?phaseLabel(guiPhase)+" · "+a.optString("goal"):guiReady?"已就绪 · 无需连接电脑即可运行":readiness(a));}
+                if(guiState!=null){if(a!=null)renderAgent(a,hs);else{liveCard.setVisibility(View.VISIBLE);taskBadge.setText("任务服务未就绪");taskGoal.setText("请先恢复任务服务");taskReadiness.setText("暂时无法开始任务 · 草稿已保留");taskReadiness.setTextColor(CompanionUi.AMBER);guiState.setText(failure.isEmpty()?"请稍后重试":failure);taskMetrics.setText("");taskSteps.removeAllViews();taskDetails.setVisibility(View.GONE);lastTaskRender="";renderHistory(hs,5);}updateGuiControls();}
+                if(linkTitle!=null){linkTitle.setText(link.online?"已连接 · "+link.name:"尚未连接电脑");linkTitle.setTextColor(link.online?green:ink);linkHint.setText(link.online?"可以互传文件，在电脑使用 Amoo 与 Amoo Work。":AutoConnectService.enabled(this)?"等待已配对电脑，请确认电脑已打开 StepX Companion。":"首次使用请扫码或通过 USB 配对。");connectionFoot.setText(link.online?"连接状态由电脑实时确认。":AutoConnectService.state(this));}
                 if(send!=null){send.setEnabled(!busy);send.setAlpha(!busy?1f:0.45f);send.setText(busy?"正在准备文件…":link.online?"选择文件，发送到电脑":"连接电脑");transferHint.setText(link.online?"发送给 "+link.name:"请先连接电脑，再选择文件。");loadTransfers();}
                 if(viewTab==6||viewTab==7)renderPermissions(as,ps);
                 if(viewTab==8){if(hs!=null)renderHistory(hs,20);else if(taskHistory.getChildCount()==0)text(taskHistory,failure,14,secondary,12);}
-                if(gameState!=null){String mode=gs.optString("mode");gameState.setText((mode.equals("standby")?"三敲监听已开启":mode.equals("game")?"游戏进行中 · "+gs.optLong("score")+" 分":mode.equals("animation")?"正在显示："+gs.optString("appliedTitle"):"游戏未启动")+"\n最高积分 "+gs.optLong("bestScore")+" 分"+(gs.optString("pausedReason").isEmpty()?"":"\n"+gs.optString("pausedReason"))+(gs.optString("lastError").isEmpty()?"":"\n"+gs.optString("lastError")));}
+                if(gameState!=null&&checkSelfPermission("com.stepos.permission.MANAGE_BACK_SCREEN")!=PackageManager.PERMISSION_GRANTED){gameState.setText(bootRecovering()?"背屏权限正在恢复 · 请稍候…":"背屏权限未就绪 · 点击开始可查看修复方式。");}else if(gameState!=null){String mode=gs.optString("mode");gameState.setText((mode.equals("standby")?"三敲监听已开启":mode.equals("game")?"游戏进行中 · "+gs.optLong("score")+" 分":mode.equals("animation")?"正在显示："+gs.optString("appliedTitle"):"游戏未启动")+"\n最高积分 "+gs.optLong("bestScore")+" 分"+(gs.optString("pausedReason").isEmpty()?"":"\n"+gs.optString("pausedReason"))+(gs.optString("lastError").isEmpty()?"":"\n"+gs.optString("lastError")));}
             });
         });
     }
-    private boolean screenPermissionEnabled(){String services=Settings.Secure.getString(getContentResolver(),Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);return services!=null&&services.contains(getPackageName());}
+    private boolean screenPermissionEnabled(){String services=Settings.Secure.getString(getContentResolver(),Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);if(services==null)return false;String target=NeoAgent.selected(this)?"com.stepx.companion.neo.ControlService":getPackageName()+".GuiAccessibilityService";for(String service:services.split(":")){ComponentName c=ComponentName.unflattenFromString(service);if(c!=null&&getPackageName().equals(c.getPackageName())&&target.equals(c.getClassName()))return true;}return false;}
     private String readiness(JSONObject value){if(value.optBoolean("ready"))return "保持手机解锁 · 使用你配置的模型服务";if(!value.optBoolean("executorConnected"))return screenPermissionEnabled()?"看屏服务正在重新连接…":"请在设置 → 权限与服务中启用看屏操作。";if(!value.optBoolean("modelConfigured"))return "请先配置支持图片输入的模型。";return "请在模型设置中确认允许操作的应用。";}
     private String phaseLabel(String phase){return NeoPolicy.phaseLabel(phase);}
     private void renderAgent(JSONObject value,JSONArray history){
@@ -237,14 +246,14 @@ public final class MainActivity extends Activity {
         LinearLayout list=group(taskHistory,"");for(int i=0;i<Math.min(history.length(),limit);i++){JSONObject entry=history.optJSONObject(i);if(entry==null)continue;String when=android.text.format.DateFormat.format("MM-dd HH:mm",entry.optLong("createdAt")).toString();row(list,UiGlyph.TASK,entry.optString("goal","手机任务"),phaseLabel(entry.optString("phase"))+" · "+when,()->taskDetail(entry));}
     }
     private void renderPermissions(JSONObject s,JSONObject pairing){
-        boolean supported=s.optBoolean("supported"),enabled=getSharedPreferences("amoo_connection",MODE_PRIVATE).getBoolean("enabled",true);if(amooSwitch!=null){updatingSwitch=true;amooSwitch.setChecked(supported&&enabled);amooSwitch.setEnabled(supported);updatingSwitch=false;}
+        boolean permissions=AmooConnectionService.permissionsGranted(this),supported=s.optBoolean("supported")&&permissions,enabled=getSharedPreferences("amoo_connection",MODE_PRIVATE).getBoolean("enabled",true);if(amooSwitch!=null){updatingSwitch=true;amooSwitch.setChecked(supported&&enabled);amooSwitch.setEnabled(supported);updatingSwitch=false;}
         long elapsed=SystemClock.elapsedRealtime();boolean fresh=s.optBoolean("active")&&s.optLong("leaseExpiresElapsedMs")>elapsed&&s.optLong("uptimeMs")<=elapsed&&elapsed-s.optLong("uptimeMs")<30000;
-        String error=s.optString("lastError");if(amooState!=null)amooState.setText(!error.isEmpty()?error:!supported?"后台协作未就绪，请在电脑检查固件适配。":!enabled?"已停止后台协作":fresh?s.optString("message","协作进行中"):"已允许，等待电脑连接");
+        String error=s.optString("lastError");if(amooState!=null)amooState.setText(!permissions?(bootRecovering()?"正在恢复熄屏协作权限…":"后台协作权限未就绪，请在权限与服务中查看详情。"):!error.isEmpty()?error:!supported?"后台协作未就绪，请在电脑检查固件适配。":!enabled?"已停止后台协作":fresh?s.optString("message","协作进行中"):"已允许，等待电脑连接");
         PowerManager power=getSystemService(PowerManager.class);NotificationManager notifications=getSystemService(NotificationManager.class);
         boolean pairingReady=PairingBridgeProvider.available()&&pairing.optBoolean("pairingSupported")&&System.currentTimeMillis()-pairing.optLong("updatedAtMs")<30000;
         labelPermission("camera",grant(Manifest.permission.CAMERA));labelPermission("notice",notifications.areNotificationsEnabled()?"已开启":"未开启 · 点击管理");
         labelPermission("screen",checkSelfPermission("com.stepos.permission.MANAGE_BACK_SCREEN")==PackageManager.PERMISSION_GRANTED?"已适配":"待修复 · 查看电脑操作步骤");labelPermission("pairing",pairingReady?"已就绪":"待连接确认 · 查看修复步骤");labelPermission("power",power.isIgnoringBatteryOptimizations(getPackageName())?"不受限制":"受系统管理 · 点击调整");
-        String accessibility=Settings.Secure.getString(getContentResolver(),Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);labelPermission("gui",accessibility!=null&&accessibility.contains(getPackageName())?"已开启":"未开启 · 点击授权");
+        String accessibility=Settings.Secure.getString(getContentResolver(),Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);labelPermission("gui",screenPermissionEnabled()?"已开启":"未开启 · 点击授权");
         String listeners=Settings.Secure.getString(getContentResolver(),"enabled_notification_listeners");labelPermission("notifications",listeners!=null&&listeners.contains(getPackageName())?"已开启":"未开启 · 点击授权");
 
     }
@@ -255,7 +264,7 @@ public final class MainActivity extends Activity {
         if(notice==null||transferDirection!=1||busy)return;
         int received=0,queued=0,failed=0;
         for(TransferStore.Entry e:entries){if(!e.direction.equals("outbox"))continue;if("received".equals(e.status))received++;else if("error".equals(e.status))failed++;else queued++;}
-        String summary=received+queued+failed==0?"":queued==0&&failed==0?"电脑已接收全部 "+received+" 个文件。":"电脑已接收 "+received+" 个文件"+(queued>0?" · 等待接收 "+queued+" 个":"")+(failed>0?" · 传输失败 "+failed+" 个":"");
+        String summary=received+queued+failed==0?"":"累计已接收 "+received+" 个文件"+(queued>0?" · 等待接收 "+queued+" 个":"")+(failed>0?" · 传输失败 "+failed+" 个":"");
         if(!enqueueError.isEmpty())summary+=(summary.isEmpty()?"":"\n")+enqueueError;
         notice.setText(summary);notice.setTextColor(queued==0&&failed==0&&enqueueError.isEmpty()?green:secondary);
     }
@@ -281,7 +290,7 @@ public final class MainActivity extends Activity {
     private void toast(String message){if(!destroyed)Toast.makeText(this,message,Toast.LENGTH_LONG).show();}
     @Override public void onBackPressed(){if(tab>=4)showTab(parentTab(tab));else if(tab!=0)showTab(0);else super.onBackPressed();}
     private final Runnable tick=new Runnable(){public void run(){if(resumed){refresh();ui.postDelayed(this,2000);}}};
-    @Override protected void onResume(){super.onResume();resumed=true;ui.post(tick);}
+    @Override protected void onResume(){super.onResume();resumed=true;AutoConnectService.resume(this);ui.removeCallbacks(tick);ui.post(tick);}
     @Override protected void onPause(){endLoading();CompanionMotion.stop(content);CompanionMotion.stop(pageScroll);rememberDraft();hostSurface(false);resumed=false;ui.removeCallbacks(tick);super.onPause();}
     @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putInt("tab",tab);out.putInt("historyOrigin",historyOrigin);out.putInt("connectionOrigin",connectionOrigin);out.putString("taskDraft",taskDraft);out.putInt("direction",transferDirection);if(saving!=null){out.putString("savingId",saving.id);out.putString("savingDirection",saving.direction);}if(selectedComputer!=null){out.putString("targetId",selectedComputer.id);out.putString("targetName",selectedComputer.name);}}
     @Override protected void onDestroy(){destroyed=true;ui.removeCallbacksAndMessages(null);files.shutdown();statusWorker.shutdown();super.onDestroy();}

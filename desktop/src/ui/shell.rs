@@ -14,15 +14,18 @@ impl Companion {
         let p = self.p();
         let thumb = ColorU::new(p.text3.r, p.text3.g, p.text3.b, 90);
         let thumb_active = ColorU::new(p.text3.r, p.text3.g, p.text3.b, 160);
-        self.ease_scroll(ClippedScrollable::vertical(
-            state.clone(),
-            Container::new(content).with_uniform_padding(S5).finish(),
-            ScrollbarWidth::Auto,
-            thumb.into(),
-            thumb_active.into(),
-            Fill::None,
+        self.ease_scroll(
+            ClippedScrollable::vertical(
+                state.clone(),
+                Container::new(content).with_uniform_padding(S5).finish(),
+                ScrollbarWidth::Auto,
+                thumb.into(),
+                thumb_active.into(),
+                Fill::None,
+            )
+            .finish(),
+            state,
         )
-        .finish(), state)
     }
 
     /// Same scroll container without page padding (for panes that draw their own).
@@ -31,15 +34,18 @@ impl Companion {
         let p = self.p();
         let thumb = ColorU::new(p.text3.r, p.text3.g, p.text3.b, 90);
         let thumb_active = ColorU::new(p.text3.r, p.text3.g, p.text3.b, 160);
-        self.ease_scroll(ClippedScrollable::vertical(
-            state.clone(),
-            content,
-            ScrollbarWidth::Auto,
-            thumb.into(),
-            thumb_active.into(),
-            Fill::None,
+        self.ease_scroll(
+            ClippedScrollable::vertical(
+                state.clone(),
+                content,
+                ScrollbarWidth::Auto,
+                thumb.into(),
+                thumb_active.into(),
+                Fill::None,
+            )
+            .finish(),
+            state,
         )
-        .finish(), state)
     }
 
     pub(super) fn loading_page(&self) -> El {
@@ -247,7 +253,11 @@ impl Companion {
                 .with_child(
                     ConstrainedBox::new(
                         Align::new(icons::draw_icon(
-                            if icon == "✦" { UiIcon::Star } else { icons::symbol(icon).unwrap_or(UiIcon::Apps) },
+                            if icon == "✦" {
+                                UiIcon::Star
+                            } else {
+                                icons::symbol(icon).unwrap_or(UiIcon::Apps)
+                            },
                             if icon == "✦" { 18. } else { 16. },
                             icon_fg,
                         ))
@@ -615,7 +625,10 @@ impl Companion {
                     .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
                     .with_child(top_group)
                     .with_child(self.nav_item_badge(
-                        "sidebar-settings", "⚙", "设置", None,
+                        "sidebar-settings",
+                        "⚙",
+                        "设置",
+                        None,
                         matches!(self.page, Page::Settings | Page::About),
                         Action::Page(Page::Settings),
                     ))
@@ -791,7 +804,12 @@ impl Companion {
             } else {
                 self.page_actions()
             };
-        actions.push(self.button("operation-reminders", "操作提醒", Action::ReviewHistory, Btn::Ghost));
+        actions.push(self.button(
+            "operation-reminders",
+            "操作提醒",
+            Action::ReviewHistory,
+            Btn::Ghost,
+        ));
         actions.push(self.button_icon(
             "header-compact",
             "简洁",
@@ -882,30 +900,45 @@ impl Companion {
         let detail = self.footer_detail();
         let left = self.lead(
             S2,
-            self.fixed_w(18., Align::new(if self.footer_loading() { self.loading_line() } else { self.dot(if self.error {
-                p.danger
-            } else if self.busy || self.initializing {
-                p.warning
-            } else if self.selected.is_some() {
-                p.success
-            } else {
-                p.text3
-            }) }).finish()),
+            self.fixed_w(
+                18.,
+                Align::new(if self.footer_loading() {
+                    self.loading_line()
+                } else {
+                    self.dot(if self.error {
+                        p.danger
+                    } else if self.busy || self.initializing {
+                        p.warning
+                    } else if self.selected.is_some() {
+                        p.success
+                    } else {
+                        p.text3
+                    })
+                })
+                .finish(),
+            ),
             self.line(
                 format!("{transport} · {detail}"),
                 CAPTION,
                 if self.error { p.danger } else { p.text2 },
             ),
         );
-        let right = self.hstack(S3, vec![self.desktop_update_link(), self.stars_link(), self.mono(
-            format!(
-                "v{} · {}",
-                stepx_companion::build_info::VERSION,
-                stepx_companion::build_info::compiled_id()
-            ),
-            CAPTION,
-            p.text3,
-        )]);
+        let right = self.hstack(
+            S3,
+            vec![
+                self.desktop_update_link(),
+                self.stars_link(),
+                self.mono(
+                    format!(
+                        "v{} · {}",
+                        stepx_companion::build_info::VERSION,
+                        stepx_companion::build_info::compiled_id()
+                    ),
+                    CAPTION,
+                    p.text3,
+                ),
+            ],
+        );
         ConstrainedBox::new(
             Container::new(self.between(left, right))
                 .with_horizontal_padding(S4)

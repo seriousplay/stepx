@@ -20,16 +20,24 @@ pub fn parse_services(output: &str) -> Vec<Service> {
         .lines()
         .filter_map(|line| {
             let parts: Vec<_> = line.split_whitespace().collect();
-            if parts.len() != 3
-                || !parts[1].contains("_adb-tls-")
-                || validate_endpoint(parts[2]).is_err()
+            if parts.len() < 3 {
+                return None;
+            }
+            let endpoint = parts[parts.len() - 1];
+            let kind = parts[parts.len() - 2].trim_end_matches('.');
+            if !["_adb-tls-connect._tcp", "_adb-tls-pairing._tcp"].contains(&kind)
+                || validate_endpoint(endpoint).is_err()
             {
                 return None;
             }
             Some(Service {
-                name: parts[0].trim_end_matches('.').into(),
-                kind: parts[1].trim_end_matches('.').into(),
-                endpoint: parts[2].into(),
+                // mDNS may append a conflict suffix such as " (2)" to its instance name.
+                name: parts[..parts.len() - 2]
+                    .join(" ")
+                    .trim_end_matches('.')
+                    .into(),
+                kind: kind.into(),
+                endpoint: endpoint.into(),
             })
         })
         .collect()
@@ -151,6 +159,17 @@ pub struct Preferences {
     pub first_connect_done: bool,
     #[serde(default)]
     pub adb_guide_seen: bool,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub wireless: std::collections::BTreeMap<String, WirelessIdentity>,
+}
+
+/// Discovery hints are not credentials. Hardware identity is verified after TLS authentication.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WirelessIdentity {
+    #[serde(default)]
+    pub guid: String,
+    #[serde(default)]
+    pub endpoint: String,
 }
 
 impl Preferences {

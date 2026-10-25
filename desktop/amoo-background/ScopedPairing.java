@@ -21,7 +21,7 @@ public final class ScopedPairing {
         synchronized(current){try{current.cancelOwned();}catch(Exception ignored){}current.main.removeCallbacksAndMessages(null);}
     }
     public static JSONObject handle(Context app,JSONObject request)throws Exception{
-        if(android.os.Process.myUid()!=2000||!"com.android.shell".equals(app.getPackageName())||Build.VERSION.SDK_INT!=36)throw new SecurityException("不支持当前手机的安全扫码适配");
+        if(!((android.os.Process.myUid()==2000&&"com.android.shell".equals(app.getPackageName()))||(android.os.Process.myUid()==1000&&"android".equals(app.getPackageName())))||Build.VERSION.SDK_INT!=36)throw new SecurityException("不支持当前手机的安全扫码适配");
         String op=request.getString("op");
         if(!op.equals("pairing_status")&&!op.equals("pairing_enable")&&!op.equals("pairing_disable")&&!op.equals("pairing_begin")&&!op.equals("pairing_cancel"))throw new IllegalArgumentException("不支持的安全配对操作");
         ScopedPairing target;

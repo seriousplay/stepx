@@ -44,6 +44,7 @@ final class PairingController implements AutoCloseable {
         String next=result.optString("pairingState","idle"),text=result.optString("pairingMessage","安全扫码已就绪。");
         pairing=result.optBoolean("pairingActive")&&pairingId.equals(result.optString("pairingId"));
         if(result.optBoolean("pairingActive")&&!pairing){next="busy";text="另一次安全配对正在进行，扫描新二维码可重新配对。";}
+        if(!pairingId.equals(result.optString("pairingId"))&&("paired".equals(next)||"cancelled".equals(next)||"error".equals(next))){next="idle";text="请选择扫描二维码，或从相册选择二维码。";}
         if(becameReady||!next.equals(remoteState)||!text.equals(remoteMessage)){remoteState=next;remoteMessage=text;emit(next,text);}writeStatus();
     }
     private void command(String op,PairingCode code){
@@ -60,7 +61,7 @@ final class PairingController implements AutoCloseable {
     void update(String next,String text){emit(next,text);if(!closed)worker.post(this::writeStatus);}
     void publish(){refresh();}
     private void writeStatus(){try{
-        JSONObject j=new JSONObject().put("protocol",1).put("pairingPermissionGranted",permitted(context)).put("wirelessSettingsPermissionGranted",settingsPermitted(context)).put("wirelessEnabled",wirelessEnabled()).put("pairingSupported",supported()).put("pairingBridgeReady",ready).put("pairingState",state).put("pairingMessage",message).put("updatedAtMs",System.currentTimeMillis()).put("pairingStartedElapsedMs",startedAt);
+        JSONObject j=new JSONObject().put("protocol",1).put("pairingPermissionGranted",permitted(context)).put("wirelessSettingsPermissionGranted",settingsPermitted(context)).put("wirelessEnabled",wirelessEnabled()).put("pairingSupported",supported()).put("pairingBridgeReady",ready).put("pairingProcessUid",snapshot.optInt("processUid")).put("pairingProcessPid",snapshot.optInt("pid")).put("pairingState",state).put("pairingMessage",message).put("updatedAtMs",System.currentTimeMillis()).put("pairingStartedElapsedMs",startedAt);
         File dir=context.getExternalFilesDir(null);if(dir==null)return;dir.mkdirs();File tmp=new File(dir,"pairing.json.tmp"),out=new File(dir,"pairing.json");Files.write(tmp.toPath(),j.toString().getBytes(StandardCharsets.UTF_8));Files.move(tmp.toPath(),out.toPath(),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);
     }catch(Exception ignored){}}
     @Override public void close(){if(closed)return;closed=true;++generation;worker.post(()->{try{exchange(new JSONObject().put("op","pairing_cancel").put("pairingId",pairingId));}catch(Exception ignored){}thread.quitSafely();});main.removeCallbacksAndMessages(null);}

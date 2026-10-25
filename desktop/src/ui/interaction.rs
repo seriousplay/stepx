@@ -138,8 +138,16 @@ impl Companion {
         }
         let leaving = matches!(
             action,
-            Action::CompactChat | Action::Page(_)
-                | Action::Workspace(WorkspaceAction::New | WorkspaceAction::Menu(_) | WorkspaceAction::ClosePanel | WorkspaceAction::History | WorkspaceAction::Select(_) | WorkspaceAction::PhoneSession(_))
+            Action::CompactChat
+                | Action::Page(_)
+                | Action::Workspace(
+                    WorkspaceAction::New
+                        | WorkspaceAction::Menu(_)
+                        | WorkspaceAction::ClosePanel
+                        | WorkspaceAction::History
+                        | WorkspaceAction::Select(_)
+                        | WorkspaceAction::PhoneSession(_)
+                )
                 | Action::OpenTool(_)
                 | Action::Studio(StudioAction::Tab(_))
                 | Action::CloseWindow
@@ -320,7 +328,8 @@ impl Companion {
         }
     }
     pub(super) fn studio_config_dirty(&self) -> bool {
-        ((self.page == Page::Studio && self.studio.tab == 3) || (self.page == Page::Amoo && self.workspace.panel == 5))
+        ((self.page == Page::Studio && self.studio.tab == 3)
+            || (self.page == Page::Amoo && self.workspace.panel == 5))
             && self.studio_lab.loaded
             && self.studio_lab.pending_config.is_none()
             && (self.fields[F_LAB_ENDPOINT].text != self.studio_lab.config.endpoint

@@ -240,20 +240,62 @@ impl Companion {
             ],
         );
 
-        let breadcrumb = self.wrap(breadcrumbs(&self.directory).into_iter().enumerate().flat_map(|(i,(label,path))| {
-            let mut nodes = Vec::new();
-            if i > 0 { nodes.push(self.ui_icon(UiIcon::ChevronRight, 12., p.text3)); }
-            nodes.push(self.button(format!("files-crumb-{i}"), &label, Action::Browse(path.clone()), if path == self.directory { Btn::Secondary } else { Btn::Ghost }));
-            nodes
-        }).collect());
-        let navigation = self.hstack(S2, vec![
-            if self.directory == "/sdcard" { self.disabled_button("↑ 上一级") } else { self.button_icon("files-up-inline", "上一级", UiIcon::ArrowUp, Action::ParentDirectory, Btn::Secondary) },
-            breadcrumb,
-        ]);
-        let top_bar = self.vstack(S2, vec![
-            places_bar,
-            self.between(navigation, self.hstack(S2, vec![sort_seg, self.input(F_FILE_SEARCH, "筛选当前目录…", Some(180.))])),
-        ]);
+        let breadcrumb = self.wrap(
+            breadcrumbs(&self.directory)
+                .into_iter()
+                .enumerate()
+                .flat_map(|(i, (label, path))| {
+                    let mut nodes = Vec::new();
+                    if i > 0 {
+                        nodes.push(self.ui_icon(UiIcon::ChevronRight, 12., p.text3));
+                    }
+                    nodes.push(self.button(
+                        format!("files-crumb-{i}"),
+                        &label,
+                        Action::Browse(path.clone()),
+                        if path == self.directory {
+                            Btn::Secondary
+                        } else {
+                            Btn::Ghost
+                        },
+                    ));
+                    nodes
+                })
+                .collect(),
+        );
+        let navigation = self.hstack(
+            S2,
+            vec![
+                if self.directory == "/sdcard" {
+                    self.disabled_button("↑ 上一级")
+                } else {
+                    self.button_icon(
+                        "files-up-inline",
+                        "上一级",
+                        UiIcon::ArrowUp,
+                        Action::ParentDirectory,
+                        Btn::Secondary,
+                    )
+                },
+                breadcrumb,
+            ],
+        );
+        let top_bar = self.vstack(
+            S2,
+            vec![
+                places_bar,
+                self.between(
+                    navigation,
+                    self.hstack(
+                        S2,
+                        vec![
+                            sort_seg,
+                            self.input(F_FILE_SEARCH, "筛选当前目录…", Some(180.)),
+                        ],
+                    ),
+                ),
+            ],
+        );
 
         let mut modal_banners: Vec<El> = Vec::new();
         if let Some(modal) = &self.file_modal {
@@ -458,7 +500,11 @@ impl Companion {
                     Action::ActivateFile(orig_idx),
                 )];
                 if !entry.directory {
-                    act_links.push(self.link(format!("f-real-save-{orig_idx}"), "下载", Action::DownloadFile(orig_idx)));
+                    act_links.push(self.link(
+                        format!("f-real-save-{orig_idx}"),
+                        "下载",
+                        Action::DownloadFile(orig_idx),
+                    ));
                 }
                 if is_img {
                     act_links.push(self.link(
@@ -494,7 +540,7 @@ impl Companion {
                     self.mono(size_str, CAPTION, p.text2),
                     actions_col,
                 );
-                let menu_path=entry.path.clone();
+                let menu_path = entry.path.clone();
                 let state = self.mouse_state(format!("file-real-row:{orig_idx}"));
                 let row_el = Hoverable::new(state, move |mouse| {
                     let hovered = mouse.is_mouse_over_element();
@@ -521,8 +567,15 @@ impl Companion {
                 })
                 .with_cursor(Cursor::PointingHand)
                 .on_click(move |ctx, _, _| ctx.dispatch_typed_action(Action::SelectFile(orig_idx)))
-                .on_double_click(move |ctx, _, _| ctx.dispatch_typed_action(Action::ActivateFile(orig_idx)))
-                .on_right_click(move |ctx, _, at| ctx.dispatch_typed_action(Action::ContextOpen(crate::ui::context_menu::Target::File(menu_path.clone()), at)))
+                .on_double_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(Action::ActivateFile(orig_idx))
+                })
+                .on_right_click(move |ctx, _, at| {
+                    ctx.dispatch_typed_action(Action::ContextOpen(
+                        crate::ui::context_menu::Target::File(menu_path.clone()),
+                        at,
+                    ))
+                })
                 .finish();
                 table_rows.push(row_el);
             }
@@ -624,7 +677,11 @@ impl Companion {
             self.hstack(
                 10.,
                 vec![
-                    self.line(format!("{total_items} 项 · 单击选择，双击打开"), CAPTION, p.text2),
+                    self.line(
+                        format!("{total_items} 项 · 单击选择，双击打开"),
+                        CAPTION,
+                        p.text2,
+                    ),
                     self.line("·", CAPTION, p.text2),
                     self.line_w(
                         format!("路径：{}", self.directory),
@@ -691,8 +748,14 @@ impl Companion {
 fn breadcrumbs(path: &str) -> Vec<(String, String)> {
     let mut result = vec![("手机存储".into(), "/sdcard".into())];
     let mut current = String::from("/sdcard");
-    for part in path.strip_prefix("/sdcard/").unwrap_or("").split('/').filter(|p| !p.is_empty()) {
-        current.push('/'); current.push_str(part);
+    for part in path
+        .strip_prefix("/sdcard/")
+        .unwrap_or("")
+        .split('/')
+        .filter(|p| !p.is_empty())
+    {
+        current.push('/');
+        current.push_str(part);
         result.push((part.to_owned(), current.clone()));
     }
     result
@@ -702,7 +765,10 @@ mod navigation_tests {
     use super::*;
     #[test]
     fn breadcrumbs_keep_unicode_and_repeated_names() {
-        assert_eq!(breadcrumbs("/sdcard").len(),1);
-        assert_eq!(breadcrumbs("/sdcard/DCIM/旅行/DCIM").last().unwrap(), &("DCIM".into(),"/sdcard/DCIM/旅行/DCIM".into()));
+        assert_eq!(breadcrumbs("/sdcard").len(), 1);
+        assert_eq!(
+            breadcrumbs("/sdcard/DCIM/旅行/DCIM").last().unwrap(),
+            &("DCIM".into(), "/sdcard/DCIM/旅行/DCIM".into())
+        );
     }
 }

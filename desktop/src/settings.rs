@@ -211,6 +211,9 @@ mod tests {
     fn missing_directory_is_not_silently_replaced() {
         let t = tempfile::tempdir().unwrap();
         assert!(choose_directory(&t.path().join("offline-drive")).is_err());
-        assert_eq!(choose_directory(t.path()).unwrap(), t.path().canonicalize().unwrap());
+        assert_eq!(
+            choose_directory(t.path()).unwrap(),
+            t.path().canonicalize().unwrap()
+        );
     }
 }

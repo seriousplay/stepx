@@ -1386,6 +1386,13 @@ impl PlayProtectReport {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GoogleHealthCheck {
+    pub title: String,
+    pub state: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct GoogleSuiteStatus {
     pub checked: bool,
     pub verification_note: String,
@@ -1409,6 +1416,8 @@ pub struct GoogleSuiteStatus {
     pub compatibility_can_rollback: bool,
     pub compatibility_note: String,
     pub play_protect: PlayProtectReport,
+    pub health_checks: Vec<GoogleHealthCheck>,
+    pub health_needs_repair: bool,
 }
 
 impl GoogleSuiteStatus {
@@ -1436,6 +1445,8 @@ impl GoogleSuiteStatus {
             compatibility_can_rollback: false,
             compatibility_note: "兼容补丁尚未检测".into(),
             play_protect: PlayProtectReport::demo(),
+            health_checks: Vec::new(),
+            health_needs_repair: false,
         }
     }
     pub fn gms_short(&self) -> String {
@@ -1545,6 +1556,8 @@ impl Default for GoogleSuiteStatus {
             compatibility_can_rollback: false,
             compatibility_note: "兼容补丁尚未检测".into(),
             play_protect: PlayProtectReport::default(),
+            health_checks: Vec::new(),
+            health_needs_repair: false,
         }
     }
 }

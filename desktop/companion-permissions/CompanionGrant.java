@@ -102,19 +102,40 @@ public final class CompanionGrant {
 
     /** Separate fixed permission group; never reuses or replaces the legacy backscreen baseline. */
     public static String runScoped(String expectedSigner, String operation, String baselineJson, int expectedUid) {
-        return runFixed(expectedSigner, operation, baselineJson, expectedUid, false);
+        return runFixed(expectedSigner, operation, baselineJson, expectedUid, 0);
     }
 
     /** Only the existing protected CloudWake receiver permission; separate recovery baseline. */
     public static String runWake(String expectedSigner, String operation, String baselineJson, int expectedUid) {
-        return runFixed(expectedSigner, operation, baselineJson, expectedUid, true);
+        return runFixed(expectedSigner, operation, baselineJson, expectedUid, 1);
+    }
+
+    /** Boot restoration is confined to the same four permissions and pinned companion identity. */
+    public static String runBoot(String expectedSigner, String operation, String baselineJson, int expectedUid) {
+        if(!"StepX/pandora/pandora:16/BQ2A.260122.002-BP2A.250705.008/172:user/release-keys".equals(android.os.Build.FINGERPRINT)||android.os.Build.VERSION.SDK_INT!=36)
+            return "{\"status\":\"failed\",\"error\":\"Unsupported boot firmware\"}";
+        String raw=runFixed(expectedSigner, operation, baselineJson, expectedUid, 2);
+        try {
+            JSONObject result=new JSONObject(raw);
+            if("grant".equals(operation)&&"success".equals(result.optString("status"))&&result.optBoolean("all_granted")){
+                result.put("runtime",CompanionRuntime.ensure(expectedSigner,expectedUid));
+                PairingDaemon.installSystem(expectedSigner,expectedUid);
+                result.put("boot_pairing_started",true);
+                result.put("google_login",GoogleLoginRuntime.install());
+            }
+            if("revoke".equals(operation)&&"success".equals(result.optString("status"))) {
+                GoogleLoginRuntime.stopInstalled();
+                result.put("runtime",CompanionRuntime.restore(expectedSigner,expectedUid));
+            }
+            return result.toString();
+        } catch(Exception error){try{return new JSONObject(raw).put("status","failed").put("error","Boot pairing: "+error.toString()).toString();}catch(Exception ignored){return raw;}}
     }
 
     // Permission names/owners are never supplied by the caller.
-    private static String runFixed(String expectedSigner, String operation, String baselineJson, int expectedUid, boolean wake) {
-        String[] permissions = wake ? WAKE_PERMISSIONS : CONNECTION_PERMISSIONS;
-        String owner = wake ? "com.stepos.pushservice" : "android";
-        String scope = wake ? "wake_permission_v1" : "connection_permissions_v1";
+    private static String runFixed(String expectedSigner, String operation, String baselineJson, int expectedUid, int group) {
+        String[] permissions = group == 2 ? new String[]{PERMISSION, CONNECTION_PERMISSIONS[0], CONNECTION_PERMISSIONS[1], WAKE_PERMISSIONS[0]} : group == 1 ? WAKE_PERMISSIONS : CONNECTION_PERMISSIONS;
+        
+        String scope = group == 2 ? "companion_boot_v1" : group == 1 ? "wake_permission_v1" : "connection_permissions_v1";
         JSONObject result = new JSONObject();
         try {
             if (expectedSigner == null || !expectedSigner.matches("[0-9a-f]{64}"))
@@ -147,7 +168,7 @@ public final class CompanionGrant {
                 if (pkg.requestedPermissions == null || !Arrays.asList(pkg.requestedPermissions).contains(name))
                     throw new SecurityException("Companion did not declare " + name);
                 PermissionInfo info = pm.getPermissionInfo(name, 0);
-                if (!owner.equals(info.packageName) ||
+                if (!(name.equals(WAKE_PERMISSIONS[0]) ? "com.stepos.pushservice" : "android").equals(info.packageName) ||
                     (info.protectionLevel & PermissionInfo.PROTECTION_MASK_BASE) != PermissionInfo.PROTECTION_SIGNATURE)
                     throw new SecurityException("Unexpected permission owner/protection: " + name);
                 if (!inspect) {
@@ -183,7 +204,7 @@ public final class CompanionGrant {
                     }
                     changed |= before[i] != after[i];
                     details.put(name, new JSONObject().put("before_flags", before[i]).put("after_flags", after[i])
-                        .put("owner", owner).put("declared", true).put("signature_permission", true));
+                        .put("owner", name.equals(WAKE_PERMISSIONS[0]) ? "com.stepos.pushservice" : "android").put("declared", true).put("signature_permission", true));
                 }
                 if (changed) {
                     Object next = old.getClass().getMethod("toMutable").invoke(old);

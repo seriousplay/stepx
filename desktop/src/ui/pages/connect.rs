@@ -126,7 +126,7 @@ impl Companion {
                         Btn::Primary,
                     )
                 });
-                body.push(self.text("安装时配置相机、通知、通话状态和电池优化豁免。手机重启后，扫码服务需通过 USB 连接后点击「更新／修复 StepX伴侣」恢复；当前未提供开机自启。", CAPTION, p.text3));
+                body.push(self.text("安装时配置相机、通知、通话状态和电池优化豁免。已适配的 StepX 172 固件支持开机恢复：重启后首次手动解锁，已配对电脑在同一局域网自动连接。新电脑、新 Wi-Fi 仍需首次授权；安装结果会说明未完成的能力。", CAPTION, p.text3));
             }
             3 => {
                 body.push(self.text(if companion.pairing_ready { "手机和电脑连接同一局域网。在手机 StepX伴侣「连接」页开启无线调试，确认 Android 的当前 Wi-Fi 信任提示。不要使用访客网络或阻止设备互访的网络。" } else { "手机和电脑连接同一局域网。在手机「设置 → 开发者选项 → 无线调试」手动开启，确认系统的 Wi-Fi 信任提示。伴侣扫码服务未通过核验时，可直接使用下方系统配对码完成连接。" }, BODY, p.text));
@@ -173,7 +173,7 @@ impl Companion {
             }
             4 => {
                 body.push(self.text(if companion.pairing_ready { "在手机 StepX伴侣「连接」页点「扫码连接电脑」扫描下方二维码。也可以使用系统开发者选项中的「使用二维码配对设备」。" } else { "伴侣扫码服务尚未通过核验。请使用手机系统「开发者选项 → 无线调试 → 使用二维码配对设备」，或切换下方的 6 位配对码。" }, BODY, p.text));
-                body.push(self.text("配对成功后，下方会出现真实无线通道。点击该通道的「连接」完成验证，再拔下 USB；不要扫描过期二维码。手机重启后如需再次扫码，请连接 USB 并更新／修复伴侣恢复服务。", CAPTION, p.text2));
+                body.push(self.text("首次配对后会记住这台手机，同一局域网内自动重连。手机开启「连接管理 → 自动连接」，电脑保持 StepX Companion 运行即可。新 Wi-Fi 的系统信任授权仍需首次确认。", CAPTION, p.text2));
             }
             _ => {
                 let wireless = self

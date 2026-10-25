@@ -436,19 +436,18 @@ impl Companion {
             }
         } else {
             sections.push(self.expansion_card());
-            sections.push(
-                self.panel(vec![
-                    self.between(
-                        self.heading("当前迁移规则"),
-                        self.ex_button("exp-edit-rule", "修改规则", EA::Settings, Btn::Secondary),
-                    ),
-                    self.text(
-                        expansion_state::ExpansionUi::policy_summary(&e.snapshot.status["policy"]),
-                        BODY,
-                        p.text,
-                    ),
-                    self.text(
-                        format!(
+            sections.push(self.panel(vec![
+                self.between(
+                    self.heading("当前迁移规则"),
+                    self.ex_button("exp-edit-rule", "修改规则", EA::Settings, Btn::Secondary),
+                ),
+                self.text(
+                    expansion_state::ExpansionUi::policy_summary(&e.snapshot.status["policy"]),
+                    BODY,
+                    p.text,
+                ),
+                self.text(
+                    format!(
                             "电脑位置：{}",
                             e.config
                                 .folder
@@ -456,24 +455,23 @@ impl Companion {
                                 .map(|f| f.join("StepX Storage").display().to_string())
                                 .unwrap_or_else(|| "未设置".into())
                         ),
-                        CAPTION,
-                        p.text2,
+                    CAPTION,
+                    p.text2,
+                ),
+                self.wrap(vec![
+                    if e.snapshot.status["policy"]["enabled"] == true {
+                        self.ex_button("exp-pause", "暂停自动迁移", EA::Pause, Btn::Secondary)
+                    } else {
+                        self.ex_button("exp-setup", "设置并开启", EA::Settings, Btn::Primary)
+                    },
+                    self.ex_button(
+                        "exp-open-current",
+                        "打开电脑文件夹",
+                        EA::OpenFolder,
+                        Btn::Ghost,
                     ),
-                    self.wrap(vec![
-                        if e.snapshot.status["policy"]["enabled"] == true {
-                            self.ex_button("exp-pause", "暂停自动迁移", EA::Pause, Btn::Secondary)
-                        } else {
-                            self.ex_button("exp-setup", "设置并开启", EA::Settings, Btn::Primary)
-                        },
-                        self.ex_button(
-                            "exp-open-current",
-                            "打开电脑文件夹",
-                            EA::OpenFolder,
-                            Btn::Ghost,
-                        ),
-                    ]),
                 ]),
-            );
+            ]));
             if e.snapshot.online {
                 sections.push(self.expansion_report_card(&e.snapshot.report, false));
             }

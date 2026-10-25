@@ -481,7 +481,9 @@ impl AgentBus {
             session.messages.sort_by_key(|message| message.timestamp_ms);
             // Report the last real parent-session inference, not a catalog default
             // or the model used by an unrelated child task.
-            session.model = recent_session_model(session).unwrap_or_default().to_string();
+            session.model = recent_session_model(session)
+                .unwrap_or_default()
+                .to_string();
             let more = history["page"]["hasMore"].as_bool().unwrap_or(false);
             session.meta = format!(
                 "后台同步 · {} 条消息{}",
@@ -1046,10 +1048,18 @@ pub(crate) fn parse_messages(rows: &[Value]) -> Result<Vec<RealChatMessage>> {
 }
 
 fn recent_session_model(session: &RealSessionInfo) -> Option<&str> {
-    session.messages.iter().rev().find(|message| {
-        message.role == "assistant" && !message.is_error && !message.model.is_empty()
-            && message.usage.has_tokens() && message.usage_session_key == session.key
-    }).map(|message| message.model.as_str())
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|message| {
+            message.role == "assistant"
+                && !message.is_error
+                && !message.model.is_empty()
+                && message.usage.has_tokens()
+                && message.usage_session_key == session.key
+        })
+        .map(|message| message.model.as_str())
 }
 
 fn parse_attachment(value: &Value) -> Option<RealAttachment> {
@@ -1134,7 +1144,11 @@ mod tests {
         messages[1].usage_session_key = "child".into();
         messages[2].usage_session_key = "parent".into();
         assert_eq!(messages[0].model, "actual-model");
-        let session = super::RealSessionInfo {key:"parent".into(),messages,..Default::default()};
+        let session = super::RealSessionInfo {
+            key: "parent".into(),
+            messages,
+            ..Default::default()
+        };
         assert_eq!(super::recent_session_model(&session), Some("actual-model"));
     }
     #[test]

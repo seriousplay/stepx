@@ -374,6 +374,20 @@ pub fn change_compatibility(
     if value["ok"] != true {
         bail!("{message}");
     }
+    if !rollback {
+        // A missing/old boot receipt is itself a reason to repair. The repair
+        // command independently verifies the firmware, signatures and boot hook.
+        let runtime_ready = run_script(device, adb, "manage.py", &["status"])
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .is_some_and(|value| apply_adapter_status(&mut GoogleSuiteStatus::default(), &value));
+        if !runtime_ready {
+            progress("Google 组件更新后权限发生变化，正在恢复并重新校验…");
+            run_script(device, adb, "manage.py", &["repair-runtime"])?;
+        }
+        progress("检查 Google 通用登录与组件更新恢复…");
+        run_script(device, adb, "health.py", &["repair"])?;
+    }
     progress("重新读取 Google 服务与兼容补丁状态…");
     let status =
         inspect(device, adb).with_context(|| format!("{message} 状态回读未完成，请重新检测"))?;
@@ -382,6 +396,12 @@ pub fn change_compatibility(
             "兼容补丁状态回读与操作结果不一致，请点击检测状态：{}",
             status.compatibility_note
         );
+    }
+    if !rollback && !status.boot_module_ready {
+        bail!("Google 服务修复后权限回读未通过，请查看检测详情");
+    }
+    if !rollback && status.health_needs_repair {
+        bail!("Google 通用登录或应用链接验证尚未恢复，请查看分项检测结果；账号和数据已保留");
     }
     Ok((status, message))
 }
@@ -397,7 +417,8 @@ pub fn apply_adapter_status(status: &mut GoogleSuiteStatus, value: &serde_json::
         && status.pid_matches
         && status.system_server_pid > 0
         && count >= 120
-        && value["all_checked_granted"].as_bool() == Some(true);
+        && value["all_checked_granted"].as_bool() == Some(true)
+        && value["current_permissions_granted"].as_bool() == Some(true);
     status.granted_count = if ready { count } else { 0 };
     status.boot_module_ready = ready;
     ready
@@ -522,7 +543,7 @@ pub fn inspect(device: &Device, adb: &Adb) -> Result<GoogleSuiteStatus> {
         let value: serde_json::Value =
             serde_json::from_str(&run_script(device, adb, "manage.py", &["status"])?)?;
         if !apply_adapter_status(&mut status, &value) {
-            bail!("当前启动的权限校验未通过");
+            bail!("当前 Google 权限已失效或未恢复；组件更新后请点击「修复 Google 服务」");
         }
         let package_state: serde_json::Value =
             serde_json::from_str(&run_script(device, adb, "package_state.py", &[])?)?;
@@ -541,6 +562,28 @@ pub fn inspect(device: &Device, adb: &Adb) -> Result<GoogleSuiteStatus> {
             "三件套已安装，适配状态未确认。请解锁手机并确认 StepClaw 可用，再检测。原因：{e}"
         ),
     };
+    match run_script(device, adb, "health.py", &["status"])
+        .and_then(|raw| Ok(serde_json::from_str::<serde_json::Value>(&raw)?))
+    {
+        Ok(report) => {
+            status.health_needs_repair = report["needs_repair"].as_bool().unwrap_or(true);
+            status.google_accounts = report["account_count"].as_u64().unwrap_or(0) as u32;
+            if let Some(checks) = report["checks"].as_array() {
+                status.health_checks = checks.iter().filter_map(|c| Some(crate::device::GoogleHealthCheck {
+                    title: c["title"].as_str()?.to_string(),
+                    state: c["state"].as_str()?.to_string(),
+                    detail: c["detail"].as_str()?.to_string(),
+                })).collect();
+            }
+        }
+        Err(_) => {
+            status.health_needs_repair = true;
+            status.health_checks.push(crate::device::GoogleHealthCheck {
+                title: "通用登录检测".into(), state: "unknown".into(),
+                detail: "读取未完成，请重新检测；不会据此清除账号或重新安装".into(),
+            });
+        }
+    }
     Ok(status)
 }
 
@@ -621,6 +664,19 @@ pub fn install(device: &Device, adb: &Adb, progress: impl Fn(&str)) -> Result<Go
     } else if plan == GoogleInstallPlan::Existing && !google.compatibility_active {
         message.push(' ');
         message.push_str(&google.compatibility_note);
+    }
+    if plan == GoogleInstallPlan::Existing && google.compatibility_supported && !google.boot_module_ready {
+        progress("恢复 Google 组件更新后的运行权限…");
+        run_script(device, adb, "manage.py", &["repair-runtime"])?;
+        google = inspect(device, adb)?;
+        if !google.boot_module_ready {
+            bail!("Google 服务恢复后校验未通过，请查看检测详情");
+        }
+    }
+    if google.compatibility_supported && google.installed && google.health_needs_repair {
+        progress("完善通用 Google 登录与组件更新恢复…");
+        run_script(device, adb, "health.py", &["repair"])?;
+        google = inspect(device, adb)?;
     }
     Ok(GoogleInstallResult {
         google,
@@ -802,7 +858,8 @@ mod tests {
     #[test]
     fn missing_or_stale_adapter_evidence_never_passes() {
         let valid = serde_json::json!({"status":"success", "detached":true, "current_pid_matches":true,
-            "current_boot_matches":true, "permission_checks":153, "all_checked_granted":true, "target_pid":123});
+            "current_boot_matches":true, "permission_checks":153, "all_checked_granted":true,
+            "current_permissions_granted":true, "target_pid":123});
         assert!(apply_adapter_status(
             &mut GoogleSuiteStatus::default(),
             &valid
@@ -814,6 +871,7 @@ mod tests {
             "current_boot_matches",
             "permission_checks",
             "all_checked_granted",
+            "current_permissions_granted",
             "target_pid",
         ] {
             let mut missing = valid.clone();

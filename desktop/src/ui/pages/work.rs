@@ -378,7 +378,12 @@ impl Companion {
                 Action::CopyText(body.clone(), "已复制回复".into()),
             ));
         }
-        if !user && !body.is_empty() {meta.push(self.speech_icon(format!("work-speech:{}:{index}",self.amoo_session_idx),body.clone()));}
+        if !user && !body.is_empty() {
+            meta.push(self.speech_icon(
+                format!("work-speech:{}:{index}", self.amoo_session_idx),
+                body.clone(),
+            ));
+        }
         let mut children = vec![self.between(
             self.hstack(
                 S2,
@@ -411,7 +416,10 @@ impl Companion {
             children.push(if user {
                 self.text(body.clone(), BODY, p.text)
             } else {
-                self.work_rich_text(&self.live_reply_text(index,&body), &format!("message-{index}"))
+                self.work_rich_text(
+                    &self.live_reply_text(index, &body),
+                    &format!("message-{index}"),
+                )
             });
         }
         Container::new(self.vstack(S2, children))
@@ -450,11 +458,7 @@ impl Companion {
                         &value,
                         caret,
                         F_WORK_PROMPT,
-                        if is_empty {
-                            p.text3
-                        } else {
-                            p.text
-                        },
+                        if is_empty { p.text3 } else { p.text },
                     ),
                 ))
                 .with_horizontal_padding(S1)
@@ -469,7 +473,12 @@ impl Companion {
         .with_cursor(Cursor::IBeam)
         .with_defer_events_to_children()
         .on_mouse_down(|ctx, _, _| ctx.dispatch_typed_action(Action::Focus(F_WORK_PROMPT)))
-        .on_right_click(|ctx, _, at| ctx.dispatch_typed_action(Action::ContextOpen(crate::ui::context_menu::Target::Input(F_WORK_PROMPT), at)))
+        .on_right_click(|ctx, _, at| {
+            ctx.dispatch_typed_action(Action::ContextOpen(
+                crate::ui::context_menu::Target::Input(F_WORK_PROMPT),
+                at,
+            ))
+        })
         .finish()
     }
 

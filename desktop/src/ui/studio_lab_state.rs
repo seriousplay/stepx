@@ -179,10 +179,19 @@ impl Companion {
                 studio_lab::LabEvent::Phone(event) => match event {
                     stepx_companion::work::WorkEvent::SessionReady(key) => {
                         self.workspace_bind_session(&key);
-                        if !self.amoo_sessions.iter().any(|s| s.session_key == key) { self.apply(Outcome::AmooCreated(key)); }
+                        if !self.amoo_sessions.iter().any(|s| s.session_key == key) {
+                            self.apply(Outcome::AmooCreated(key));
+                        }
                     }
-                    stepx_companion::work::WorkEvent::ModelResponse { data, key, run_id, elapsed_ms } => {
-                        if self.amoo_ui.account_scope == data.account_scope { self.record_work_response(&data, &key, &run_id, elapsed_ms); }
+                    stepx_companion::work::WorkEvent::ModelResponse {
+                        data,
+                        key,
+                        run_id,
+                        elapsed_ms,
+                    } => {
+                        if self.amoo_ui.account_scope == data.account_scope {
+                            self.record_work_response(&data, &key, &run_id, elapsed_ms);
+                        }
                     }
                     _ => {}
                 },
@@ -202,17 +211,26 @@ impl Companion {
                     // handle cancels its worker, even when an earlier round passed.
                     self.studio_lab.handle = None;
                     self.studio_lab.status = "作品已完成，本机自动检查通过".into();
-                    self.workspace_finish(stepx_companion::amoo_workspace::Phase::Done,self.studio_lab.status.clone());
+                    self.workspace_finish(
+                        stepx_companion::amoo_workspace::Phase::Done,
+                        self.studio_lab.status.clone(),
+                    );
                     self.studio_lab.error = None;
                 }
                 studio_lab::LabEvent::Failed(note) => {
-                    self.workspace_finish(stepx_companion::amoo_workspace::Phase::Failed,note.clone());
+                    self.workspace_finish(
+                        stepx_companion::amoo_workspace::Phase::Failed,
+                        note.clone(),
+                    );
                     self.studio_lab.handle = None;
                     self.studio_lab.error = Some(note.clone());
                     self.studio_lab.status = note;
                 }
                 studio_lab::LabEvent::Cancelled => {
-                    self.workspace_finish(stepx_companion::amoo_workspace::Phase::Stopped,"已停止，已生成版本保留在电脑".into());
+                    self.workspace_finish(
+                        stepx_companion::amoo_workspace::Phase::Stopped,
+                        "已停止，已生成版本保留在电脑".into(),
+                    );
                     self.studio_lab.handle = None;
                     self.studio_lab.status = "已停止，已生成的版本保留在本机".into();
                 }
@@ -223,10 +241,13 @@ impl Companion {
             self.studio_lab.error =
                 Some("创作进程已结束，未收到完成结果；已保存的版本仍可检查与继续改进".into());
             self.studio_lab.status = "任务未完成".into();
-            self.workspace_finish(stepx_companion::amoo_workspace::Phase::Failed,self.studio_lab.error.clone().unwrap_or_default());
+            self.workspace_finish(
+                stepx_companion::amoo_workspace::Phase::Failed,
+                self.studio_lab.error.clone().unwrap_or_default(),
+            );
             changed = true;
         }
-        if !matches!(self.page,Page::Studio|Page::Amoo) || self.busy || self.demo_mode {
+        if !matches!(self.page, Page::Studio | Page::Amoo) || self.busy || self.demo_mode {
             return changed;
         }
         if !self.studio_lab.loaded {
@@ -260,7 +281,17 @@ impl Companion {
         changed
     }
     fn studio_lab_receive_artifact(&mut self, artifact: studio_lab::LabArtifact) {
-        self.workspace_output(stepx_companion::amoo_workspace::Output{path:artifact.html_path.clone(),name:artifact.name.clone(),kind:if artifact.passed{"应用 · 已检查"}else{"应用 · 待修复"}.into(),lab_id:Some(artifact.id.clone())});
+        self.workspace_output(stepx_companion::amoo_workspace::Output {
+            path: artifact.html_path.clone(),
+            name: artifact.name.clone(),
+            kind: if artifact.passed {
+                "应用 · 已检查"
+            } else {
+                "应用 · 待修复"
+            }
+            .into(),
+            lab_id: Some(artifact.id.clone()),
+        });
         self.studio_lab.status = artifact.summary.clone();
         self.studio_lab.artifacts.retain(|a| a.id != artifact.id);
         self.studio_lab.artifacts.insert(0, artifact);
@@ -329,7 +360,9 @@ impl Companion {
                     return;
                 }
                 let use_phone = !self.studio_lab.config.has_key;
-                if !use_phone && (self.studio_lab.config.model.is_empty() || self.studio_lab_config_dirty()) {
+                if !use_phone
+                    && (self.studio_lab.config.model.is_empty() || self.studio_lab_config_dirty())
+                {
                     self.studio_lab.error =
                         Some("请先在连接设置中保存自己的模型 API 与模型名称".into());
                     self.studio.tab = 3;
@@ -345,13 +378,22 @@ impl Companion {
                 let phone = if use_phone {
                     match self.selected.clone().zip(Adb::discover().ok()) {
                         Some((device, adb)) => Some((adb, device)),
-                        None => { self.studio_lab.error = Some("请连接手机使用 Amoo，或在模型设置保存自己的 API".into()); return; }
+                        None => {
+                            self.studio_lab.error =
+                                Some("请连接手机使用 Amoo，或在模型设置保存自己的 API".into());
+                            return;
+                        }
                     }
-                } else { None };
-                self.studio_lab.handle = Some(studio_lab::start_with_phone(studio_lab::LabRequest {
-                    prompt,
-                    source: self.studio_lab.source.clone(),
-                }, phone));
+                } else {
+                    None
+                };
+                self.studio_lab.handle = Some(studio_lab::start_with_phone(
+                    studio_lab::LabRequest {
+                        prompt,
+                        source: self.studio_lab.source.clone(),
+                    },
+                    phone,
+                ));
             }
             A::Stop => {
                 if let Some(handle) = &self.studio_lab.handle {
@@ -555,7 +597,10 @@ impl Companion {
     }
     fn studio_lab_apply_saved_config(&mut self, config: studio_lab::PublicConfig) {
         self.fields[F_LAB_KEY].clear();
-        self.record_notice("Studio 模型设置已保存","后续任务将使用已确认的模型服务；密钥仅保存在本机。");
+        self.record_notice(
+            "Studio 模型设置已保存",
+            "后续任务将使用已确认的模型服务；密钥仅保存在本机。",
+        );
         if self
             .studio_lab
             .pending_config
@@ -673,7 +718,16 @@ impl Companion {
                     }
                 }
                 if let Some(id) = artifact_id {
-                    self.workspace_app_receipt(&id,&serial,None,result.clone().unwrap_or_else(|e|format!("手机交付未完成：{e}")),result.is_ok(),None);
+                    self.workspace_app_receipt(
+                        &id,
+                        &serial,
+                        None,
+                        result
+                            .clone()
+                            .unwrap_or_else(|e| format!("手机交付未完成：{e}")),
+                        result.is_ok(),
+                        None,
+                    );
                     self.studio_lab.phone_feedback.insert((serial, id), result);
                 }
             }
@@ -728,8 +782,25 @@ impl Companion {
                         }
                     }
                 };
-                self.workspace_app_receipt(&artifact_id,&serial,Some(scope.clone()),feedback.note.clone().or(feedback.error.clone()).unwrap_or_default(),feedback.receipt.is_some(),feedback.receipt.as_ref().map(|r|r.editor_url.clone()).or(feedback.recovery_url.clone()));
-                self.studio_lab.cloud_feedback.insert((serial, scope, artifact_id), feedback);
+                self.workspace_app_receipt(
+                    &artifact_id,
+                    &serial,
+                    Some(scope.clone()),
+                    feedback
+                        .note
+                        .clone()
+                        .or(feedback.error.clone())
+                        .unwrap_or_default(),
+                    feedback.receipt.is_some(),
+                    feedback
+                        .receipt
+                        .as_ref()
+                        .map(|r| r.editor_url.clone())
+                        .or(feedback.recovery_url.clone()),
+                );
+                self.studio_lab
+                    .cloud_feedback
+                    .insert((serial, scope, artifact_id), feedback);
                 self.studio.cloud_checked = None;
             }
         }

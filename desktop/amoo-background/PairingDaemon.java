@@ -27,6 +27,7 @@ public final class PairingDaemon extends Binder {
         if(signers.length!=1)throw new SecurityException("Companion signer mismatch");
         StringBuilder hash=new StringBuilder();for(byte value:MessageDigest.getInstance("SHA-256").digest(signers[0].toByteArray()))hash.append(String.format(java.util.Locale.ROOT,"%02x",value&255));
         if(!certificate.equals(hash.toString()))throw new SecurityException("Companion certificate mismatch");
+        if(pm.checkPermission("android.permission.MANAGE_DEBUGGING",PACKAGE)!=PackageManager.PERMISSION_GRANTED||pm.checkPermission("android.permission.WRITE_SECURE_SETTINGS",PACKAGE)!=PackageManager.PERMISSION_GRANTED)throw new SecurityException("Companion pairing permission revoked");
     }
     @Override protected boolean onTransact(int code,Parcel data,Parcel reply,int flags)throws RemoteException{
         if(code==INTERFACE_TRANSACTION){reply.writeString(DESCRIPTOR);return true;}
@@ -36,13 +37,17 @@ public final class PairingDaemon extends Binder {
         if(caller!=companionUid)throw new SecurityException("Untrusted pairing caller");
         String raw=data.readString();
         if(raw==null||raw.length()>2048||data.dataAvail()!=0)throw new SecurityException("Invalid pairing request");
-        JSONObject result;long identity=Binder.clearCallingIdentity();
+        // In system_server, IAdbManager is a local Binder. Preserve the verified
+        // companion caller so its granted MANAGE_DEBUGGING is checked by Android.
+        // The shell fallback uses its own shell identity as before.
+        boolean shellIdentity=android.os.Process.myUid()==2000;
+        JSONObject result;long identity=shellIdentity?Binder.clearCallingIdentity():0;
         try{
             verifyCompanion();
             result=ScopedPairing.handle(context,new JSONObject(raw)).put("ok",true);
         }catch(Exception e){
             result=new JSONObject();try{result.put("ok",false).put("error",e.getMessage()==null?"安全配对未完成":e.getMessage());}catch(Exception ignored){}
-        }finally{Binder.restoreCallingIdentity(identity);}
+        }finally{if(shellIdentity)Binder.restoreCallingIdentity(identity);}
         try{result.put("version",1).put("service",SERVICE).put("pid",android.os.Process.myPid()).put("processUid",android.os.Process.myUid()).put("uid",companionUid);}catch(Exception ignored){}
         reply.writeNoException();reply.writeString(result.toString());return true;
     }
@@ -62,6 +67,27 @@ public final class PairingDaemon extends Binder {
         message=message.replaceAll("[A-Za-z0-9_-]{20,}","[redacted]");if(message.length()>200)message=message.substring(0,200);
         String line="StepXPairing stage="+attachStage+" error="+source.getClass().getSimpleName()+": "+message;
         System.err.println(line);android.util.Log.w("StepXPairing",line);
+    }
+    /** Installed only by the pinned boot grant after package/signature validation. */
+    public static void installSystem(String certificate,int uid)throws Exception{
+        if(android.os.Process.myUid()!=1000||Build.VERSION.SDK_INT!=36)throw new SecurityException("System pairing context required");
+        Class<?> threadType=Class.forName("android.app.ActivityThread");
+        Object thread=threadType.getMethod("currentActivityThread").invoke(null);
+        Context context=(Context)threadType.getMethod("getSystemContext").invoke(thread);
+        PairingDaemon daemon=new PairingDaemon(context,certificate,uid);
+        // A deliberate repair can replace our old boot instance without restarting Android.
+        for(java.util.Map.Entry<Thread,StackTraceElement[]> entry:Thread.getAllStackTraces().entrySet()){
+            if(!"StepXBootPairing".equals(entry.getKey().getName()))continue;
+            for(StackTraceElement frame:entry.getValue())if(frame.getClassName().startsWith("stepx.PairingDaemon")){entry.getKey().interrupt();break;}
+        }
+        Thread registration=new Thread(()->{
+            // User 0's encrypted app data may be locked at startup. Register after unlock,
+            // without opening its activity or modifying the user's lockscreen.
+            while(true){try{
+                if(context.getSystemService(UserManager.class).isUserUnlocked())daemon.attach();
+            }catch(SecurityException revoked){daemon.diagnostic(revoked);return;}catch(Exception unavailable){daemon.diagnostic(unavailable);}
+                try{Thread.sleep(10000);}catch(InterruptedException stopped){return;}}
+        },"StepXBootPairing");registration.setDaemon(true);registration.start();
     }
     public static void main(String[] args)throws Exception{
         if(android.os.Process.myUid()!=2000||Build.VERSION.SDK_INT!=36||args.length!=2||!args[0].matches("[0-9a-f]{64}")||!args[1].matches("[0-9]{5}"))throw new SecurityException("Unsupported pairing service identity");

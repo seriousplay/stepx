@@ -22,6 +22,7 @@ public final class AmooConnectionService extends Service {
     private static final String FINGERPRINT="StepX/pandora/pandora:16/BQ2A.260122.002-BP2A.250705.008/172:user/release-keys";
     private static final String MESSAGE_PERMISSION="com.stepos.cloud.push.permission.MESSAGE";
     private static final String[] PERMISSIONS={"com.stepos.permission.MANAGE_BACK_SCREEN","android.permission.MANAGE_DEBUGGING","android.permission.WRITE_SECURE_SETTINGS","android.permission.CAMERA","android.permission.POST_NOTIFICATIONS","android.permission.READ_PHONE_STATE","android.permission.WAKE_LOCK","android.permission.FOREGROUND_SERVICE","android.permission.FOREGROUND_SERVICE_SPECIAL_USE","android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE","android.permission.INTERNET","android.permission.ACCESS_NETWORK_STATE","android.permission.ACCESS_WIFI_STATE","android.permission.CHANGE_NETWORK_STATE",MESSAGE_PERMISSION};
+    static boolean permissionsGranted(Context context){for(String permission:PERMISSIONS)if(context.checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)return false;return true;}
     private final Handler main=new Handler(Looper.getMainLooper());
     private final AmooLeaseState leases=new AmooLeaseState();
     private final Set<String> oneShot=new HashSet<>(),oneShotDone=new HashSet<>();

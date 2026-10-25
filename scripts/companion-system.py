@@ -45,6 +45,17 @@ def record_path():
     return STATE / (hashlib.sha256(permissions.ADB[-1].encode()).hexdigest()[:24] + '.json')
 
 
+def system_session():
+    pid = permissions.shell('pidof', 'system_server').strip()
+    if not pid.isdigit() or int(pid) < 2:
+        raise RuntimeError('Unable to verify Android system service session')
+    stat = permissions.shell('cat', '/proc/' + pid + '/stat')
+    start = stat.rsplit(')', 1)[1].split()[19]
+    if not start.isdigit():
+        raise RuntimeError('Invalid Android system service start time')
+    return {'pid': int(pid), 'start_ticks': start}
+
+
 def preflight(apk):
     companion = permissions.inspect(apk)
     if not companion.get('signature_verified'):
@@ -61,6 +72,7 @@ def preflight(apk):
             'dex_sha256': hashlib.sha256(payload).hexdigest(),
             'serial': permissions.ADB[-1], 'fingerprint': permissions.CONFIG['fingerprint'],
             'boot_id': permissions.shell('cat', '/proc/sys/kernel/random/boot_id'),
+            'system_session': system_session(),
             'scope': 'current_device_session', 'reboot_verified': False,
             'native_injection': False, 'google_launcher_changed': False}
 
@@ -135,13 +147,14 @@ def status(apk):
             'running': bool(prior), 'process': prior.get('process') if prior else None,
             'artifact_current': bool(prior and prior['dex_sha256'] == identity['dex_sha256'] and
                                      prior['signer'] == identity['signer'] and
-                                     prior['companion_uid'] == identity['companion_uid'])}
+                                     prior['companion_uid'] == identity['companion_uid'] and
+                                     prior.get('system_session') == identity['system_session'])}
 
 
 def start(apk):
     identity = preflight(apk); prior = saved_service(identity)
     if prior:
-        if any(prior.get(k) != identity.get(k) for k in ('dex_sha256', 'signer', 'companion_uid')):
+        if any(prior.get(k) != identity.get(k) for k in ('dex_sha256', 'signer', 'companion_uid', 'system_session')):
             raise RuntimeError('Stop the verified old pairing service before installing the new artifact')
         return {**identity, 'status': 'already_running', 'process': prior['process'], 'running': True}
     directory = shlex.quote(DIRECTORY)

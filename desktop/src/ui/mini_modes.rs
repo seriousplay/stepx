@@ -280,7 +280,11 @@ impl Companion {
             self.hstack(S1, controls),
         ))
         .with_horizontal_padding(S3)
-        .with_vertical_padding(if self.workspace.viewport.y() < 520. { S2 } else { S3 })
+        .with_vertical_padding(if self.workspace.viewport.y() < 520. {
+            S2
+        } else {
+            S3
+        })
         .finish();
         let tabs = self.segmented(
             "compact-tabs",
@@ -297,12 +301,21 @@ impl Companion {
                 ),
             ],
         );
-        let links = self.button_icon("compact-workspace-history","会话记录",UiIcon::Clock,Action::Workspace(WorkspaceAction::History),Btn::Ghost);
+        let links = self.button_icon(
+            "compact-workspace-history",
+            "会话记录",
+            UiIcon::Clock,
+            Action::Workspace(WorkspaceAction::History),
+            Btn::Ghost,
+        );
         let nav = Container::new(self.between(tabs, links))
             .with_horizontal_padding(S3)
             .with_padding_bottom(S2)
             .finish();
-        let body = if self.selected.is_none() && !self.demo_mode && self.push.shell_mode==ShellMode::MiniNotify {
+        let body = if self.selected.is_none()
+            && !self.demo_mode
+            && self.push.shell_mode == ShellMode::MiniNotify
+        {
             self.empty(
                 "连接手机后开始使用",
                 "Amoo 对话与通知直接同步手机数据。",
@@ -318,11 +331,42 @@ impl Companion {
         } else {
             self.workspace_page(true)
         };
-        let footer = ConstrainedBox::new(Container::new(self.between(self.lead(S2,
-            self.fixed_w(18., Align::new(if self.footer_loading() { self.loading_line() } else { self.dot(if self.error { p.danger } else if self.selected.is_some() { p.success } else { p.text3 }) }).finish()),
-            self.line(Self::truncate_chars(&self.footer_detail(), 72), MICRO, if self.error { p.danger } else { p.text3 }),
-        ),self.desktop_update_link())).with_horizontal_padding(S3).with_vertical_padding(5.)
-        .with_border(Border::top(1.).with_border_color(p.border)).finish()).with_height(28.).finish();
+        let footer = ConstrainedBox::new(
+            Container::new(
+                self.between(
+                    self.lead(
+                        S2,
+                        self.fixed_w(
+                            18.,
+                            Align::new(if self.footer_loading() {
+                                self.loading_line()
+                            } else {
+                                self.dot(if self.error {
+                                    p.danger
+                                } else if self.selected.is_some() {
+                                    p.success
+                                } else {
+                                    p.text3
+                                })
+                            })
+                            .finish(),
+                        ),
+                        self.line(
+                            Self::truncate_chars(&self.footer_detail(), 72),
+                            MICRO,
+                            if self.error { p.danger } else { p.text3 },
+                        ),
+                    ),
+                    self.desktop_update_link(),
+                ),
+            )
+            .with_horizontal_padding(S3)
+            .with_vertical_padding(5.)
+            .with_border(Border::top(1.).with_border_color(p.border))
+            .finish(),
+        )
+        .with_height(28.)
+        .finish();
         Container::new(
             Flex::column()
                 .with_main_axis_size(MainAxisSize::Max)
@@ -399,9 +443,16 @@ impl Companion {
             Expanded::new(
                 1.,
                 if self.compact.history {
-                    self.pane_scroll(self.scroll_aux.clone(), Container::new(content).with_uniform_padding(S3).finish())
+                    self.pane_scroll(
+                        self.scroll_aux.clone(),
+                        Container::new(content).with_uniform_padding(S3).finish(),
+                    )
                 } else {
-                    self.chat_scroll(Container::new(self.selectable_messages(content)).with_uniform_padding(S3).finish())
+                    self.chat_scroll(
+                        Container::new(self.selectable_messages(content))
+                            .with_uniform_padding(S3)
+                            .finish(),
+                    )
                 },
             )
             .finish(),

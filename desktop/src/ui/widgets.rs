@@ -278,7 +278,7 @@ impl Companion {
             row = row.on_double_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()));
         }
         let control = row.finish();
-        #[cfg(feature="ui-capture")]
+        #[cfg(feature = "ui-capture")]
         let control = super::scenario_check::control(id, control);
         control
     }
@@ -432,12 +432,41 @@ impl Companion {
                 ),
                 Btn::DangerSolid => (p.danger, p.danger, p.on_accent),
             };
-            let resting = match kind { Btn::Primary => p.accent, Btn::Ghost => ColorU::transparent_black(), Btn::DangerSolid => p.danger, _ => p.bg };
-            let t = if self.settings.value.reduced_motion { if hovered {1.} else {0.} } else {mouse.hover_progress()};
-            let mix = |a:u8,b:u8| (a as f32+(b as f32-a as f32)*t) as u8;
-            let hover_bg=match kind {Btn::Primary=>p.accent_hover,Btn::Danger=>p.danger_soft,Btn::DangerSolid=>p.danger,_=>p.hover};
-            let mut bg=ColorU::new(mix(resting.r,hover_bg.r),mix(resting.g,hover_bg.g),mix(resting.b,hover_bg.b),mix(resting.a,hover_bg.a));
-            if mouse.is_clicked() { bg = if matches!(kind, Btn::Primary) { p.accent_hover } else { p.accent_soft }; }
+            let resting = match kind {
+                Btn::Primary => p.accent,
+                Btn::Ghost => ColorU::transparent_black(),
+                Btn::DangerSolid => p.danger,
+                _ => p.bg,
+            };
+            let t = if self.settings.value.reduced_motion {
+                if hovered {
+                    1.
+                } else {
+                    0.
+                }
+            } else {
+                mouse.hover_progress()
+            };
+            let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t) as u8;
+            let hover_bg = match kind {
+                Btn::Primary => p.accent_hover,
+                Btn::Danger => p.danger_soft,
+                Btn::DangerSolid => p.danger,
+                _ => p.hover,
+            };
+            let mut bg = ColorU::new(
+                mix(resting.r, hover_bg.r),
+                mix(resting.g, hover_bg.g),
+                mix(resting.b, hover_bg.b),
+                mix(resting.a, hover_bg.a),
+            );
+            if mouse.is_clicked() {
+                bg = if matches!(kind, Btn::Primary) {
+                    p.accent_hover
+                } else {
+                    p.accent_soft
+                };
+            }
             Container::new(
                 ConstrainedBox::new(
                     Align::new({
@@ -465,7 +494,7 @@ impl Companion {
         .with_cursor(Cursor::PointingHand)
         .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()))
         .finish();
-        #[cfg(feature="ui-capture")]
+        #[cfg(feature = "ui-capture")]
         let control = super::scenario_check::control(id, control);
         control
     }
@@ -607,10 +636,11 @@ impl Companion {
                 )
                 .with_color(color)
                 .with_line_height_ratio(1.45);
-                let local_caret = (caret >= offset && caret <= offset + chars).then(|| caret - offset);
+                let local_caret =
+                    (caret >= offset && caret <= offset + chars).then(|| caret - offset);
                 offset += chars + 1;
                 let element = self.editable_line(text, line, byte_offset, index, local_caret);
-                byte_offset += line.len()+1;
+                byte_offset += line.len() + 1;
                 element
             })
             .collect();
@@ -666,13 +696,13 @@ impl Companion {
             } else {
                 p.surface_border
             };
-            Container::new(
-                {
-                    let text = Text::new(value.clone(), font, BODY)
-                        .with_color(text_color).soft_wrap(false).with_clip(ClipConfig::ellipsis());
-                    self.editable_line(text, &value, 0, index, Some(caret_index))
-                },
-            )
+            Container::new({
+                let text = Text::new(value.clone(), font, BODY)
+                    .with_color(text_color)
+                    .soft_wrap(false)
+                    .with_clip(ClipConfig::ellipsis());
+                self.editable_line(text, &value, 0, index, Some(caret_index))
+            })
             .with_horizontal_padding(10.)
             .with_vertical_padding(6.)
             .with_background_color(if selected_all {
@@ -687,7 +717,12 @@ impl Companion {
         .with_cursor(Cursor::IBeam)
         .with_defer_events_to_children()
         .on_mouse_down(move |ctx, _, _| ctx.dispatch_typed_action(Action::Focus(index)))
-        .on_right_click(move |ctx, _, at| ctx.dispatch_typed_action(Action::ContextOpen(crate::ui::context_menu::Target::Input(index), at)))
+        .on_right_click(move |ctx, _, at| {
+            ctx.dispatch_typed_action(Action::ContextOpen(
+                crate::ui::context_menu::Target::Input(index),
+                at,
+            ))
+        })
         .finish();
 
         match width {

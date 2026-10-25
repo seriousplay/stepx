@@ -121,8 +121,15 @@ pub fn desktop_id() -> Result<String> {
 }
 pub fn receive_directory() -> Result<PathBuf> {
     let path = crate::settings::downloads();
-    if crate::settings::load().download_directory.is_some() { ensure!(path.is_dir(), "接收目录不可用，请在设置中重新选择；未改存到其他位置"); }
-    if crate::settings::load().download_directory.is_none() {private_dir(&path)?;}
+    if crate::settings::load().download_directory.is_some() {
+        ensure!(
+            path.is_dir(),
+            "接收目录不可用，请在设置中重新选择；未改存到其他位置"
+        );
+    }
+    if crate::settings::load().download_directory.is_none() {
+        private_dir(&path)?;
+    }
     Ok(path)
 }
 pub(crate) fn digest(path: &Path) -> Result<String> {
@@ -245,20 +252,73 @@ pub fn send_files(adb: &Adb, device: &Device, paths: &[PathBuf]) -> Result<usize
     Ok(count)
 }
 /// Stable transfer ID permits retry after a lost acknowledgement without duplicates.
-pub fn send_staged(adb:&Adb,device:&Device,path:&Path,id:&str,hash:&str,size:u64)->Result<()> {
-    ensure!(valid_id(id),"无效传输标识");device.verify(adb)?;checked_base(adb,device)?;
-    let name=path.file_name().and_then(|n|n.to_str()).context("无效文件名")?;
-    ensure!(valid_name(name)&&size<=LIMIT&&fs::symlink_metadata(path)?.is_file(),"无效交付文件");
-    ensure!(fs::metadata(path)?.len()==size&&digest(path)?==hash,"本地交付缓存已变化，停止发送");
-    let desktop=desktop_id()?;let dir=format!("{BASE}/transfers/inbox/{id}");let target=format!("{dir}/{name}");let manifest=format!("{dir}/manifest.json");
-    if let Ok(m)=read_json(adb,device,&manifest){
-        ensure!(m["sourceDesktopId"].as_str()==Some(&desktop)&&m["sha256"].as_str()==Some(hash)&&m["name"].as_str()==Some(name),"传输标识已被其他文件占用");
-        if m["status"].as_str()==Some("ready") && adb.shell(&device.transport,&["sha256sum",&target])?.split_whitespace().next()==Some(hash){return Ok(());}
+pub fn send_staged(
+    adb: &Adb,
+    device: &Device,
+    path: &Path,
+    id: &str,
+    hash: &str,
+    size: u64,
+) -> Result<()> {
+    ensure!(valid_id(id), "无效传输标识");
+    device.verify(adb)?;
+    checked_base(adb, device)?;
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .context("无效文件名")?;
+    ensure!(
+        valid_name(name) && size <= LIMIT && fs::symlink_metadata(path)?.is_file(),
+        "无效交付文件"
+    );
+    ensure!(
+        fs::metadata(path)?.len() == size && digest(path)? == hash,
+        "本地交付缓存已变化，停止发送"
+    );
+    let desktop = desktop_id()?;
+    let dir = format!("{BASE}/transfers/inbox/{id}");
+    let target = format!("{dir}/{name}");
+    let manifest = format!("{dir}/manifest.json");
+    if let Ok(m) = read_json(adb, device, &manifest) {
+        ensure!(
+            m["sourceDesktopId"].as_str() == Some(&desktop)
+                && m["sha256"].as_str() == Some(hash)
+                && m["name"].as_str() == Some(name),
+            "传输标识已被其他文件占用"
+        );
+        if m["status"].as_str() == Some("ready")
+            && adb
+                .shell(&device.transport, &["sha256sum", &target])?
+                .split_whitespace()
+                .next()
+                == Some(hash)
+        {
+            return Ok(());
+        }
     }
-    adb.script(&device.transport,&format!("test ! -L {} && mkdir -p {} && test ! -L {}",shell_quote(&dir),shell_quote(&dir),shell_quote(&target)))?;
-    adb.transfer(&device.transport,"push",path,Path::new(&target))?;
-    ensure!(adb.shell(&device.transport,&["sha256sum",&target])?.split_whitespace().next()==Some(hash),"手机交付文件校验失败");
-    json_write(adb,device,&manifest,&json!({"protocol":1,"id":id,"name":name,"size":size,"sha256":hash,"status":"ready","createdAt":phone_now(adb,device)?,"sourceDesktopId":desktop,"computerName":"StepX Companion · Amoo Work"}))?;
+    adb.script(
+        &device.transport,
+        &format!(
+            "test ! -L {} && mkdir -p {} && test ! -L {}",
+            shell_quote(&dir),
+            shell_quote(&dir),
+            shell_quote(&target)
+        ),
+    )?;
+    adb.transfer(&device.transport, "push", path, Path::new(&target))?;
+    ensure!(
+        adb.shell(&device.transport, &["sha256sum", &target])?
+            .split_whitespace()
+            .next()
+            == Some(hash),
+        "手机交付文件校验失败"
+    );
+    json_write(
+        adb,
+        device,
+        &manifest,
+        &json!({"protocol":1,"id":id,"name":name,"size":size,"sha256":hash,"status":"ready","createdAt":phone_now(adb,device)?,"sourceDesktopId":desktop,"computerName":"StepX Companion · Amoo Work"}),
+    )?;
     Ok(())
 }
 
@@ -402,8 +462,22 @@ impl Link {
                     let result = if heartbeat_only {
                         heartbeat(&adb, &device).map(|_| 0)
                     } else {
-                        let result=receive_pending(&adb, &device);
-                        match crate::work_sync::process(&adb,&device){Ok(n) if n>0=>{let _=tx.send(LinkEvent{message:format!("Amoo Work 的 {n} 个成果已送达手机伴侣"),error:false});},Err(e)=>{let _=tx.send(LinkEvent{message:format!("成果等待重传：{e}"),error:true});},_=>{}}
+                        let result = receive_pending(&adb, &device);
+                        match crate::work_sync::process(&adb, &device) {
+                            Ok(n) if n > 0 => {
+                                let _ = tx.send(LinkEvent {
+                                    message: format!("Amoo Work 的 {n} 个成果已送达手机伴侣"),
+                                    error: false,
+                                });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(LinkEvent {
+                                    message: format!("成果等待重传：{e}"),
+                                    error: true,
+                                });
+                            }
+                            _ => {}
+                        }
                         result
                     };
                     match result {

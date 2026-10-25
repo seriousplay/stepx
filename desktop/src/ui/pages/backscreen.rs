@@ -68,10 +68,9 @@ impl Companion {
                 p.text,
                 Weight::Semibold,
             ),
-            Align::new(
-                self.hstack(
-                    S4,
-                    vec![
+            Align::new(self.hstack(
+                S4,
+                vec![
                         self.phone_rear_housing(100., 210., preview_frame, 3.6, 0.95),
                         ConstrainedBox::new(
                             self.vstack(
@@ -96,8 +95,7 @@ impl Companion {
                         .with_width(100.)
                         .finish(),
                     ],
-                ),
-            )
+            ))
             .finish(),
             self.mono("17 × 23 · 379 灯珠", MICRO, p.text2),
             self.bs_button(

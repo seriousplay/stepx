@@ -12,17 +12,34 @@ struct Check {
 }
 thread_local! { static CHECK: RefCell<Check> = RefCell::new(Check::default()); }
 
-fn key(ctx: &mut ViewContext<Companion>, dir: &std::path::Path, stage: usize, name: &str, shift: bool) {
+fn key(
+    ctx: &mut ViewContext<Companion>,
+    dir: &std::path::Path,
+    stage: usize,
+    name: &str,
+    shift: bool,
+) {
     if std::env::var_os("STEPX_ENTER_NATIVE").is_some() {
         // The external runner delivers native X11 keyboard events to this window.
-        std::fs::write(dir.join("native-event.json"), serde_json::json!({
-            "stage": stage, "key": name, "shift": shift, "pid": std::process::id()
-        }).to_string()).unwrap();
+        std::fs::write(
+            dir.join("native-event.json"),
+            serde_json::json!({
+                "stage": stage, "key": name, "shift": shift, "pid": std::process::id()
+            })
+            .to_string(),
+        )
+        .unwrap();
         return;
     }
     let event = Event::KeyDown {
-        keystroke: facloud_ui::keymap::Keystroke { key: name.into(), shift, ..Default::default() },
-        chars: String::new(), details: Default::default(), is_composing: false,
+        keystroke: facloud_ui::keymap::Keystroke {
+            key: name.into(),
+            shift,
+            ..Default::default()
+        },
+        chars: String::new(),
+        details: Default::default(),
+        is_composing: false,
     };
     raw(ctx, event);
 }
@@ -30,7 +47,9 @@ fn raw(ctx: &mut ViewContext<Companion>, event: Event) {
     let id = ctx.window_id();
     let sent = std::cell::Cell::new(false);
     ctx.on_frame_drawn(move |ctx, drawn| {
-        if drawn != id || sent.replace(true) { return; }
+        if drawn != id || sent.replace(true) {
+            return;
+        }
         let window = ctx.windows().platform_window(id).unwrap();
         (window.callbacks().event_callback)(event.clone(), ctx);
     });
@@ -38,7 +57,14 @@ fn raw(ctx: &mut ViewContext<Companion>, event: Event) {
 
 impl Companion {
     pub(super) fn verify_enter(&mut self, ctx: &mut ViewContext<Self>, live: bool) {
-        let Some(dir) = self.capture.as_ref().and_then(|p| p.parent()).map(PathBuf::from) else { return; };
+        let Some(dir) = self
+            .capture
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+        else {
+            return;
+        };
         CHECK.with(|cell| {
             let mut c = cell.borrow_mut();
             if c.stage == 99 { return; }

@@ -21,15 +21,35 @@ fn capture(ctx: &mut ViewContext<Companion>, path: PathBuf) {
 }
 impl Companion {
     pub(super) fn verify_workspace(&mut self, ctx: &mut ViewContext<Self>) {
-        if std::env::var_os("STEPX_SCENARIO_DIR").is_some() { self.scenario_tick(ctx); return; }
+        if std::env::var_os("STEPX_SCENARIO_DIR").is_some() {
+            self.scenario_tick(ctx);
+            return;
+        }
         let live = std::env::args().any(|a| a == "--verify-workspace-live");
         if !live && !std::env::args().any(|a| a == "--verify-workspace") {
             return;
         }
         assert_eq!(self.demo_mode, !live);
-        if std::env::var_os("STEPX_ENTER_TEST").is_some() { self.verify_enter(ctx, live); return; }
-        if std::env::var_os("STEPX_RESPONSIVE_TEST").is_some() { if live { self.verify_responsive_live(ctx); } else { self.verify_responsive(ctx); } return; }
-        if std::env::var_os("STEPX_CHAT_FIRST_TEST").is_some() { if live { self.verify_chat_first_live(ctx); } else { self.verify_chat_first(ctx); } return; }
+        if std::env::var_os("STEPX_ENTER_TEST").is_some() {
+            self.verify_enter(ctx, live);
+            return;
+        }
+        if std::env::var_os("STEPX_RESPONSIVE_TEST").is_some() {
+            if live {
+                self.verify_responsive_live(ctx);
+            } else {
+                self.verify_responsive(ctx);
+            }
+            return;
+        }
+        if std::env::var_os("STEPX_CHAT_FIRST_TEST").is_some() {
+            if live {
+                self.verify_chat_first_live(ctx);
+            } else {
+                self.verify_chat_first(ctx);
+            }
+            return;
+        }
         let Some(dir) = self
             .capture
             .as_ref()

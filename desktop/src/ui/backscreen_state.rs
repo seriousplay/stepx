@@ -926,7 +926,7 @@ impl Companion {
                     message,
                     mode,
                 } => {
-                    self.record_notice("背屏已应用",format!("{title} · {message}"));
+                    self.record_notice("背屏已应用", format!("{title} · {message}"));
                     self.back_screen.applied_title = title;
                     self.back_screen.applied_revision = Some(revision);
                     self.back_screen.applied_to_phone = true;
@@ -950,7 +950,7 @@ impl Companion {
                         self.selected.as_ref().map(|device| device.serial.clone());
                 }
                 CompanionEvent::Game { message, mode } => {
-                    self.record_notice("背屏游戏",message.clone());
+                    self.record_notice("背屏游戏", message.clone());
                     self.back_screen.companion_status = message.clone();
                     self.back_screen.applied_status = message;
                     self.back_screen.applied_to_phone = true;
@@ -972,7 +972,7 @@ impl Companion {
                     self.back_screen.companion_mode.clear();
                 }
                 CompanionEvent::Failed(message) => {
-                    self.record_notice("背屏操作未完成",message.clone());
+                    self.record_notice("背屏操作未完成", message.clone());
                     self.back_screen.error = Some(message.clone());
                     self.back_screen.status = message.clone();
                     self.back_screen.applied_status = "本次操作未完成，请检查连接后重试".into();

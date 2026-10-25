@@ -6,9 +6,17 @@ use stepx_companion::amoo_workspace::{Executor, Phase};
 
 impl Companion {
     fn workspace_column(&self, content: El, compact: bool, id: &str) -> El {
-        Align::new(ConstrainedBox::new(Container::new(SavePosition::new(content, id).for_single_frame().finish())
-            .with_horizontal_padding(if compact { 12. } else { 24. }).finish())
-            .with_max_width(928.).finish()).top_center().finish()
+        Align::new(
+            ConstrainedBox::new(
+                Container::new(SavePosition::new(content, id).for_single_frame().finish())
+                    .with_horizontal_padding(if compact { 12. } else { 24. })
+                    .finish(),
+            )
+            .with_max_width(928.)
+            .finish(),
+        )
+        .top_center()
+        .finish()
     }
     fn ws_button(&self, id: &str, label: &str, icon: UiIcon, action: W, kind: Btn) -> El {
         self.button_icon(
@@ -66,7 +74,9 @@ impl Companion {
                     .finish(),
             );
         }
-        if (compact || self.workspace.viewport.x() < 1080.) && (self.workspace.panel != 0 || self.workspace.history) {
+        if (compact || self.workspace.viewport.x() < 1080.)
+            && (self.workspace.panel != 0 || self.workspace.history)
+        {
             return self.workspace_side(compact);
         }
         let active = self.workspace_task();
@@ -79,44 +89,81 @@ impl Companion {
         if started {
             let title = active.map(|t| t.title.as_str()).unwrap_or("新对话");
             column = column.with_child(
-                self.workspace_column(Container::new(self.between(
-                    self.line_w(
-                        Self::truncate_chars(title, if compact { 20 } else { 32 }),
-                        SUBHEAD,
-                        p.text,
-                        Weight::Semibold,
-                    ),
-                    self.ws_button(
-                        "task-model",
-                        "模型与账号",
-                        UiIcon::ChevronDown,
-                        W::Menu(1),
-                        Btn::Ghost,
-                    ),
-                ))
-                .with_vertical_padding(if compact && self.workspace.viewport.y() < 520. { S2 } else { S3 })
-                .finish(), compact, "workspace-chat-heading"),
+                self.workspace_column(
+                    Container::new(self.between(
+                        self.line_w(
+                            Self::truncate_chars(title, if compact { 20 } else { 32 }),
+                            SUBHEAD,
+                            p.text,
+                            Weight::Semibold,
+                        ),
+                        self.ws_button(
+                            "task-model",
+                            "模型与账号",
+                            UiIcon::ChevronDown,
+                            W::Menu(1),
+                            Btn::Ghost,
+                        ),
+                    ))
+                    .with_vertical_padding(if compact && self.workspace.viewport.y() < 520. {
+                        S2
+                    } else {
+                        S3
+                    })
+                    .finish(),
+                    compact,
+                    "workspace-chat-heading",
+                ),
             );
             let content = self.workspace_thread();
             column = column.with_child(
                 Expanded::new(
                     1.,
                     self.chat_scroll(
-                        self.workspace_column(Container::new(self.selectable_messages(content)).with_padding_bottom(S4).finish(), compact, "workspace-chat-messages"),
+                        self.workspace_column(
+                            Container::new(self.selectable_messages(content))
+                                .with_padding_bottom(S4)
+                                .finish(),
+                            compact,
+                            "workspace-chat-messages",
+                        ),
                     ),
                 )
                 .finish(),
             );
             column = column.with_child(
-                Container::new(self.workspace_column(self.amoo_message_composer(compact, false), compact, "workspace-chat-input"))
-                    .with_vertical_padding(if compact && self.workspace.viewport.y() < 520. { S2 } else { S3 })
-                    .with_border(Border::top(1.).with_border_color(p.border))
-                    .finish(),
+                Container::new(self.workspace_column(
+                    self.amoo_message_composer(compact, false),
+                    compact,
+                    "workspace-chat-input",
+                ))
+                .with_vertical_padding(if compact && self.workspace.viewport.y() < 520. {
+                    S2
+                } else {
+                    S3
+                })
+                .with_border(Border::top(1.).with_border_color(p.border))
+                .finish(),
             );
         } else {
             let mut content = vec![
-                Align::new(self.line_w("你好，想聊些什么？", if compact { 24. } else { 30. }, p.text, Weight::Semibold)).finish(),
-                Align::new(self.text(if compact { "发消息，也可以添加图片和文件。" } else { "与手机 Amoo 对话，也可以发图片和文件一起聊。" }, BODY, p.text2)).finish(),
+                Align::new(self.line_w(
+                    "你好，想聊些什么？",
+                    if compact { 24. } else { 30. },
+                    p.text,
+                    Weight::Semibold,
+                ))
+                .finish(),
+                Align::new(self.text(
+                    if compact {
+                        "发消息，也可以添加图片和文件。"
+                    } else {
+                        "与手机 Amoo 对话，也可以发图片和文件一起聊。"
+                    },
+                    BODY,
+                    p.text2,
+                ))
+                .finish(),
                 self.amoo_message_composer(compact, false),
             ];
             if let Some(error) = &self.workspace.error {
@@ -129,19 +176,25 @@ impl Companion {
             let (editor, attachments) = self.composer_limits(compact);
             let minimum = if compact { 114. } else { 134. };
             let maximum = editor + attachments + 98.;
-            let top = ((available-intro-minimum)/2.).min(available-intro-maximum-16.).max(16.);
-            let welcome = self.workspace_column(Container::new(self.vstack(S4, content))
-                .with_padding_top(top).with_padding_bottom(16.).finish(), compact, "workspace-chat-welcome");
-            column = column.with_child(
-                Expanded::new(
-                    1.,
-                    self.chat_pane_scroll(welcome, false),
-                )
-                .finish(),
+            let top = ((available - intro - minimum) / 2.)
+                .min(available - intro - maximum - 16.)
+                .max(16.);
+            let welcome = self.workspace_column(
+                Container::new(self.vstack(S4, content))
+                    .with_padding_top(top)
+                    .with_padding_bottom(16.)
+                    .finish(),
+                compact,
+                "workspace-chat-welcome",
             );
+            column = column
+                .with_child(Expanded::new(1., self.chat_pane_scroll(welcome, false)).finish());
         }
         let main = column.finish();
-        if !compact && self.workspace.viewport.x() >= 1080. && (self.workspace.panel != 0 || self.workspace.history) {
+        if !compact
+            && self.workspace.viewport.x() >= 1080.
+            && (self.workspace.panel != 0 || self.workspace.history)
+        {
             Flex::row()
                 .with_main_axis_size(MainAxisSize::Max)
                 .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -273,7 +326,8 @@ impl Companion {
         let p = self.p();
         let mut rows = Vec::new();
         if let Some(task) = self.workspace_task() {
-            let phone_loaded = !task.steps.iter().any(|s| s.executor == Executor::App) && task.session.as_ref().is_some_and(|key| {
+            let phone_loaded = !task.steps.iter().any(|s| s.executor == Executor::App)
+                && task.session.as_ref().is_some_and(|key| {
                     self.amoo_sessions
                         .get(self.amoo_session_idx)
                         .is_some_and(|s| &s.session_key == key && !s.items.is_empty())
@@ -294,38 +348,111 @@ impl Companion {
                     );
                 }
             }
-            let running = self.workspace.running.as_ref().is_some_and(|r| r.task == task.id);
-            let failed = task.steps.iter().any(|s| matches!(s.phase, Phase::Failed | Phase::Stopped | Phase::Unconfirmed));
+            let running = self
+                .workspace
+                .running
+                .as_ref()
+                .is_some_and(|r| r.task == task.id);
+            let failed = task
+                .steps
+                .iter()
+                .any(|s| matches!(s.phase, Phase::Failed | Phase::Stopped | Phase::Unconfirmed));
             let has_work = task.steps.iter().any(|s| s.executor != Executor::Phone);
             // Ordinary chat has no workflow card. Pending is already shown in the composer.
             if has_work || failed {
                 let key = format!("workspace-log-{}", task.id);
                 let expanded = self.amoo_expanded_tool_records.contains(&key);
-                let label = if failed { "未完成 · 查看详情" } else if running { "正在处理 · 查看进度" } else { "处理完成 · 查看记录" };
+                let label = if failed {
+                    "未完成 · 查看详情"
+                } else if running {
+                    "正在处理 · 查看进度"
+                } else {
+                    "处理完成 · 查看记录"
+                };
                 let mut details = vec![self.between(
-                    self.button_icon("workspace-progress-details", label, if expanded { UiIcon::ChevronDown } else { UiIcon::ChevronRight }, Action::AmooToggleToolRecords(key), Btn::Ghost),
-                    if running { self.ws_button("stop", "停止", UiIcon::Close, W::Stop, Btn::Ghost) } else { self.line("", MICRO, p.text3) },
+                    self.button_icon(
+                        "workspace-progress-details",
+                        label,
+                        if expanded {
+                            UiIcon::ChevronDown
+                        } else {
+                            UiIcon::ChevronRight
+                        },
+                        Action::AmooToggleToolRecords(key),
+                        Btn::Ghost,
+                    ),
+                    if running {
+                        self.ws_button("stop", "停止", UiIcon::Close, W::Stop, Btn::Ghost)
+                    } else {
+                        self.line("", MICRO, p.text3)
+                    },
                 )];
                 if running && !expanded {
-                    if let Some(run)=&self.workspace.running {
-                        let status=match run.executor {Executor::Files=>self.work.status.as_str(),Executor::App=>self.studio_lab.status.as_str(),Executor::Image=>if self.work.status.contains("保存原图") {self.work.status.as_str()}else{"手机正在生成图片，收到原图后自动保存…"},Executor::Phone=>"手机正在回复…"};
-                        let brief=status.chars().take(140).collect::<String>();
-                        details.push(self.text(brief,CAPTION,p.text2));
+                    if let Some(run) = &self.workspace.running {
+                        let status = match run.executor {
+                            Executor::Files => self.work.status.as_str(),
+                            Executor::App => self.studio_lab.status.as_str(),
+                            Executor::Image => {
+                                if self.work.status.contains("保存原图") {
+                                    self.work.status.as_str()
+                                } else {
+                                    "手机正在生成图片，收到原图后自动保存…"
+                                }
+                            }
+                            Executor::Phone => "手机正在回复…",
+                        };
+                        let brief = status.chars().take(140).collect::<String>();
+                        details.push(self.text(brief, CAPTION, p.text2));
                     }
                 }
                 if expanded || failed {
                     for step in &task.steps {
-                        let label = match step.phase { Phase::Ready => "待开始", Phase::Running => "进行中", Phase::Done => "已完成", Phase::Failed => "未完成", Phase::Stopped => "已停止", Phase::Unconfirmed => "待核对" };
-                        details.push(self.text(format!("{} · {}", step.executor.label(), label), CAPTION, p.text2));
-                        if !step.note.is_empty() { details.push(self.text(&step.note, CAPTION, if failed { p.warning } else { p.text3 })); }
+                        let label = match step.phase {
+                            Phase::Ready => "待开始",
+                            Phase::Running => "进行中",
+                            Phase::Done => "已完成",
+                            Phase::Failed => "未完成",
+                            Phase::Stopped => "已停止",
+                            Phase::Unconfirmed => "待核对",
+                        };
+                        details.push(self.text(
+                            format!("{} · {}", step.executor.label(), label),
+                            CAPTION,
+                            p.text2,
+                        ));
+                        if !step.note.is_empty() {
+                            details.push(self.text(
+                                &step.note,
+                                CAPTION,
+                                if failed { p.warning } else { p.text3 },
+                            ));
+                        }
                         if step.phase == Phase::Running {
-                            let text = match step.executor { Executor::Files => &self.work.status, Executor::App => &self.studio_lab.status, _ => "正在等待手机返回结果" };
+                            let text = match step.executor {
+                                Executor::Files => &self.work.status,
+                                Executor::App => &self.studio_lab.status,
+                                _ => "正在等待手机返回结果",
+                            };
                             details.push(self.text(text, CAPTION, p.text2));
                         }
                     }
                 }
-                if failed { details.push(self.ws_button("retry", "核对后重试", UiIcon::Retry, W::Retry, Btn::Secondary)); }
-                rows.push(Container::new(self.vstack(S2, details)).with_uniform_padding(S2).with_background_color(p.surface).with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL))).finish());
+                if failed {
+                    details.push(self.ws_button(
+                        "retry",
+                        "核对后重试",
+                        UiIcon::Retry,
+                        W::Retry,
+                        Btn::Secondary,
+                    ));
+                }
+                rows.push(
+                    Container::new(self.vstack(S2, details))
+                        .with_uniform_padding(S2)
+                        .with_background_color(p.surface)
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+                        .finish(),
+                );
             }
             if !task.outputs.is_empty() {
                 rows.push(self.heading("生成的文件"));
@@ -386,7 +513,17 @@ impl Companion {
                                     S1,
                                     vec![
                                         self.line_w(step.label(), BODY, p.text, Weight::Medium),
-                                        self.line(if *step == Executor::App && !self.studio_lab.config.has_key { "手机 Amoo · 电脑生成与验证" } else { step.source() }, MICRO, p.text2),
+                                        self.line(
+                                            if *step == Executor::App
+                                                && !self.studio_lab.config.has_key
+                                            {
+                                                "手机 Amoo · 电脑生成与验证"
+                                            } else {
+                                                step.source()
+                                            },
+                                            MICRO,
+                                            p.text2,
+                                        ),
                                     ],
                                 ),
                             )
@@ -636,7 +773,13 @@ impl Companion {
                 Btn::Secondary,
             ),
             self.divider(),
-            self.ws_button("resource-model", "模型与账号", UiIcon::Cpu, W::Menu(1), Btn::Ghost),
+            self.ws_button(
+                "resource-model",
+                "模型与账号",
+                UiIcon::Cpu,
+                W::Menu(1),
+                Btn::Ghost,
+            ),
             self.ws_button(
                 "resource-capabilities",
                 "技能、智能体与 AI 应用",

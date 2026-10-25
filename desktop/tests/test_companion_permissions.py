@@ -61,7 +61,7 @@ class Guards(unittest.TestCase):
 
     def test_preflight_does_not_inject_or_install(self):
         with patch.object(adapter,'inspect',return_value={'installed':False}), patch.object(adapter,'guard'), patch.object(adapter,'signer',return_value='a'*64), patch.object(adapter,'shell',side_effect=['1','RUNNING_UNLOCKED','switch:1']), patch.object(adapter,'root_json',return_value={'root_available':True}) as root, patch.object(adapter,'inject') as inject:
-            result=adapter.preflight(Path('app.apk'))
+            result=adapter.preflight(Path('app.apk'),trusted_apk=Path('trusted.apk'))
             self.assertEqual(result['status'],'ready')
             self.assertFalse(result['boot_hook_installed'])
             inject.assert_not_called()

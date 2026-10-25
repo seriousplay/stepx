@@ -1,7 +1,6 @@
 //! One module per page. Each page exposes `<name>_page()` and `<name>_actions()`.
 
 mod about;
-mod settings;
 mod amoo;
 mod apps;
 mod backscreen;
@@ -11,13 +10,14 @@ mod files;
 mod notifications;
 mod overview;
 mod phone;
+mod settings;
 mod sms;
 mod studio;
 mod studio_lab;
 mod tools;
 mod work;
-mod workspace;
 mod work_rich_text;
+mod workspace;
 pub(super) use work_rich_text::markdown_images;
 
 use super::{theme::*, widgets::*, Companion, Page};

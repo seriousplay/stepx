@@ -1,43 +1,84 @@
 //! Opt-in acceptance of chat routing and anchored menus; never runs on ordinary launches.
 use super::*;
 use facloud_ui::TypedActionView;
-use stepx_companion::amoo_workspace::{Intent, Executor};
+use stepx_companion::amoo_workspace::{Executor, Intent};
 #[derive(Default)]
-struct Check { step: usize, last: Option<Instant>, start: Option<Instant>, task: String, attachment: PathBuf, captured: Option<usize> }
+struct Check {
+    step: usize,
+    last: Option<Instant>,
+    start: Option<Instant>,
+    task: String,
+    attachment: PathBuf,
+    captured: Option<usize>,
+}
 thread_local! { static CHAT_CHECK: RefCell<Check> = RefCell::new(Check::default()); }
 fn capture(ctx: &mut ViewContext<Companion>, path: PathBuf) {
     if let Some(w) = ctx.windows().platform_window(ctx.window_id()) {
-        w.as_ctx().request_frame_capture(Box::new(move |f| image::save_buffer(path, &f.data, f.width, f.height, image::ColorType::Rgba8).unwrap()));
+        w.as_ctx().request_frame_capture(Box::new(move |f| {
+            image::save_buffer(path, &f.data, f.width, f.height, image::ColorType::Rgba8).unwrap()
+        }));
     }
 }
 fn pointer(ctx: &mut ViewContext<Companion>, position: Vector2F) {
-    let id=ctx.window_id(); let sent=std::cell::Cell::new(false);
+    let id = ctx.window_id();
+    let sent = std::cell::Cell::new(false);
     // Deliver after this view update; dispatching while the view is borrowed
     // cannot reach its action handler. Exercise painted hit regions, not actions.
     ctx.on_frame_drawn(move |ctx, drawn| {
-        if id!=drawn || sent.replace(true) {return;}
-        let window=ctx.windows().platform_window(id).unwrap();
+        if id != drawn || sent.replace(true) {
+            return;
+        }
+        let window = ctx.windows().platform_window(id).unwrap();
         for event in [
-            Event::MouseMoved { position, cmd: false, shift: false, is_synthetic: false },
-            Event::LeftMouseDown { position, modifiers: Default::default(), click_count: 1, is_first_mouse: false },
-            Event::LeftMouseUp { position, modifiers: Default::default() },
-        ] { (window.callbacks().event_callback)(event,ctx); }
+            Event::MouseMoved {
+                position,
+                cmd: false,
+                shift: false,
+                is_synthetic: false,
+            },
+            Event::LeftMouseDown {
+                position,
+                modifiers: Default::default(),
+                click_count: 1,
+                is_first_mouse: false,
+            },
+            Event::LeftMouseUp {
+                position,
+                modifiers: Default::default(),
+            },
+        ] {
+            (window.callbacks().event_callback)(event, ctx);
+        }
     });
 }
 fn click(ctx: &mut ViewContext<Companion>, id: &str) {
-    let rect=ctx.element_position_by_id(id.to_owned()).expect("visible click target");
-    pointer(ctx,rect.origin()+rect.size()/2.);
+    let rect = ctx
+        .element_position_by_id(id.to_owned())
+        .expect("visible click target");
+    pointer(ctx, rect.origin() + rect.size() / 2.);
 }
 fn aligned(ctx: &ViewContext<Companion>) {
-    let a=ctx.element_position_by_id("workspace-chat-heading".to_owned()).unwrap();
-    for id in ["workspace-chat-messages","workspace-chat-input"] {
-        let b=ctx.element_position_by_id(id.to_owned()).unwrap();
-        assert!((a.origin().x()-b.origin().x()).abs()<1. && (a.width()-b.width()).abs()<1.,"chat columns misaligned: {a:?} vs {b:?}");
+    let a = ctx
+        .element_position_by_id("workspace-chat-heading".to_owned())
+        .unwrap();
+    for id in ["workspace-chat-messages", "workspace-chat-input"] {
+        let b = ctx.element_position_by_id(id.to_owned()).unwrap();
+        assert!(
+            (a.origin().x() - b.origin().x()).abs() < 1. && (a.width() - b.width()).abs() < 1.,
+            "chat columns misaligned: {a:?} vs {b:?}"
+        );
     }
 }
 impl Companion {
     pub(super) fn verify_chat_first(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(dir) = self.capture.as_ref().and_then(|p|p.parent()).map(PathBuf::from) else { return; };
+        let Some(dir) = self
+            .capture
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+        else {
+            return;
+        };
         assert!(self.demo_mode);
         CHAT_CHECK.with(|check| {
             let mut c=check.borrow_mut();
@@ -68,7 +109,7 @@ impl Companion {
                     let menu=ctx.element_position_by_id("context-surface".to_string()).unwrap();
                     assert!(menu.origin().y()>=anchor.origin().y()+anchor.height(),"roomy menu must open below");
                     assert!((menu.origin().x()-anchor.origin().x()).abs()<1.,"menu must align with trigger");
-                    
+
                     click(ctx,"context-choice-1");
                 },
                 3=>{
@@ -115,7 +156,14 @@ impl Companion {
 impl Companion {
     pub(super) fn verify_chat_first_live(&mut self, ctx: &mut ViewContext<Self>) {
         assert!(!self.demo_mode);
-        let Some(dir)=self.capture.as_ref().and_then(|p|p.parent()).map(PathBuf::from) else { return; };
+        let Some(dir) = self
+            .capture
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+        else {
+            return;
+        };
         CHAT_CHECK.with(|check| {
             let mut c=check.borrow_mut(); if c.step==99{return;}
             let since=*c.start.get_or_insert_with(Instant::now);

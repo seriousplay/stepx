@@ -67,18 +67,48 @@ impl Companion {
                 ctx.notify();
             }
         }
-        if std::env::args().any(|a|a=="--verify-update-ui") {
+        if std::env::args().any(|a| a == "--verify-update-ui") {
             use desktop_update_state::Phase;
-            if std::fs::remove_file(dir.join("update-available")).is_ok(){
-                self.desktop_update.release=Some(stepx_companion::desktop_update::Release{version:"0.2.20".into(),tag:"v0.2.20".into(),url:String::new(),name:"fixture".into(),size:64_000_000,sha256:String::new(),checksum_url:None,notes:"优化设备连接稳定性。\n修复文件传输与窗口交互。\n改进更新安装与回滚。".into(),page:"https://github.com/xydzf520/stepx/releases".into(),platform:stepx_companion::desktop_update::platform()});
-                self.desktop_update.phase=Phase::Available;ctx.notify();
+            if std::fs::remove_file(dir.join("update-available")).is_ok() {
+                self.desktop_update.release = Some(stepx_companion::desktop_update::Release {
+                    version: "0.2.20".into(),
+                    tag: "v0.2.20".into(),
+                    url: String::new(),
+                    name: "fixture".into(),
+                    size: 64_000_000,
+                    sha256: String::new(),
+                    checksum_url: None,
+                    notes: "优化设备连接稳定性。\n修复文件传输与窗口交互。\n改进更新安装与回滚。"
+                        .into(),
+                    page: "https://github.com/xydzf520/stepx/releases".into(),
+                    platform: stepx_companion::desktop_update::platform(),
+                });
+                self.desktop_update.phase = Phase::Available;
+                ctx.notify();
             }
-            if std::fs::remove_file(dir.join("update-downloading")).is_ok(){
-                self.desktop_update.phase=Phase::Downloading;self.desktop_update.fraction_from=0.5;self.desktop_update.fraction=0.62;self.desktop_update.fraction_at=Instant::now();self.desktop_update.total=64_000_000;self.desktop_update.received=39_680_000;self.desktop_update.speed=4_000_000;ctx.notify();
+            if std::fs::remove_file(dir.join("update-downloading")).is_ok() {
+                self.desktop_update.phase = Phase::Downloading;
+                self.desktop_update.fraction_from = 0.5;
+                self.desktop_update.fraction = 0.62;
+                self.desktop_update.fraction_at = Instant::now();
+                self.desktop_update.total = 64_000_000;
+                self.desktop_update.received = 39_680_000;
+                self.desktop_update.speed = 4_000_000;
+                ctx.notify();
             }
-            if std::fs::remove_file(dir.join("update-ready")).is_ok(){self.desktop_update.phase=Phase::Ready;ctx.notify();}
-            if std::fs::remove_file(dir.join("update-failed")).is_ok(){self.desktop_update.phase=Phase::Failed;self.desktop_update.error="下载校验失败，当前版本未改变。请重试。".into();ctx.notify();}
-            if std::fs::remove_file(dir.join("update-compact")).is_ok(){self.set_compact_mode(ShellMode::MiniAi,ctx);ctx.notify();}
+            if std::fs::remove_file(dir.join("update-ready")).is_ok() {
+                self.desktop_update.phase = Phase::Ready;
+                ctx.notify();
+            }
+            if std::fs::remove_file(dir.join("update-failed")).is_ok() {
+                self.desktop_update.phase = Phase::Failed;
+                self.desktop_update.error = "下载校验失败，当前版本未改变。请重试。".into();
+                ctx.notify();
+            }
+            if std::fs::remove_file(dir.join("update-compact")).is_ok() {
+                self.set_compact_mode(ShellMode::MiniAi, ctx);
+                ctx.notify();
+            }
         }
         // Async-history fixture for native scrolling regression; demo + isolated settings only.
         if std::env::args().any(|a| a == "--verify-chat-tail") {

@@ -1184,7 +1184,11 @@ impl Companion {
                 changed = true;
             }
         }
-        if let Some(next) = ctx.windows().platform_window(ctx.window_id()).map(|w| w.size()) {
+        if let Some(next) = ctx
+            .windows()
+            .platform_window(ctx.window_id())
+            .map(|w| w.size())
+        {
             if self.workspace.viewport != next {
                 self.workspace.viewport = next;
                 changed = true;

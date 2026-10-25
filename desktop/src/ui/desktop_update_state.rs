@@ -543,15 +543,24 @@ mod tests {
     use super::*;
     #[test]
     fn footer_is_reserved_for_actionable_updates() {
-        let mut state=DesktopUpdateState::default();
-        for phase in [Phase::Idle,Phase::Checking,Phase::Current,Phase::Ahead] {
-            state.phase=phase;assert!(!state.shown());
+        let mut state = DesktopUpdateState::default();
+        for phase in [Phase::Idle, Phase::Checking, Phase::Current, Phase::Ahead] {
+            state.phase = phase;
+            assert!(!state.shown());
         }
-        for phase in [Phase::Available,Phase::Downloading,Phase::Ready,Phase::Failed] {
-            state.phase=phase;assert!(state.shown());
+        for phase in [
+            Phase::Available,
+            Phase::Downloading,
+            Phase::Ready,
+            Phase::Failed,
+        ] {
+            state.phase = phase;
+            assert!(state.shown());
         }
-        state.phase=Phase::Downloading;state.fraction=0.62;
-        assert_eq!(state.label(),"下载更新 62%");
-        state.phase=Phase::Ready;assert_eq!(state.label(),"更新已准备好");
+        state.phase = Phase::Downloading;
+        state.fraction = 0.62;
+        assert_eq!(state.label(), "下载更新 62%");
+        state.phase = Phase::Ready;
+        assert_eq!(state.label(), "更新已准备好");
     }
 }

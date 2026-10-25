@@ -168,7 +168,11 @@ impl Journal {
         // A closed process is never evidence that a remote task completed.
         for task in &mut value.tasks {
             // Old automatic routing is no longer a user choice. Never restore it on launch.
-            if task.intent == Intent::Auto || (task.draft.trim().is_empty() && task.attachments.is_empty()) { task.intent = Intent::Chat; }
+            if task.intent == Intent::Auto
+                || (task.draft.trim().is_empty() && task.attachments.is_empty())
+            {
+                task.intent = Intent::Chat;
+            }
             for step in &mut task.steps {
                 if step.phase == Phase::Running {
                     step.phase = Phase::Unconfirmed;
@@ -350,16 +354,28 @@ mod tests {
     fn chat_is_default_even_with_attachments_or_previous_work() {
         assert_eq!(Intent::default(), Intent::Chat);
         assert_eq!(Task::new(None, None).intent, Intent::Chat);
-        for text in ["分析这个表格", "生成 PPT", "改成蓝色", "这张图片是什么", "做个游戏"] {
+        for text in [
+            "分析这个表格",
+            "生成 PPT",
+            "改成蓝色",
+            "这张图片是什么",
+            "做个游戏",
+        ] {
             for last in [None, Some(Executor::Files), Some(Executor::App)] {
-                assert_eq!(propose_followup(text, Intent::default(), true, last), vec![Executor::Phone]);
+                assert_eq!(
+                    propose_followup(text, Intent::default(), true, last),
+                    vec![Executor::Phone]
+                );
             }
         }
     }
     #[test]
     fn migrate_legacy_auto_without_changing_draft_or_outputs() {
-        let dir = tempfile::tempdir().unwrap(); let path = dir.path().join("journal.json");
-        let mut task = Task::new(None,None); task.intent = Intent::Auto; task.draft = "生成一个游戏".into();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.json");
+        let mut task = Task::new(None, None);
+        task.intent = Intent::Auto;
+        task.draft = "生成一个游戏".into();
         Journal { tasks: vec![task] }.save(&path).unwrap();
         let journal = Journal::load(&path).unwrap();
         assert_eq!(journal.tasks[0].intent, Intent::Chat);

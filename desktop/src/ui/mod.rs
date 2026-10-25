@@ -8,61 +8,61 @@
 //! - `actions` input handling and background jobs
 
 mod actions;
-mod shortcuts;
-#[cfg(all(feature="ui-capture",target_os="linux"))]
-mod shell_details_check;
-mod github_stars;
 mod desktop_update_state;
-use desktop_update_state::{DesktopUpdateAction,DesktopUpdateState};
-mod text_interaction;
-mod context_menu;
-mod reply_motion;
-mod speech_state;
-mod connection_watch;
+mod github_stars;
+#[cfg(all(feature = "ui-capture", target_os = "linux"))]
+mod shell_details_check;
+mod shortcuts;
+use desktop_update_state::{DesktopUpdateAction, DesktopUpdateState};
 mod adb_onboarding;
 mod amoo_composer;
 mod amoo_display;
 mod amoo_sync;
 mod amoo_ui_state;
+mod connection_watch;
+mod context_menu;
 mod expansion_state;
+mod reply_motion;
+mod speech_state;
+mod text_interaction;
 use amoo_ui_state::{AmooUiAction, AmooUiOutcome, AmooUiState};
 mod backscreen_state;
+#[cfg(feature = "ui-capture")]
+mod chat_first_check;
 #[cfg(feature = "ui-capture")]
 mod compact_live_check;
 #[cfg(feature = "ui-capture")]
 mod composer_check;
 #[cfg(feature = "ui-capture")]
-mod workspace_check;
-#[cfg(feature = "ui-capture")]
-mod chat_first_check;
-#[cfg(feature = "ui-capture")]
-mod responsive_check;
-#[cfg(feature = "ui-capture")]
-mod responsive_live_check;
+mod demo;
 #[cfg(feature = "ui-capture")]
 mod enter_check;
-#[cfg(feature = "ui-capture")]
-mod scenario_check;
-#[cfg(feature = "ui-capture")]
-mod demo;
 mod icons;
+mod interaction;
 mod led_grid;
 mod mini_modes;
 mod mirror_controls;
+mod motion;
 mod pages;
+mod perf;
 #[cfg(feature = "ui-capture")]
 mod performance_check;
 mod preview_cache;
 mod push_state;
 mod push_toast;
-mod shell;
-mod settings_state;
-mod interaction;
-#[cfg(feature="ui-capture")]
+#[cfg(feature = "ui-capture")]
+mod responsive_check;
+#[cfg(feature = "ui-capture")]
+mod responsive_live_check;
+#[cfg(feature = "ui-capture")]
+mod scenario_check;
+#[cfg(feature = "ui-capture")]
 mod settings_check;
-mod motion;
+mod settings_state;
+mod shell;
 mod smooth_scroll;
-mod perf;
+#[cfg(feature = "ui-capture")]
+mod workspace_check;
 use settings_state::{SettingsAction, SettingsUi};
 mod studio_lab_state;
 mod studio_state;
@@ -73,13 +73,13 @@ mod widgets;
 mod window_memory_check;
 mod work_state;
 mod workspace_state;
-use workspace_state::{WorkspaceAction, WorkspaceUi};
 use backscreen_state::{BackScreenAction, BackScreenUiState};
 use push_state::{PushAction, PushUiState, ShellMode};
 use studio_lab_state::{StudioLabAction, StudioLabOutcome, StudioLabUiState};
 use studio_state::{StudioAction, StudioOutcome, StudioUiState};
 use update_state::{UpdateAction, UpdateState};
 use work_state::{WorkAction, WorkOutcome, WorkUiState};
+use workspace_state::{WorkspaceAction, WorkspaceUi};
 
 use anyhow::Result;
 use facloud_ui::{
@@ -340,7 +340,8 @@ impl Page {
                 | Self::Work
                 | Self::Amoo
                 | Self::Account
-                | Self::About | Self::Settings
+                | Self::About
+                | Self::Settings
                 | Self::Studio
                 | Self::Expansion
         )
@@ -350,7 +351,15 @@ impl Page {
     fn fills_height(self) -> bool {
         matches!(
             self,
-            Self::Settings | Self::About | Self::Amoo | Self::Work | Self::Studio | Self::Sms | Self::Notifications | Self::Phone | Self::Account
+            Self::Settings
+                | Self::About
+                | Self::Amoo
+                | Self::Work
+                | Self::Studio
+                | Self::Sms
+                | Self::Notifications
+                | Self::Phone
+                | Self::Account
         )
     }
 
@@ -767,8 +776,9 @@ enum Outcome {
     AmooObservationUnavailable,
     AmooCreated(String),
     AmooSent(amoo::PendingReply),
-    WorkspaceDelivered(String,PathBuf,String,std::result::Result<String,String>),
+    WorkspaceDelivered(String, PathBuf, String, std::result::Result<String, String>),
     Transports(Vec<Transport>, Vec<Service>),
+    Reattached(Device),
     Selected(
         Device,
         String,
@@ -826,7 +836,9 @@ impl Input {
         self.preedit.clear();
         self.anchor = None;
         self.dragging = false;
-        self.undo.clear(); self.redo.clear(); self.last_edit=None;
+        self.undo.clear();
+        self.redo.clear();
+        self.last_edit = None;
     }
 
     fn set(&mut self, text: &str) {
@@ -1292,11 +1304,11 @@ struct Companion {
     push_detail_scroll: ClippedScrollStateHandle,
     sms_threads_scroll: ClippedScrollStateHandle,
     sms_messages_scroll: ClippedScrollStateHandle,
-    hover_states: RefCell<HashMap<String, (u64,MouseStateHandle)>>,
+    hover_states: RefCell<HashMap<String, (u64, MouseStateHandle)>>,
     render_epoch: Cell<u64>,
-    chat_scroll_metrics: std::rc::Rc<std::cell::Cell<(f32,f32)>>,
+    chat_scroll_metrics: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     chat_tail_requested: std::rc::Rc<std::cell::Cell<bool>>,
-    wheel_motions: RefCell<HashMap<(&'static str,u32), smooth_scroll::WheelHandle>>,
+    wheel_motions: RefCell<HashMap<(&'static str, u32), smooth_scroll::WheelHandle>>,
     capture: Option<PathBuf>,
     capture_at: Instant,
     last_clock_second: u64,
@@ -1337,7 +1349,11 @@ impl Companion {
         let mut theme_mode = match std::env::var("STEPX_THEME").ok().as_deref() {
             Some("dark") => ThemeMode::Dark,
             Some("light") => ThemeMode::Light,
-            _ => match stepx_companion::settings::load().appearance {stepx_companion::settings::Appearance::System=>ThemeMode::System,stepx_companion::settings::Appearance::Light=>ThemeMode::Light,stepx_companion::settings::Appearance::Dark=>ThemeMode::Dark},
+            _ => match stepx_companion::settings::load().appearance {
+                stepx_companion::settings::Appearance::System => ThemeMode::System,
+                stepx_companion::settings::Appearance::Light => ThemeMode::Light,
+                stepx_companion::settings::Appearance::Dark => ThemeMode::Dark,
+            },
         };
         if std::env::args().any(|arg| arg == "--dark") {
             theme_mode = ThemeMode::Dark;
@@ -1719,9 +1735,9 @@ impl Companion {
             }
             ctx.focus_self();
             me.initialize_shortcut(ctx);
-        me.initialize_stars(ctx);
-        me.initialize_desktop_updates(ctx);
-        me.schedule_tick(ctx);
+            me.initialize_stars(ctx);
+            me.initialize_desktop_updates(ctx);
+            me.schedule_tick(ctx);
             return me;
         }
         if has_stepx_candidate {
@@ -1738,7 +1754,12 @@ impl Companion {
     }
 
     fn schedule_tick(&self, ctx: &mut ViewContext<Self>) {
-        let interval = if self.reply_motion.active() && !self.settings.hidden && matches!(self.page,Page::Amoo|Page::Work) { 32 } else if self.mirror.is_some()
+        let interval = if self.reply_motion.active()
+            && !self.settings.hidden
+            && matches!(self.page, Page::Amoo | Page::Work)
+        {
+            32
+        } else if self.mirror.is_some()
             || self.busy
             || self.work.running
             || self.amoo_ui.gui_running
@@ -1762,9 +1783,9 @@ impl Companion {
     }
 
     fn mouse_state(&self, id: impl Into<String>) -> MouseStateHandle {
-        let mut states=self.hover_states.borrow_mut();
-        let entry=states.entry(id.into()).or_default();
-        entry.0=self.render_epoch.get();
+        let mut states = self.hover_states.borrow_mut();
+        let entry = states.entry(id.into()).or_default();
+        entry.0 = self.render_epoch.get();
         entry.1.clone()
     }
 
@@ -1798,31 +1819,12 @@ impl Companion {
 
     fn refresh(&mut self) {
         self.last_scan = Instant::now();
-        let remembered: Vec<_> = self
-            .preferences
-            .devices
-            .iter()
-            .map(|d| d.serial.clone())
-            .collect();
+        let prefs = self.preferences.clone();
         let pairing_hosts = self.pairing_hosts.clone();
         self.submit("正在查找设备…", move |adb| {
-            let discovered = stepx_companion::discovery::discover_services(adb).unwrap_or_default();
-            for service in discovered
-                .iter()
-                .filter(|s| s.kind == "_adb-tls-connect._tcp")
-                .filter(|s| {
-                    remembered.iter().any(|serial| s.name.contains(serial))
-                        || pairing::validate_endpoint(&s.endpoint)
-                            .is_ok_and(|a| pairing_hosts.contains(&a.ip()))
-                })
-                .take(8)
-            {
-                let _ = adb.run_timeout(&["connect", &service.endpoint], Duration::from_secs(3));
-            }
-            Ok(Outcome::Transports(
-                parse_devices(&adb.run(&["devices", "-l"])?),
-                discovered,
-            ))
+            let (devices, services) =
+                stepx_companion::reconnect::scan(adb, &prefs, &pairing_hosts)?;
+            Ok(Outcome::Transports(devices, services))
         });
         self.job_tool = None;
     }
@@ -1862,7 +1864,9 @@ impl Companion {
                 Some(ToolPage::Neo) if !self.neo_status.checked => {
                     self.handle_device_action(&Action::NeoInspect)
                 }
-                Some(ToolPage::InputMethod) if !self.input_method.checked => {self.handle_device_action(&Action::InspectInputMethod);}
+                Some(ToolPage::InputMethod) if !self.input_method.checked => {
+                    self.handle_device_action(&Action::InspectInputMethod);
+                }
                 Some(ToolPage::Services) if self.system_services.is_empty() => {
                     self.handle_device_action(&Action::InspectServices)
                 }
@@ -1963,7 +1967,7 @@ impl Companion {
         self.amoo_snapshot = None;
         self.amoo_poll_remaining = 0;
         self.amoo_pending_reply.clear();
-        self.input_method=Default::default();
+        self.input_method = Default::default();
         self.amoo_ui = AmooUiState::default();
         self.amoo_attachments.clear();
         self.amoo_cron_jobs.clear();
@@ -2020,17 +2024,17 @@ impl Companion {
     }
 
     fn tick(&mut self, ctx: &mut ViewContext<Self>) {
-        let _timing=perf::Span::new("tick");
-        #[cfg(all(feature="ui-capture",target_os="linux"))]
+        let _timing = perf::Span::new("tick");
+        #[cfg(all(feature = "ui-capture", target_os = "linux"))]
         self.verify_text_interaction(ctx);
-        #[cfg(all(feature="ui-capture",target_os="linux"))]
+        #[cfg(all(feature = "ui-capture", target_os = "linux"))]
         self.verify_shell_details(ctx);
         self.poll_desktop_update(ctx);
         self.tick_speech(ctx);
         self.tick_reply_motion(ctx);
         self.tick_connection_watch(ctx);
         self.tick_settings(ctx);
-        #[cfg(feature="ui-capture")]
+        #[cfg(feature = "ui-capture")]
         self.verify_settings(ctx);
         self.remember_window(ctx, false);
         #[cfg(feature = "ui-capture")]
@@ -2100,22 +2104,35 @@ impl Companion {
         if self.poll_account_usage_sync() {
             ctx.notify();
         }
-        if self.push.syncing && !self.push.loaded && self.push.sync_started.elapsed()>Duration::from_millis(150) && self.push.sync_started.elapsed()<Duration::from_millis(750) && matches!(self.page,Page::Notifications|Page::Sms) {ctx.notify();}
-        if self.busy && self.loading_frame==0 && self.job_started.elapsed()>Duration::from_millis(150) {
-            self.loading_frame=1;ctx.notify();
+        if self.push.syncing
+            && !self.push.loaded
+            && self.push.sync_started.elapsed() > Duration::from_millis(150)
+            && self.push.sync_started.elapsed() < Duration::from_millis(750)
+            && matches!(self.page, Page::Notifications | Page::Sms)
+        {
+            ctx.notify();
+        }
+        if self.busy
+            && self.loading_frame == 0
+            && self.job_started.elapsed() > Duration::from_millis(150)
+        {
+            self.loading_frame = 1;
+            ctx.notify();
         }
         while let Ok(result) = self.receiver.try_recv() {
             let completed_page = self.job_page;
             let completed_tool = self.job_tool;
             let tool_result = result.as_ref().map_or(true, |outcome| {
-                !matches!(outcome, Outcome::Transports(..) | Outcome::Selected(..))
+                !matches!(outcome, Outcome::Transports(..) | Outcome::Selected(..) | Outcome::Reattached(..))
             });
             self.busy = false;
             if let Ok(mut progress) = self.google_progress.lock() {
                 progress.clear();
             }
             self.error = result.is_err();
-            if let Err(e)=&result {self.record_notice("操作未完成",format!("{e:#}"));}
+            if let Err(e) = &result {
+                self.record_notice("操作未完成", format!("{e:#}"));
+            }
             match result {
                 Err(e) => {
                     self.initializing = false;
@@ -2132,7 +2149,19 @@ impl Companion {
                         self.work.error = Some(format!("{e:#}"));
                     }
                     self.status = format!("{e:#}");
-                    if self.workspace.running.as_ref().is_some_and(|r|!r.accepted && matches!(r.executor,stepx_companion::amoo_workspace::Executor::Phone|stepx_companion::amoo_workspace::Executor::Image)) { self.workspace_finish(stepx_companion::amoo_workspace::Phase::Failed, self.status.clone()); }
+                    if self.workspace.running.as_ref().is_some_and(|r| {
+                        !r.accepted
+                            && matches!(
+                                r.executor,
+                                stepx_companion::amoo_workspace::Executor::Phone
+                                    | stepx_companion::amoo_workspace::Executor::Image
+                            )
+                    }) {
+                        self.workspace_finish(
+                            stepx_companion::amoo_workspace::Phase::Failed,
+                            self.status.clone(),
+                        );
+                    }
                 }
                 Ok(outcome) => {
                     self.status = "就绪".into();
@@ -2161,7 +2190,9 @@ impl Companion {
             ctx.notify();
         }
         self.tick_studio_cloud();
-        if self.tick_workspace(ctx) { ctx.notify(); }
+        if self.tick_workspace(ctx) {
+            ctx.notify();
+        }
         if self.compact_start_pending {
             self.compact_start_pending = false;
             let mode = self.window_memory.startup_mode();
@@ -2223,7 +2254,11 @@ impl Companion {
                 >= if needs_initial_amoo_fetch {
                     Duration::from_millis(400)
                 } else if self.amoo_poll_remaining > 0 {
-                    Duration::from_millis(if !self.settings.hidden && self.chat_waiting() {1200} else {2400})
+                    Duration::from_millis(if !self.settings.hidden && self.chat_waiting() {
+                        1200
+                    } else {
+                        2400
+                    })
                 } else if self.amoo_pending_reply.is_empty() && !self.amoo_gateway_online {
                     Duration::from_secs(30)
                 } else {
@@ -2260,14 +2295,11 @@ impl Companion {
                 } else if !self.error {
                     self.refresh();
                 }
-            } else if !self.error {
-                if self.selected.is_some() {
-                    self.last_scan = Instant::now();
-                    self.begin_connection_watch();
-                } else {
-                    self.refresh();
-                }
             }
+        }
+        if !self.demo_mode && self.last_scan.elapsed() > Duration::from_secs(5) {
+            self.last_scan = Instant::now();
+            self.begin_connection_watch();
         }
         #[cfg(feature = "ui-capture")]
         if std::env::args().any(|a| a == "--verify-google-cert") && !self.initializing {
@@ -2300,9 +2332,12 @@ impl Companion {
         }
         if self.capture.is_some()
             && !std::env::args().any(|a| {
-                a == "--verify-settings" || a == "--verify-compact"
+                a == "--verify-settings"
+                    || a == "--verify-compact"
                     || a == "--verify-compact-live"
-                    || a == "--verify-composer" || a == "--verify-workspace" || a == "--verify-workspace-live"
+                    || a == "--verify-composer"
+                    || a == "--verify-workspace"
+                    || a == "--verify-workspace-live"
                     || a == "--verify-window-memory"
             })
             && self.capture_at.elapsed() > Duration::from_millis(900)
@@ -2412,9 +2447,12 @@ impl Companion {
                         .iter()
                         .any(|t| t.id == d.transport && t.state == "device")
                 }) {
+                    self.connection_watch.detached_serial =
+                        self.selected.as_ref().map(|d| d.serial.clone());
                     self.selected = None;
-                    self.clear_device_state();
-                    self.status = "设备已断开".into();
+                    self.amoo_gateway_online = false;
+                    self.stop_mirror();
+                    self.status = "连接暂时断开，正在自动重连；草稿与附件已保留".into();
                 }
                 self.devices = devices;
                 self.mdns_services = services;
@@ -2422,9 +2460,24 @@ impl Companion {
                     self.auto_select();
                 }
             }
+            Outcome::Reattached(device) => {
+                if self.connection_watch.detached_serial.as_deref() == Some(device.serial.as_str()) {
+                    self.connection_watch.detached_serial = None;
+                    self.connection_watch.identity_at = None;
+                    self.selected = Some(device);
+                    self.initializing = false;
+                    self.error = false;
+                    self.status = "已自动恢复连接 · 会话与草稿已保留".into();
+                }
+            }
             Outcome::Selected(device, summary, caps, real_amoo, sms, call_logs, contacts) => {
                 self.allow_first_connect = false;
-                self.clear_device_state();
+                let resumed = self.connection_watch.detached_serial.take().as_deref()
+                    == Some(device.serial.as_str());
+                if !resumed {
+                    self.clear_device_state();
+                }
+                self.connection_watch.identity_at = None;
                 self.apply_capabilities(caps);
                 self.apply_sms_data(sms);
                 self.apply_phone_data(call_logs, contacts);
@@ -2478,7 +2531,9 @@ impl Companion {
                 self.output_page = self.job_page;
             }
             Outcome::Notice(text) => {
-                if text!="就绪" && text!="已记住的设备不在线" {self.record_notice("执行反馈",text.clone());}
+                if text != "就绪" && text != "已记住的设备不在线" {
+                    self.record_notice("执行反馈", text.clone());
+                }
                 self.initializing = false;
                 self.status = text;
             }
@@ -2502,8 +2557,27 @@ impl Companion {
                     "已就绪：将通过 {} 发送至 {}，请点击「确认发送」",
                     plan.subscription_label, plan.number
                 );
-                let target=self.selected.as_ref().map(|d|format!("手机：{} · {}",d.model,d.serial)).unwrap_or_default();
-                self.review_action(&Action::ConfirmDirectSms,"确认发送这条短信？",target,vec![format!("收件人：{} · 使用 {}",plan.number,plan.subscription_label),plan.body.clone(),format!("共 {} 段短信，运营商可能按套餐计费。确认后实际从手机发出。",plan.parts)],"确认发送",true,false);
+                let target = self
+                    .selected
+                    .as_ref()
+                    .map(|d| format!("手机：{} · {}", d.model, d.serial))
+                    .unwrap_or_default();
+                self.review_action(
+                    &Action::ConfirmDirectSms,
+                    "确认发送这条短信？",
+                    target,
+                    vec![
+                        format!("收件人：{} · 使用 {}", plan.number, plan.subscription_label),
+                        plan.body.clone(),
+                        format!(
+                            "共 {} 段短信，运营商可能按套餐计费。确认后实际从手机发出。",
+                            plan.parts
+                        ),
+                    ],
+                    "确认发送",
+                    true,
+                    false,
+                );
                 self.pending_sms_plan = Some(plan);
             }
             Outcome::SmsSent(send_status, messages) => {
@@ -2612,9 +2686,29 @@ impl Companion {
                 self.amoo_poll_remaining = 0;
                 self.status = "已在后台创建 Amoo 会话，可直接输入消息".into();
             }
-            Outcome::WorkspaceDelivered(task,path,serial,result)=>{
-                let note=result.clone().unwrap_or_else(|e|format!("发送未完成：{e}"));self.status=note.clone();self.error=result.is_err();
-                if let Some(task)=self.workspace.journal.tasks.iter_mut().find(|t|t.id==task){task.receipts.push(stepx_companion::amoo_workspace::Receipt{path,note,success:result.is_ok(),device:serial,account:None,cloud_url:None});}
+            Outcome::WorkspaceDelivered(task, path, serial, result) => {
+                let note = result
+                    .clone()
+                    .unwrap_or_else(|e| format!("发送未完成：{e}"));
+                self.status = note.clone();
+                self.error = result.is_err();
+                if let Some(task) = self
+                    .workspace
+                    .journal
+                    .tasks
+                    .iter_mut()
+                    .find(|t| t.id == task)
+                {
+                    task.receipts
+                        .push(stepx_companion::amoo_workspace::Receipt {
+                            path,
+                            note,
+                            success: result.is_ok(),
+                            device: serial,
+                            account: None,
+                            cloud_url: None,
+                        });
+                }
                 self.workspace_persist();
             }
             Outcome::AmooSent(receipt) => {
@@ -2650,7 +2744,9 @@ impl Companion {
             Outcome::AmooRealData(real, mut msg) => {
                 // Measure completion before removing the matching pending run.
                 self.record_amoo_usage(&real);
-                self.reply_motion.live.extend(self.amoo_pending_reply.keys().cloned());
+                self.reply_motion
+                    .live
+                    .extend(self.amoo_pending_reply.keys().cloned());
                 let was_pending = self.amoo_pending_reply.len();
                 let finished_error = self.amoo_pending_reply.values().find_map(|pending| {
                     let session = real.sessions.iter().find(|s| pending.finished(s))?;
@@ -2665,16 +2761,70 @@ impl Companion {
                                 .unwrap_or_else(|| "手机返回了错误，请查看会话后继续".into())
                         })
                 });
-                if let Some(run)=self.workspace.running.clone().filter(|r|matches!(r.executor,stepx_companion::amoo_workspace::Executor::Phone|stepx_companion::amoo_workspace::Executor::Image)) {
-                    let key=self.workspace.journal.tasks.iter().find(|t|t.id==run.task).and_then(|t|t.session.as_ref());
-                    let completed=key.and_then(|key|self.amoo_pending_reply.get(key)).and_then(|pending|real.sessions.iter().find(|s|pending.finished(s)).map(|s|(s,pending)));
-                    if let Some((session,pending))=completed {
-                        let failure=session.messages.iter().rev().find(|m|m.run_id==pending.run_id && m.is_error).map(|m|m.error_message.clone().unwrap_or("手机返回错误，请查看回复".into()));
-                        let note=session.messages.iter().filter(|m| m.run_id == pending.run_id && m.role == "assistant").filter_map(|m| stepx_companion::work_protocol::display_text(&m.text, false)).filter(|t|!t.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
-                        if let Some(error)=failure {self.workspace_finish(stepx_companion::amoo_workspace::Phase::Failed,error);}
-                        else if run.executor==stepx_companion::amoo_workspace::Executor::Image {
-                            self.workspace_deliver_images(session.messages.iter().filter(|m|m.run_id==pending.run_id && m.role!="user").cloned().collect(),note);
-                        } else {self.workspace_finish(stepx_companion::amoo_workspace::Phase::Done,note);}
+                if let Some(run) = self.workspace.running.clone().filter(|r| {
+                    matches!(
+                        r.executor,
+                        stepx_companion::amoo_workspace::Executor::Phone
+                            | stepx_companion::amoo_workspace::Executor::Image
+                    )
+                }) {
+                    let key = self
+                        .workspace
+                        .journal
+                        .tasks
+                        .iter()
+                        .find(|t| t.id == run.task)
+                        .and_then(|t| t.session.as_ref());
+                    let completed = key
+                        .and_then(|key| self.amoo_pending_reply.get(key))
+                        .and_then(|pending| {
+                            real.sessions
+                                .iter()
+                                .find(|s| pending.finished(s))
+                                .map(|s| (s, pending))
+                        });
+                    if let Some((session, pending)) = completed {
+                        let failure = session
+                            .messages
+                            .iter()
+                            .rev()
+                            .find(|m| m.run_id == pending.run_id && m.is_error)
+                            .map(|m| {
+                                m.error_message
+                                    .clone()
+                                    .unwrap_or("手机返回错误，请查看回复".into())
+                            });
+                        let note = session
+                            .messages
+                            .iter()
+                            .filter(|m| m.run_id == pending.run_id && m.role == "assistant")
+                            .filter_map(|m| {
+                                stepx_companion::work_protocol::display_text(&m.text, false)
+                            })
+                            .filter(|t| !t.trim().is_empty())
+                            .collect::<Vec<_>>()
+                            .join("\n\n");
+                        if let Some(error) = failure {
+                            self.workspace_finish(
+                                stepx_companion::amoo_workspace::Phase::Failed,
+                                error,
+                            );
+                        } else if run.executor == stepx_companion::amoo_workspace::Executor::Image {
+                            self.workspace_deliver_images(
+                                session
+                                    .messages
+                                    .iter()
+                                    .filter(|m| m.run_id == pending.run_id && m.role != "user")
+                                    .cloned()
+                                    .collect(),
+                                note,
+                            );
+                        } else {
+                            self.workspace_finish(
+                                stepx_companion::amoo_workspace::Phase::Done,
+                                note,
+                            );
+                        }
                     }
                 }
                 self.amoo_pending_reply
@@ -2703,7 +2853,10 @@ impl Companion {
                     .amoo_sessions
                     .get(self.amoo_session_idx)
                     .map(|s| (s.session_key.clone(), s.items.clone()));
-                if matches!(self.page, Page::Amoo | Page::Work) && previous != current && follow_tail {
+                if matches!(self.page, Page::Amoo | Page::Work)
+                    && previous != current
+                    && follow_tail
+                {
                     self.reveal_latest_chat();
                 }
                 if !msg.is_empty() {
@@ -2714,7 +2867,9 @@ impl Companion {
                 if path != self.directory {
                     self.scroll = Default::default();
                     self.fields[F_FILE_SEARCH].clear();
-                    if self.focus == Some(F_FILE_SEARCH) { self.focus = None; }
+                    if self.focus == Some(F_FILE_SEARCH) {
+                        self.focus = None;
+                    }
                 }
                 self.directory = path;
                 self.files = files;
@@ -2723,7 +2878,7 @@ impl Companion {
                 self.file_modal = None;
                 self.trash_confirm = false;
                 if let Some(msg) = notice {
-                    self.record_notice("文件操作",msg.clone());
+                    self.record_notice("文件操作", msg.clone());
                     self.status = msg;
                 }
             }
@@ -2818,8 +2973,20 @@ impl Companion {
                         "请确认通过 {} 呼叫 {}",
                         plan.subscription_label, plan.number
                     );
-                    let target=format!("手机：{}",plan.device_serial);
-                    self.review_action(&Action::PhoneConfirmCall,"确认用手机拨打？",target,vec![format!("号码：{}",plan.number),format!("SIM：{}",plan.subscription_label),"确认后手机将发起实际通话，可能产生运营商费用。".into()],"确认拨打",true,false);
+                    let target = format!("手机：{}", plan.device_serial);
+                    self.review_action(
+                        &Action::PhoneConfirmCall,
+                        "确认用手机拨打？",
+                        target,
+                        vec![
+                            format!("号码：{}", plan.number),
+                            format!("SIM：{}", plan.subscription_label),
+                            "确认后手机将发起实际通话，可能产生运营商费用。".into(),
+                        ],
+                        "确认拨打",
+                        true,
+                        false,
+                    );
                     self.pending_call = Some(plan);
                 }
             }
@@ -2844,7 +3011,11 @@ impl Companion {
                 self.companion_status = companion;
                 self.status = msg;
             }
-            Outcome::InputMethod(report, message) => { self.fcitx5_active=report.active; self.input_method=report; self.status=message; },
+            Outcome::InputMethod(report, message) => {
+                self.fcitx5_active = report.active;
+                self.input_method = report;
+                self.status = message;
+            }
             Outcome::SystemServices(services, msg) => {
                 self.fcitx5_active = services
                     .iter()
@@ -2962,12 +3133,16 @@ impl Companion {
             .map(|d| d.id.clone())
             .collect();
         if let Some(preferred) = self.preferences.selected_serial.clone() {
+            let resuming = self.connection_watch.detached_serial.clone();
             if !candidates.is_empty() {
                 let allow_fallback = self.allow_first_connect && candidates.len() == 1;
                 self.submit("正在连接 StepX 设备…", move |adb| {
                     for id in &candidates {
                         if let Ok(device) = Device::inspect(adb, id) {
                             if device.serial == preferred || allow_fallback {
+                                if resuming.as_deref() == Some(device.serial.as_str()) {
+                                    return Ok(Outcome::Reattached(device));
+                                }
                                 let summary = device.summary(adb)?;
                                 let caps = bridge::capabilities(adb, &device).ok();
                                 let real_amoo = None; // Load conversations lazily on the Amoo page.
@@ -3080,14 +3255,34 @@ impl Companion {
         }
         if !self.settings.value.reduced_motion && !self.settings.hidden {
             for next in &new_sessions {
-                if current_key.as_deref()!=Some(&next.session_key) || !(self.amoo_pending_reply.contains_key(&next.session_key) || self.reply_motion.live.contains(&next.session_key)) {continue;}
-                let Some(old)=self.amoo_sessions.iter().find(|s|s.session_key==next.session_key) else {continue;};
-                for (i,item) in next.items.iter().enumerate() {
-                    if let AmooChatItem::AssistantRich {text:Some(text),..}=item {
-                        let previous=match old.items.get(i) {Some(AmooChatItem::AssistantRich {text:Some(t),..})=>t.as_str(),_=>""};
-                        let before=stepx_companion::work_protocol::display_text(previous,false).unwrap_or_default();
-                        let after=stepx_companion::work_protocol::display_text(text,false).unwrap_or_default();
-                        self.reply_motion.track(next.session_key.clone(),i,&before,&after);
+                if current_key.as_deref() != Some(&next.session_key)
+                    || !(self.amoo_pending_reply.contains_key(&next.session_key)
+                        || self.reply_motion.live.contains(&next.session_key))
+                {
+                    continue;
+                }
+                let Some(old) = self
+                    .amoo_sessions
+                    .iter()
+                    .find(|s| s.session_key == next.session_key)
+                else {
+                    continue;
+                };
+                for (i, item) in next.items.iter().enumerate() {
+                    if let AmooChatItem::AssistantRich {
+                        text: Some(text), ..
+                    } = item
+                    {
+                        let previous = match old.items.get(i) {
+                            Some(AmooChatItem::AssistantRich { text: Some(t), .. }) => t.as_str(),
+                            _ => "",
+                        };
+                        let before = stepx_companion::work_protocol::display_text(previous, false)
+                            .unwrap_or_default();
+                        let after = stepx_companion::work_protocol::display_text(text, false)
+                            .unwrap_or_default();
+                        self.reply_motion
+                            .track(next.session_key.clone(), i, &before, &after);
                     }
                 }
             }
@@ -3140,7 +3335,9 @@ impl Companion {
     }
 
     fn browse(&mut self, path: String) {
-        if self.busy { return; }
+        if self.busy {
+            return;
+        }
         self.with_device("正在读取目录…", move |adb, device| {
             Ok(Outcome::Files(
                 path.clone(),
@@ -3284,9 +3481,14 @@ impl View for Companion {
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
-        let _timing=perf::Span::new("render");
-        let epoch=self.render_epoch.get().wrapping_add(1);self.render_epoch.set(epoch);
-        if self.hover_states.borrow().len()>512 {self.hover_states.borrow_mut().retain(|_,(last,_)|epoch.wrapping_sub(*last)<=2);}
+        let _timing = perf::Span::new("render");
+        let epoch = self.render_epoch.get().wrapping_add(1);
+        self.render_epoch.set(epoch);
+        if self.hover_states.borrow().len() > 512 {
+            self.hover_states
+                .borrow_mut()
+                .retain(|_, (last, _)| epoch.wrapping_sub(*last) <= 2);
+        }
         let p = Palette::for_theme(self.theme_mode.is_dark(app.system_theme()));
         self.palette.set(p);
 
@@ -3311,7 +3513,11 @@ impl View for Companion {
             };
 
             let body = self.loading_feedback(body);
-            let body = motion::enter(body, self.motion_started, !self.settings.value.reduced_motion && !self.settings.hidden);
+            let body = motion::enter(
+                body,
+                self.motion_started,
+                !self.settings.value.reduced_motion && !self.settings.hidden,
+            );
             let main = Container::new(
                 Flex::column()
                     .with_main_axis_size(MainAxisSize::Max)
@@ -3351,18 +3557,29 @@ impl View for Companion {
 
             tree
         };
-        #[cfg(feature="ui-capture")]
-        let tree=self.text_test_fixture().unwrap_or(tree);
-        #[cfg(feature="ui-capture")]
-        let tree=SavePosition::new(tree,"test-window-layout").for_single_frame().finish();
+        #[cfg(feature = "ui-capture")]
+        let tree = self.text_test_fixture().unwrap_or(tree);
+        #[cfg(feature = "ui-capture")]
+        let tree = SavePosition::new(tree, "test-window-layout")
+            .for_single_frame()
+            .finish();
         // SavePosition commits in a Stack paint scope, including the pinned composer.
         let tree = Stack::new().with_child(tree).finish();
         let tree = if let Some(sheet) = self.desktop_update_overlay() {
-            Stack::new().with_child(adb_onboarding::Inert(tree).finish()).with_child(sheet).finish()
+            Stack::new()
+                .with_child(adb_onboarding::Inert(tree).finish())
+                .with_child(sheet)
+                .finish()
         } else if let Some(menu) = self.context_overlay() {
-            Stack::new().with_child(adb_onboarding::Inert(tree).finish()).with_child(menu).finish()
+            Stack::new()
+                .with_child(adb_onboarding::Inert(tree).finish())
+                .with_child(menu)
+                .finish()
         } else if let Some(sheet) = self.interaction_overlay() {
-            Stack::new().with_child(adb_onboarding::Inert(tree).finish()).with_child(sheet).finish()
+            Stack::new()
+                .with_child(adb_onboarding::Inert(tree).finish())
+                .with_child(sheet)
+                .finish()
         } else if let Some(step) = self.adb_guide_step {
             Stack::new()
                 .with_child(adb_onboarding::Inert(tree).finish())
@@ -3382,8 +3599,14 @@ impl View for Companion {
             tree
         };
         Keyboard {
-            accept_attachments: self.page == Page::Amoo && !self.busy && !self.workspace_busy() && self.context_menu.is_none() && self.workspace.proposal.is_none() && self.interaction_overlay().is_none() && self.amoo_image_viewer().is_none(),
-            context_menu:self.context_menu.is_some(),
+            accept_attachments: self.page == Page::Amoo
+                && !self.busy
+                && !self.workspace_busy()
+                && self.context_menu.is_none()
+                && self.workspace.proposal.is_none()
+                && self.interaction_overlay().is_none()
+                && self.amoo_image_viewer().is_none(),
+            context_menu: self.context_menu.is_some(),
             child: perf::Measured(tree).finish(),
             shortcut: self.settings.value.compact_shortcut.clone(),
             recording_shortcut: self.shortcuts.recording,
@@ -3411,7 +3634,7 @@ impl Drop for Companion {
 /// nor inserted twice, and maps Cmd (macOS) / Ctrl (Windows, Linux) shortcuts.
 struct Keyboard {
     accept_attachments: bool,
-    context_menu:bool,
+    context_menu: bool,
     shortcut: stepx_companion::settings::CompactShortcut,
     recording_shortcut: bool,
     child: Box<dyn Element>,
@@ -3446,35 +3669,77 @@ impl Element for Keyboard {
     ) -> bool {
         #[cfg(feature = "ui-capture")]
         if std::env::var_os("STEPX_ENTER_TEST").is_some() {
-            if let Event::KeyDown { keystroke, is_composing, .. } = event.raw_event() {
-                eprintln!("ENTER_KEY key={} shift={} active={} composing={}/{}", keystroke.key, keystroke.shift, self.active, self.composing, is_composing);
+            if let Event::KeyDown {
+                keystroke,
+                is_composing,
+                ..
+            } = event.raw_event()
+            {
+                eprintln!(
+                    "ENTER_KEY key={} shift={} active={} composing={}/{}",
+                    keystroke.key, keystroke.shift, self.active, self.composing, is_composing
+                );
             }
             match event.raw_event() {
-                Event::TypedCharacters { chars } => eprintln!("ENTER_TEXT bytes={} control={:?}", chars.len(), chars.chars().filter(|c| c.is_control()).collect::<Vec<_>>()),
-                Event::SetMarkedText { marked_text, .. } => eprintln!("ENTER_PREEDIT bytes={}", marked_text.len()),
+                Event::TypedCharacters { chars } => eprintln!(
+                    "ENTER_TEXT bytes={} control={:?}",
+                    chars.len(),
+                    chars.chars().filter(|c| c.is_control()).collect::<Vec<_>>()
+                ),
+                Event::SetMarkedText { marked_text, .. } => {
+                    eprintln!("ENTER_PREEDIT bytes={}", marked_text.len())
+                }
                 Event::ClearMarkedText => eprintln!("ENTER_PREEDIT clear"),
                 _ => {}
             }
         }
         if self.context_menu {
-            if let Event::KeyDown {keystroke,..}=event.raw_event(){
-                let a=match keystroke.key.as_str(){"up"=>Some(Action::ContextNavigate(-1)),"down"=>Some(Action::ContextNavigate(1)),"enter"|"return"=>Some(Action::ContextActivate),"escape"|"tab"=>Some(Action::ContextClose),_=>None};
-                if let Some(a)=a{ctx.dispatch_typed_action(a);return true;}
+            if let Event::KeyDown { keystroke, .. } = event.raw_event() {
+                let a = match keystroke.key.as_str() {
+                    "up" => Some(Action::ContextNavigate(-1)),
+                    "down" => Some(Action::ContextNavigate(1)),
+                    "enter" | "return" => Some(Action::ContextActivate),
+                    "escape" | "tab" => Some(Action::ContextClose),
+                    _ => None,
+                };
+                if let Some(a) = a {
+                    ctx.dispatch_typed_action(a);
+                    return true;
+                }
             }
         }
-        if let Event::KeyDown { keystroke, is_composing: false, .. } = event.raw_event() {
+        if let Event::KeyDown {
+            keystroke,
+            is_composing: false,
+            ..
+        } = event.raw_event()
+        {
             if !self.composing {
                 let action = if self.recording_shortcut {
                     Some(Action::Settings(if keystroke.key == "escape" {
                         SettingsAction::CancelShortcut
-                    } else { SettingsAction::CaptureShortcut(shortcuts::Shortcuts::captured(keystroke)) }))
+                    } else {
+                        SettingsAction::CaptureShortcut(shortcuts::Shortcuts::captured(keystroke))
+                    }))
                 } else if shortcuts::Shortcuts::matches(&self.shortcut, keystroke) {
                     Some(Action::CompactChat)
-                } else { None };
-                if let Some(action) = action { ctx.dispatch_typed_action(action); return true; }
+                } else {
+                    None
+                };
+                if let Some(action) = action {
+                    ctx.dispatch_typed_action(action);
+                    return true;
+                }
             }
         }
-        if self.recording_shortcut && matches!(event.raw_event(), Event::TypedCharacters { .. } | Event::SetMarkedText { .. }) { return true; }
+        if self.recording_shortcut
+            && matches!(
+                event.raw_event(),
+                Event::TypedCharacters { .. } | Event::SetMarkedText { .. }
+            )
+        {
+            return true;
+        }
         if self.child.dispatch_event(event, ctx, app) {
             return true;
         }
@@ -3491,7 +3756,9 @@ impl Element for Keyboard {
 impl Keyboard {
     fn action_for_event(&self, event: &Event) -> Option<Action> {
         match event {
-            Event::DragAndDropFiles { paths, .. } if self.accept_attachments => Some(Action::AmooDropFiles(paths.iter().map(PathBuf::from).collect())),
+            Event::DragAndDropFiles { paths, .. } if self.accept_attachments => Some(
+                Action::AmooDropFiles(paths.iter().map(PathBuf::from).collect()),
+            ),
             Event::TypedCharacters { chars } if self.active => Some(Action::Insert(chars.clone())),
             Event::SetMarkedText { marked_text, .. } if self.active => {
                 Some(Action::Preedit(marked_text.clone()))
@@ -3540,8 +3807,12 @@ impl Keyboard {
                     "backspace" if cmd => Some(Action::BackspaceLine),
                     "backspace" => Some(Action::Backspace),
                     "delete" => Some(Action::Delete),
-                    "left" if k.shift && typing => Some(Action::ExtendSelection(if cmd { -2 } else { -1 })),
-                    "right" if k.shift && typing => Some(Action::ExtendSelection(if cmd { 2 } else { 1 })),
+                    "left" if k.shift && typing => {
+                        Some(Action::ExtendSelection(if cmd { -2 } else { -1 }))
+                    }
+                    "right" if k.shift && typing => {
+                        Some(Action::ExtendSelection(if cmd { 2 } else { 1 }))
+                    }
                     "home" if k.shift && typing => Some(Action::ExtendSelection(-2)),
                     "end" if k.shift && typing => Some(Action::ExtendSelection(2)),
                     "left" if k.cmd && typing => Some(Action::Home),
@@ -3564,8 +3835,8 @@ mod input_tests {
 
     fn keyboard(composing: bool) -> Keyboard {
         Keyboard {
-            accept_attachments:false,
-            context_menu:false,
+            accept_attachments: false,
+            context_menu: false,
             child: Empty::new().finish(),
             shortcut: Default::default(),
             recording_shortcut: false,
@@ -3611,9 +3882,16 @@ mod input_tests {
     fn enter_and_shift_enter_share_input_rules() {
         for name in ["enter", "return"] {
             let mut event = key(name, false);
-            assert!(matches!(keyboard(false).action_for_event(&event), Some(Action::SubmitFocused)));
-            if let Event::KeyDown { keystroke, .. } = &mut event { keystroke.shift = true; }
-            assert!(matches!(keyboard(false).action_for_event(&event), Some(Action::Insert(text)) if text == "\n"));
+            assert!(matches!(
+                keyboard(false).action_for_event(&event),
+                Some(Action::SubmitFocused)
+            ));
+            if let Event::KeyDown { keystroke, .. } = &mut event {
+                keystroke.shift = true;
+            }
+            assert!(
+                matches!(keyboard(false).action_for_event(&event), Some(Action::Insert(text)) if text == "\n")
+            );
             assert!(keyboard(true).action_for_event(&event).is_none());
         }
     }
@@ -3627,7 +3905,9 @@ mod input_tests {
         let mut input = keyboard(false);
         assert!(input.action_for_event(&event).is_none());
         input.accept_attachments = true;
-        assert!(matches!(input.action_for_event(&event), Some(Action::AmooDropFiles(paths)) if paths == vec![PathBuf::from("/tmp/example.csv")]));
+        assert!(
+            matches!(input.action_for_event(&event), Some(Action::AmooDropFiles(paths)) if paths == vec![PathBuf::from("/tmp/example.csv")])
+        );
     }
 
     #[test]

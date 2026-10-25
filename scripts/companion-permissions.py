@@ -25,6 +25,7 @@ sys.path.insert(0, str(WORKFLOW / 'tools'))
 from common import ADB, CONFIG, guard, root_json, shell
 from host_runtime import file_lock, sdk_tool, sdk_command, java_environment, subprocess_options
 from companion_apk import ensure_update_preserves_runtime, signer_digests
+from companion_loader import adapt as adapt_native_loader
 
 PACKAGE = 'com.stepx.companion.app'
 PERMISSION = 'com.stepos.permission.MANAGE_BACK_SCREEN'
@@ -35,7 +36,7 @@ WAKE_OWNER = 'com.stepos.pushservice'
 WAKE_SCOPE = 'wake_permission_v1'
 AUTHORIZED_SERIAL = 'ZYPZ261A01M692000LP'
 LOADER_SHA256 = '279305289749acada3f9951c816d7e9f00367dce4331d4396c04554e4685fbf8'
-WORKER_SHA256 = 'cb05bdcb08a86967b1e1f9cf7f807bba93f94616b49dc90f0c6a0d90d6fbea40'
+WORKER_SHA256 = '71be97798c805fc803b8eef47f9188aadd0c17f23a2b12ac607e8fa242ed188a'
 STATE = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'stepx-companion/permissions'
 
 
@@ -382,7 +383,7 @@ def agentbus_worker_source(source):
 
 
 AGENTBUS_WORKER_TEMPLATE = r'''#!/usr/bin/python3
-import os,sys,json,socket,struct,ctypes,mmap,time,signal,base64,hashlib,binascii,stat,errno,re,subprocess,select,sqlite3,gzip,zlib
+import os,sys,json,socket,struct,ctypes,mmap,time,signal,base64,hashlib,binascii,stat,errno,re,subprocess,select,sqlite3,gzip,zlib,fcntl
 lib=ctypes.CDLL(None,use_errno=True)
 host='/proc/'+str(os.getppid())+'/root'
 def prop(name,value):
@@ -393,6 +394,15 @@ def prop(name,value):
   if len(r)!=4 or struct.unpack('<I',r)[0]!=0:raise RuntimeError('property restore failed')
  finally:s.close()
 prop('persist.openclaw.zygote.path','');prop('sys.openclaw.env.start','')
+# Keep the existing boot adapters out of this diagnostic operation. File locks
+# survive fork in the worker; the factory launcher closes its copies on exec.
+boot_locks=[];lock_error=None
+try:
+ for path in ('/var/lib/stepx-gms/lock','/var/lib/stepx-companion/lock'):
+  if not os.path.isdir(os.path.dirname(path)):continue
+  fd=os.open(path,os.O_RDWR|os.O_CREAT,0o600);boot_locks.append(fd)
+  fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+except OSError:lock_error='Existing boot restoration is active; no diagnostic executed'
 shared=mmap.mmap(-1,256*1024,flags=mmap.MAP_SHARED|mmap.MAP_ANONYMOUS)
 json.dumps({'warmup':True});hashlib.sha256(b'warmup');base64.b64decode('AA==')
 def publish(value):
@@ -432,6 +442,7 @@ try:
    fd=os.open('/proc/self/attr/current',os.O_WRONLY);os.write(fd,b'u:r:system_app:s0');os.close(fd)
    out.update(uid=os.getuid(),euid=os.geteuid(),context=open('/proc/self/attr/current').read().strip('\\x00\\n'),phase='payload')
    publish(out)
+   if lock_error:raise RuntimeError(lock_error)
    exec(CODE,globals(),locals())
   except BaseException as error:out['error']=repr(error)
   finally:
@@ -452,9 +463,24 @@ save(out);os._exit(0)
 '''
 
 
+def verify_system_server_stable(target_pid, seconds=20):
+    """A successful native return does not exclude a delayed ART/GC crash."""
+    until=time.monotonic()+seconds
+    while True:
+        if shell('pidof','system_server')!=str(target_pid):
+            return False
+        if time.monotonic()>=until:return True
+        time.sleep(1)
+
+
 def run_bounded_android_worker(code, target_pid, preserve_verified_result=None, worker_context='system_server'):
     if worker_context not in ('system_server', 'agentbus'):
         raise RuntimeError('Unsupported bounded worker context')
+    quarantine=STATE/'native-quarantine.json'
+    if 'pt(0x4206,t)' in code and quarantine.exists():
+        previous=json.loads(quarantine.read_text())
+        if previous.get('target_pid')==target_pid and previous.get('boot_id')==shell('cat','/proc/sys/kernel/random/boot_id'):
+            raise RuntimeError('Previous native operation failed in this system process; automatic retry is disabled')
     properties = {key: shell('getprop', key) for key in ('persist.openclaw.zygote.path', 'sys.openclaw.env.start')}
     if any(properties.values()):
         raise RuntimeError('Another StepClaw startup operation is active; companion permission was not changed')
@@ -497,6 +523,14 @@ def run_bounded_android_worker(code, target_pid, preserve_verified_result=None, 
         private_json(STATE / 'last-worker-result.json', proof)
         if not restored or not unchanged:
             raise RuntimeError('Companion worker did not preserve startup properties/system_server; inspect before retrying')
+        if proof.get('calls',0)>0:
+            native_fault=bool(proof.get('error') or proof.get('jni_cleanup_error'))
+            stable=verify_system_server_stable(target_pid)
+            proof.update(system_server_stable=stable,stability_seconds=20,validation_stage='stability')
+            private_json(STATE / 'last-worker-result.json',proof)
+            if native_fault or not stable:
+                private_json(quarantine,{'target_pid':target_pid,'boot_id':shell('cat','/proc/sys/kernel/random/boot_id'),'error':proof.get('error','Delayed system process restart')})
+                raise RuntimeError('Native operation failed or Android restarted during validation; result saved and automatic retry disabled')
         after = root_json("import os,json,hashlib; print(json.dumps({'launcher':hashlib.sha256(open('/usr/local/bin/ubuntu_zygote','rb').read()).hexdigest(),'root_available':os.geteuid()==0}))")
         if after != before:
             raise RuntimeError('Companion worker could not verify original StepClaw launcher/runtime')
@@ -532,6 +566,7 @@ def inject(cert, grant, restore_flags, expected_uid):
     source = (WORKFLOW / 'module/inject.py').read_text()
     if hashlib.sha256(source.encode()).hexdigest() != LOADER_SHA256:
         raise RuntimeError('Native loader changed; review the companion adapter before reuse')
+    source = adapt_native_loader(source)
     dex = (ROOT / 'desktop/assets/stepx-companion-permissions.dex').read_bytes()
     if not dex.startswith(b'dex\n') or len(dex) > 64 * 1024:
         raise RuntimeError('Invalid companion permission DEX')
@@ -610,6 +645,7 @@ def inject_connection(cert, operation, before_flags, expected_uid):
     source = (WORKFLOW / 'module/inject.py').read_text()
     if hashlib.sha256(source.encode()).hexdigest() != LOADER_SHA256:
         raise RuntimeError('Native loader changed; review the connection permission adapter')
+    source = adapt_native_loader(source)
     dex = (ROOT / 'desktop/assets/stepx-companion-permissions.dex').read_bytes()
     if not dex.startswith(b'dex\n') or len(dex) > 64 * 1024:
         raise RuntimeError('Invalid companion permission DEX')
@@ -721,6 +757,7 @@ def inject_wake(cert, operation, before_flags, expected_uid):
     source = (WORKFLOW / 'module/inject.py').read_text()
     if hashlib.sha256(source.encode()).hexdigest() != LOADER_SHA256:
         raise RuntimeError('Native loader changed; review the wake permission adapter')
+    source = adapt_native_loader(source)
     dex = (ROOT / 'desktop/assets/stepx-companion-permissions.dex').read_bytes()
     if not dex.startswith(b'dex\n') or len(dex) > 64 * 1024:
         raise RuntimeError('Invalid companion permission DEX')

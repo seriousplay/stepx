@@ -86,7 +86,8 @@ impl Companion {
     }
 
     fn input_method_tool_page(&self) -> El {
-        let p=self.p();let r=&self.input_method;
+        let p = self.p();
+        let r = &self.input_method;
         self.panel(vec![
             self.heading("小企鹅中文输入法"),
             self.text("开源中文输入法，支持拼音、中文候选与中英文切换。",BODY,p.text2),
@@ -457,7 +458,15 @@ impl Companion {
     fn tool_card(&self, tool: ToolPage) -> El {
         let p = self.p();
         let (symbol, state) = match tool {
-            ToolPage::InputMethod => ("⌨",if self.input_method.active {"小企鹅已启用"} else {"安装中文输入法"}.into()),
+            ToolPage::InputMethod => (
+                "⌨",
+                if self.input_method.active {
+                    "小企鹅已启用"
+                } else {
+                    "安装中文输入法"
+                }
+                .into(),
+            ),
             ToolPage::Storage => (
                 "▤",
                 self.storage_report
@@ -584,7 +593,7 @@ impl Companion {
                 ),
             )]));
         }
-        if self.busy && self.tool_page!=Some(ToolPage::InputMethod) {
+        if self.busy && self.tool_page != Some(ToolPage::InputMethod) {
             let progress = self
                 .google_progress
                 .try_lock()
@@ -597,7 +606,9 @@ impl Companion {
                 .unwrap_or_else(|| self.status.clone());
             parts.push(self.panel(vec![self.text(progress, CAPTION, p.accent)]));
         } else if let Some((tool, message, error)) = &self.tools_feedback {
-            if self.tool_page!=Some(ToolPage::InputMethod) && (self.tool_page.is_none() || self.tool_page == *tool) {
+            if self.tool_page != Some(ToolPage::InputMethod)
+                && (self.tool_page.is_none() || self.tool_page == *tool)
+            {
                 let label = format!(
                     "{} · {}",
                     tool.map(ToolPage::title).unwrap_or("小工具"),
@@ -614,7 +625,7 @@ impl Companion {
             let message = match action {
                 Action::NeoRestore => "将停用 GUI Agent 任务路由，撤销本模块添加的无障碍和可选输入法；保留伴侣其他服务、后台策略与数据。请先结束当前任务。",
                 Action::GoogleSuiteInstall => "将安装或修复 StepX伴侣，并保留已有 Google 组件。完整安装且版本已适配时，会备份并应用 Google Play 兼容补丁；首次安装后需按提示重启解锁。",
-                Action::GoogleSuiteMaintain => "将核对手机固件与 Google 组件版本，保存可恢复的备份，再应用兼容补丁并重新启动 Google 服务。用于恢复商店浏览和下载安装，不改变 Google 官方认证状态。请保持手机已解锁并连接电脑。",
+                Action::GoogleSuiteMaintain => "将核对固件与 Google 签名，备份后修复商店配置、服务权限、通用登录入口和应用链接验证，并启用 Google 组件更新后的自动恢复。必要时短暂重启 Amoo 后台服务，请先结束任务。保留账号与应用数据；此操作不改变 Google 官方认证或第三方服务器的登录判定。请保持手机已解锁并连接电脑。",
                 Action::GoogleSuiteRollback => "将核对备份并恢复补丁修改的设置，重新启动 Google 服务。保留 Google 账号和已安装应用；设备未认证的拦截页可能恢复。",
                 Action::ToggleSystemService(_, true) => "将重新启用此服务，它可能恢复后台运行。",
                 _ => "将停用此服务，相关功能会停止；可在此处重新启用。不会卸载应用或删除数据。",
@@ -1286,7 +1297,7 @@ impl Companion {
         sections.push(self.panel(vec![
             self.between(self.heading("扫码连接电脑"), self.line(if companion.pairing_ready { "系统配对服务已核验" } else if companion.pairing_permission_granted { "权限已授权 · 服务未核验" } else { "权限尚未就绪" }, CAPTION, if companion.pairing_ready { p.success } else { p.warning })),
             self.text(&companion.pairing_message, BODY, p.text2),
-            self.text("扫码服务随伴侣安装，并核验手机实际接收结果；当前只在本次手机开机期间生效。重启手机后，通过 USB 连接后点击「更新／修复伴侣」恢复。手机和电脑需处于同一局域网，真实无线通道验证后才显示连接成功。", CAPTION, p.text3),
+            self.text("已适配的 StepX 172 固件会同时安装开机恢复组件。手机重启后完成系统首次解锁，已配对电脑在同一局域网自动重连，无需重复 USB 修复。首次配对或更换 Wi-Fi 仍需手机确认；无线通道验证成功后才显示已连接。", CAPTION, p.text3),
             self.button("companion-pair", if companion.pairing_ready { "打开配对二维码" } else { "查看系统无线配对方式" }, Action::ConnectGuide(Some(if companion.pairing_ready { 4 } else { 3 })), Btn::Secondary),
         ]));
         let power_state = |value: Option<bool>| match value {
@@ -1378,6 +1389,19 @@ impl Companion {
         }
         rows.push(self.divider());
         rows.push(self.text("安装 Google Play 时会同时安装 StepX伴侣，用于扫码、文件互传、背屏与 Amoo 后台连接。仅适配已验证的 StepX 固件；保留已有 Google 包。", CAPTION, p.text2));
+        if !g.health_checks.is_empty() {
+            rows.push(self.heading("基础服务与通用登录"));
+            for check in &g.health_checks {
+                let (label, color) = match check.state.as_str() {
+                    "pass" => ("已就绪", p.success),
+                    "fail" => ("需要处理", p.warning),
+                    _ => ("待确认", p.text3),
+                };
+                rows.push(self.between(self.line(&check.title, BODY, p.text), self.line(label, CAPTION, color)));
+                rows.push(self.text(&check.detail, CAPTION, p.text2));
+            }
+            rows.push(self.text("以上检测的是共用服务。各应用的登录结果和设备认证仍由对应服务验证；修复保留现有账号。", CAPTION, p.text3));
+        }
         let mut buttons = vec![];
         if g.checked
             && (g.installed
@@ -1446,17 +1470,18 @@ impl Companion {
             ),
             self.text(&g.compatibility_note, BODY, p.text2),
             self.text(
-                "用于已适配设备的商店浏览和手动下载安装；应用前核对组件版本并备份，可在这里撤销。检测只读取补丁配置。",
+                "用于已适配设备的商店浏览和手动下载安装；应用前核对组件版本并备份，可在这里撤销。检测只读取补丁配置，不代表 Google 账号登录、Gmail 或 Gemini 已验证可用。",
                 CAPTION,
                 p.text2,
             ),
         ];
         if g.checked && g.installed && self.tool_confirmation.is_none() {
             let mut actions = vec![];
-            if g.compatibility_checked && g.compatibility_supported && !g.compatibility_active {
+            if g.compatibility_checked && g.compatibility_supported
+                && (!g.compatibility_active || !g.boot_module_ready || g.health_needs_repair) {
                 actions.push(self.utility_button(
                     "tool-google-compat-apply",
-                    "应用兼容补丁",
+                    "修复 Google 服务",
                     Action::PrepareUtility(Box::new(Action::GoogleSuiteMaintain)),
                     true,
                 ));
@@ -1477,7 +1502,7 @@ impl Companion {
             self.heading("Google 官方认证"),
             self.text(&g.certification_note, BODY, p.text2),
             self.text(
-                "兼容补丁与 Google 官方认证分别检测。商店下载可用不代表支付、DRM 或 Play Integrity 已通过。",
+                "兼容补丁与 Google 官方认证分别检测。商店下载可用不代表 Gmail、Gemini、Google 账号登录、支付或 Play Integrity 已通过。",
                 CAPTION,
                 p.text3,
             ),

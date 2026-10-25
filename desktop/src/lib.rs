@@ -16,6 +16,7 @@ pub mod mirror_window;
 pub mod openclaw;
 pub mod pairing;
 pub mod phone;
+pub mod reconnect;
 pub mod sms;
 pub mod storage;
 pub mod toolbox;
@@ -71,5 +72,5 @@ pub mod speech;
 
 pub mod input_method;
 
-pub mod desktop_update;
 pub mod amoo_workspace;
+pub mod desktop_update;

@@ -190,12 +190,30 @@ impl Companion {
 }
 
 impl Companion {
-    pub(super) fn text_test_fixture(&self)->Option<Box<dyn Element>> {
-        if !self.demo_mode || !std::env::args().any(|a|a=="--verify-text-interaction") {return None;}
-        let p=self.p();
-        if std::env::args().any(|a|a=="--long-scroll") {
-            let lines=(0..100).map(|i|self.line(format!("第 {i} 条消息，用于验证滚轮缓动与阅读位置保留"),16.,p.text)).collect();
-            return Some(Container::new(ConstrainedBox::new(self.chat_scroll(self.vstack(12.,lines))).with_height(300.).finish()).with_uniform_padding(32.).finish());
+    pub(super) fn text_test_fixture(&self) -> Option<Box<dyn Element>> {
+        if !self.demo_mode || !std::env::args().any(|a| a == "--verify-text-interaction") {
+            return None;
+        }
+        let p = self.p();
+        if std::env::args().any(|a| a == "--long-scroll") {
+            let lines = (0..100)
+                .map(|i| {
+                    self.line(
+                        format!("第 {i} 条消息，用于验证滚轮缓动与阅读位置保留"),
+                        16.,
+                        p.text,
+                    )
+                })
+                .collect();
+            return Some(
+                Container::new(
+                    ConstrainedBox::new(self.chat_scroll(self.vstack(12., lines)))
+                        .with_height(300.)
+                        .finish(),
+                )
+                .with_uniform_padding(32.)
+                .finish(),
+            );
         }
         Some(Container::new(self.vstack(24.,vec![
             self.heading("原生文字交互验证"),
@@ -209,23 +227,53 @@ impl Companion {
             self.speech_icon("test-speech".into(),"你好，这是电脑朗读测试。".into()),
         ])).with_uniform_padding(32.).with_background_color(p.bg).finish())
     }
-    #[cfg(target_os="linux")]
-    pub(super) fn verify_text_interaction(&mut self,ctx:&mut ViewContext<Self>) {
-        if !self.demo_mode || !std::env::args().any(|a|a=="--verify-text-interaction") {return;}
-        let Some(dir)=std::env::var_os("STEPX_TEXT_CHECK_DIR").map(PathBuf::from) else{return;};
-        static INIT:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
-        if !INIT.swap(true,std::sync::atomic::Ordering::SeqCst){self.fields[F_AMOO].set("你好 ABC世界🌟\n第二行文字");self.fields[F_WORK_PROMPT].set("Work 中文输入");self.focus=None;ctx.notify();}
-        let window=facloud_ui::windowing::winit::winit_window_for_id(ctx,ctx.window_id()).unwrap();
-        let origin=window.inner_position().unwrap();
-        let mut positions=serde_json::Map::new();
-        for id in ["test-msg-0","test-msg-4","input-caret:5"] {
-            if let Some(r)=ctx.element_position_by_id(id.to_owned()){positions.insert(id.into(),serde_json::json!([r.origin().x(),r.origin().y(),r.width(),r.height()]));}
+    #[cfg(target_os = "linux")]
+    pub(super) fn verify_text_interaction(&mut self, ctx: &mut ViewContext<Self>) {
+        if !self.demo_mode || !std::env::args().any(|a| a == "--verify-text-interaction") {
+            return;
         }
-        let data=serde_json::json!({"origin":[origin.x,origin.y],"scale":window.scale_factor(),"positions":positions,
+        let Some(dir) = std::env::var_os("STEPX_TEXT_CHECK_DIR").map(PathBuf::from) else {
+            return;
+        };
+        static INIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !INIT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            self.fields[F_AMOO].set("你好 ABC世界🌟\n第二行文字");
+            self.fields[F_WORK_PROMPT].set("Work 中文输入");
+            self.focus = None;
+            ctx.notify();
+        }
+        let window =
+            facloud_ui::windowing::winit::winit_window_for_id(ctx, ctx.window_id()).unwrap();
+        let origin = window.inner_position().unwrap();
+        let mut positions = serde_json::Map::new();
+        for id in ["test-msg-0", "test-msg-4", "input-caret:5"] {
+            if let Some(r) = ctx.element_position_by_id(id.to_owned()) {
+                positions.insert(
+                    id.into(),
+                    serde_json::json!([r.origin().x(), r.origin().y(), r.width(), r.height()]),
+                );
+            }
+        }
+        let data = serde_json::json!({"origin":[origin.x,origin.y],"scale":window.scale_factor(),"positions":positions,
             "context_open":self.context_menu.is_some(),"composer_scroll":self.amoo_ui.composer_scroll.scroll_start().as_f32(),"undo":self.fields[F_AMOO].undo.len(),"scroll":self.scroll.scroll_start().as_f32(),"near_end":self.chat_near_end(),"metrics":self.chat_scroll_metrics.get(),"selected":self.selected_text,"focus":self.focus,"amoo":self.fields[F_AMOO].text,"amoo_cursor":self.fields[F_AMOO].cursor,"amoo_range":self.fields[F_AMOO].selection_range().map(|r|vec![r.start,r.end]),"work":self.fields[F_WORK_PROMPT].text,
             "clipboard":ctx.clipboard().read().plain_text,"speech":self.speech.key,"status":self.status,"error":self.error});
-        let _=std::fs::write(dir.join("state.tmp"),data.to_string());let _=std::fs::rename(dir.join("state.tmp"),dir.join("state.json"));
-        if dir.join("capture").exists(){let _=std::fs::remove_file(dir.join("capture"));let path=dir.join("native-text.png");ctx.windows().platform_window(ctx.window_id()).unwrap().as_ctx().request_frame_capture(Box::new(move|f|{image::save_buffer(path,&f.data,f.width,f.height,image::ColorType::Rgba8).unwrap();}));ctx.notify();}
-        if dir.join("stop").exists(){ctx.close_window();}
+        let _ = std::fs::write(dir.join("state.tmp"), data.to_string());
+        let _ = std::fs::rename(dir.join("state.tmp"), dir.join("state.json"));
+        if dir.join("capture").exists() {
+            let _ = std::fs::remove_file(dir.join("capture"));
+            let path = dir.join("native-text.png");
+            ctx.windows()
+                .platform_window(ctx.window_id())
+                .unwrap()
+                .as_ctx()
+                .request_frame_capture(Box::new(move |f| {
+                    image::save_buffer(path, &f.data, f.width, f.height, image::ColorType::Rgba8)
+                        .unwrap();
+                }));
+            ctx.notify();
+        }
+        if dir.join("stop").exists() {
+            ctx.close_window();
+        }
     }
 }

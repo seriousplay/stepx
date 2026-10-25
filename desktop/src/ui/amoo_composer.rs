@@ -8,10 +8,17 @@ impl Companion {
     /// Keep room to read the conversation on short windows. The input and
     /// attachments scroll independently instead of consuming the entire pane.
     pub(super) fn composer_limits(&self, compact: bool) -> (f32, f32) {
-        if self.workspace.viewport.y() < 520. { (48., 44.) }
-        else if self.workspace.viewport.y() < 560. { (64., 52.) }
-        else if self.workspace.viewport.y() < 720. { (96., 64.) }
-        else if compact { (126., 88.) } else { (160., 104.) }
+        if self.workspace.viewport.y() < 520. {
+            (48., 44.)
+        } else if self.workspace.viewport.y() < 560. {
+            (64., 52.)
+        } else if self.workspace.viewport.y() < 720. {
+            (96., 64.)
+        } else if compact {
+            (126., 88.)
+        } else {
+            (160., 104.)
+        }
     }
     fn composer_icon(
         &self,
@@ -88,7 +95,7 @@ impl Companion {
             }
         })
         .finish();
-        #[cfg(feature="ui-capture")]
+        #[cfg(feature = "ui-capture")]
         let control = super::scenario_check::control(id, control);
         control
     }
@@ -128,26 +135,38 @@ impl Companion {
         );
         // Use measured wrapped text height, not a character-count estimate. Long
         // drafts scroll independently, keeping both the conversation and tools visible.
-        SavePosition::new(Hoverable::new(self.mouse_state("amoo-composer-editor"), move |_| {
-            ConstrainedBox::new(
-                Container::new(editor)
-                    .with_uniform_padding(S1)
-                    .with_background_color(if field.all {
-                        p.accent_soft
-                    } else {
-                        ColorU::transparent_black()
-                    })
-                    .finish(),
-            )
-            .with_min_height((if compact { 48.0_f32 } else { 68.0 }).min(self.composer_limits(compact).0))
-            .with_max_height(self.composer_limits(compact).0)
-            .finish()
-        })
-        .with_cursor(Cursor::IBeam)
-        .with_defer_events_to_children()
-        .on_mouse_down(|ctx, _, _| ctx.dispatch_typed_action(Action::Focus(F_AMOO)))
-        .on_right_click(|ctx, _, at| ctx.dispatch_typed_action(Action::ContextOpen(context_menu::Target::Input(F_AMOO), at)))
-        .finish(), "composer-editor").for_single_frame().finish()
+        SavePosition::new(
+            Hoverable::new(self.mouse_state("amoo-composer-editor"), move |_| {
+                ConstrainedBox::new(
+                    Container::new(editor)
+                        .with_uniform_padding(S1)
+                        .with_background_color(if field.all {
+                            p.accent_soft
+                        } else {
+                            ColorU::transparent_black()
+                        })
+                        .finish(),
+                )
+                .with_min_height(
+                    (if compact { 48.0_f32 } else { 68.0 }).min(self.composer_limits(compact).0),
+                )
+                .with_max_height(self.composer_limits(compact).0)
+                .finish()
+            })
+            .with_cursor(Cursor::IBeam)
+            .with_defer_events_to_children()
+            .on_mouse_down(|ctx, _, _| ctx.dispatch_typed_action(Action::Focus(F_AMOO)))
+            .on_right_click(|ctx, _, at| {
+                ctx.dispatch_typed_action(Action::ContextOpen(
+                    context_menu::Target::Input(F_AMOO),
+                    at,
+                ))
+            })
+            .finish(),
+            "composer-editor",
+        )
+        .for_single_frame()
+        .finish()
     }
 
     pub(super) fn amoo_message_composer(&self, compact: bool, phone_mode: bool) -> El {
@@ -173,14 +192,32 @@ impl Companion {
             && !gui_has_attachments
             && (phone_mode || !pending)
             && self.fields[F_AMOO].preedit.is_empty();
-        let can_send = if phone_mode {can_send} else {self.workspace_can_send()};
+        let can_send = if phone_mode {
+            can_send
+        } else {
+            self.workspace_can_send()
+        };
         let can_stop = !phone_mode && !self.busy && self.workspace.running.is_some();
-        let stop_label = if self.workspace.running.as_ref().is_some_and(|r| matches!(r.executor,stepx_companion::amoo_workspace::Executor::Files|stepx_companion::amoo_workspace::Executor::App)) {"停止任务"} else {"停止等待，手机任务可能继续"};
+        let stop_label = if self.workspace.running.as_ref().is_some_and(|r| {
+            matches!(
+                r.executor,
+                stepx_companion::amoo_workspace::Executor::Files
+                    | stepx_companion::amoo_workspace::Executor::App
+            )
+        }) {
+            "停止任务"
+        } else {
+            "停止等待，手机任务可能继续"
+        };
         let mut rows = Vec::new();
         if !self.amoo_attachments.is_empty() && !phone_mode {
             if self.amoo_attachments.len() > 1 {
                 rows.push(self.between(
-                    self.line(format!("已添加 {} 个附件", self.amoo_attachments.len()), MICRO, p.text2),
+                    self.line(
+                        format!("已添加 {} 个附件", self.amoo_attachments.len()),
+                        MICRO,
+                        p.text2,
+                    ),
                     self.line("滚动查看", MICRO, p.text3),
                 ));
             }
@@ -240,12 +277,18 @@ impl Companion {
                     .finish()
                 })
                 .collect();
-            rows.push(SavePosition::new(
-                ConstrainedBox::new(
-                    self.pane_scroll(self.amoo_ui.attachment_scroll.clone(), self.wrap(chips)),
+            rows.push(
+                SavePosition::new(
+                    ConstrainedBox::new(
+                        self.pane_scroll(self.amoo_ui.attachment_scroll.clone(), self.wrap(chips)),
+                    )
+                    .with_max_height(self.composer_limits(compact).1)
+                    .finish(),
+                    "composer-attachments",
                 )
-                .with_max_height(self.composer_limits(compact).1)
-                .finish(), "composer-attachments").for_single_frame().finish());
+                .for_single_frame()
+                .finish(),
+            );
         }
         rows.push(self.amoo_composer_editor(phone_mode, compact));
         let attachments_enabled = !self.busy && !self.workspace_busy();
@@ -296,49 +339,117 @@ impl Companion {
         };
         let mut actions = vec![tools];
         if !phone_mode {
-            actions.push(SavePosition::new(self.button_icon("workspace-composer-intent",self.workspace.intent.label(),UiIcon::ChevronDown,Action::Workspace(WorkspaceAction::Menu(7)),Btn::Ghost), "workspace-intent-anchor").for_single_frame().finish());
+            actions.push(
+                SavePosition::new(
+                    self.button_icon(
+                        "workspace-composer-intent",
+                        self.workspace.intent.label(),
+                        UiIcon::ChevronDown,
+                        Action::Workspace(WorkspaceAction::Menu(7)),
+                        Btn::Ghost,
+                    ),
+                    "workspace-intent-anchor",
+                )
+                .for_single_frame()
+                .finish(),
+            );
             if !compact || self.workspace.viewport.x() >= 480. {
-                actions.push(self.composer_icon("workspace-composer-model","模型与账号",UiIcon::Cpu,Some(Action::Workspace(WorkspaceAction::Menu(1))),false));
+                actions.push(self.composer_icon(
+                    "workspace-composer-model",
+                    "模型与账号",
+                    UiIcon::Cpu,
+                    Some(Action::Workspace(WorkspaceAction::Menu(1))),
+                    false,
+                ));
             }
-            actions.push(self.composer_icon("workspace-composer-resources","更多：模型、技能和成果",UiIcon::Plus,Some(Action::Workspace(WorkspaceAction::Menu(2))),false));
+            actions.push(self.composer_icon(
+                "workspace-composer-resources",
+                "更多：模型、技能和成果",
+                UiIcon::Plus,
+                Some(Action::Workspace(WorkspaceAction::Menu(2))),
+                false,
+            ));
         }
-        rows.push(SavePosition::new(self.hstack(
-            S2,
-            vec![
-                    self.hstack(S1,actions),
-                    Expanded::new(
-                        1.,
-                        Align::new(self.line(if !occupied && !pending {""} else if self.workspace.viewport.x() < 1000. {"…"} else {hint}, MICRO, p.text3)).right().finish(),
-                    )
-                    .finish(),
-                    SavePosition::new(self.composer_icon(
-                        "amoo-composer-send",
-                        if can_stop {stop_label} else if can_send {
-                            if phone_mode {
-                                "开始操作"
-                            } else {
-                                "发送消息"
-                            }
-                        } else if has_content {
-                            hint
-                        } else {
-                            "输入消息或添加附件后发送"
-                        },
-                        if can_stop {UiIcon::Close} else {UiIcon::ArrowUp},
-                        if can_stop {Some(Action::Workspace(WorkspaceAction::Stop))} else {can_send.then_some(if phone_mode{Action::AmooSend}else{Action::Workspace(WorkspaceAction::Prepare)})},
-                        true,
-                    ), "composer-send").for_single_frame().finish(),
-                ],
-        ), "composer-toolbar").for_single_frame().finish());
-        SavePosition::new(Container::new(self.vstack(S2, rows))
-            .with_uniform_padding(S3)
-            .with_background_color(p.bg)
-            .with_border(Border::all(1.).with_border_color(if focused {
-                p.border_strong
-            } else {
-                p.border
-            }))
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(16.)))
-            .finish(), "composer-surface").for_single_frame().finish()
+        rows.push(
+            SavePosition::new(
+                self.hstack(
+                    S2,
+                    vec![
+                        self.hstack(S1, actions),
+                        Expanded::new(
+                            1.,
+                            Align::new(self.line(
+                                if !occupied && !pending {
+                                    ""
+                                } else if self.workspace.viewport.x() < 1000. {
+                                    "…"
+                                } else {
+                                    hint
+                                },
+                                MICRO,
+                                p.text3,
+                            ))
+                            .right()
+                            .finish(),
+                        )
+                        .finish(),
+                        SavePosition::new(
+                            self.composer_icon(
+                                "amoo-composer-send",
+                                if can_stop {
+                                    stop_label
+                                } else if can_send {
+                                    if phone_mode {
+                                        "开始操作"
+                                    } else {
+                                        "发送消息"
+                                    }
+                                } else if has_content {
+                                    hint
+                                } else {
+                                    "输入消息或添加附件后发送"
+                                },
+                                if can_stop {
+                                    UiIcon::Close
+                                } else {
+                                    UiIcon::ArrowUp
+                                },
+                                if can_stop {
+                                    Some(Action::Workspace(WorkspaceAction::Stop))
+                                } else {
+                                    can_send.then_some(if phone_mode {
+                                        Action::AmooSend
+                                    } else {
+                                        Action::Workspace(WorkspaceAction::Prepare)
+                                    })
+                                },
+                                true,
+                            ),
+                            "composer-send",
+                        )
+                        .for_single_frame()
+                        .finish(),
+                    ],
+                ),
+                "composer-toolbar",
+            )
+            .for_single_frame()
+            .finish(),
+        );
+        SavePosition::new(
+            Container::new(self.vstack(S2, rows))
+                .with_uniform_padding(S3)
+                .with_background_color(p.bg)
+                .with_border(Border::all(1.).with_border_color(if focused {
+                    p.border_strong
+                } else {
+                    p.border
+                }))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(16.)))
+                .finish(),
+            "composer-surface",
+        )
+        .for_single_frame()
+        .finish()
     }
 }

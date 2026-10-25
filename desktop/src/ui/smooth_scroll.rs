@@ -113,7 +113,11 @@ impl Companion {
             child: self.chat_pane_scroll(content, false),
             metrics: self.chat_scroll_metrics.clone(),
             viewport: true,
-            tail: Some((self.scroll.clone(), self.chat_tail_requested.clone(), self.selected_text.is_none())),
+            tail: Some((
+                self.scroll.clone(),
+                self.chat_tail_requested.clone(),
+                self.selected_text.is_none(),
+            )),
         }
         .finish()
     }
@@ -123,9 +127,24 @@ impl Companion {
         let p = self.p();
         let thumb = facloud_ui::color::ColorU::new(p.text3.r, p.text3.g, p.text3.b, 90);
         let active = facloud_ui::color::ColorU::new(p.text3.r, p.text3.g, p.text3.b, 160);
-        let make = if centered { ClippedScrollable::vertical_centered } else { ClippedScrollable::vertical };
-        self.ease_scroll(make(self.scroll.clone(), content, ScrollbarWidth::Auto, thumb.into(), active.into(), Fill::None)
-            .with_overlayed_scrollbar().finish(), self.scroll.clone())
+        let make = if centered {
+            ClippedScrollable::vertical_centered
+        } else {
+            ClippedScrollable::vertical
+        };
+        self.ease_scroll(
+            make(
+                self.scroll.clone(),
+                content,
+                ScrollbarWidth::Auto,
+                thumb.into(),
+                active.into(),
+                Fill::None,
+            )
+            .with_overlayed_scrollbar()
+            .finish(),
+            self.scroll.clone(),
+        )
     }
     #[track_caller]
     pub(super) fn ease_scroll(
@@ -159,16 +178,27 @@ struct ChatExtent {
 
 /// Pin only on entry or when a tail-following reader's layout grows/resizes.
 /// An empty first layout stays at the tail when async history/images arrive.
-fn tail_offset(old: (f32, f32), new: (f32, f32), offset: f32, requested: bool, follow: bool) -> Option<f32> {
-    let changed = (old.0-new.0).abs() > 0.5 || (old.1-new.1).abs() > 0.5;
-    (requested || (changed && follow && old.0-old.1-offset <= 80.))
-        .then(|| (new.0-new.1).max(0.))
+fn tail_offset(
+    old: (f32, f32),
+    new: (f32, f32),
+    offset: f32,
+    requested: bool,
+    follow: bool,
+) -> Option<f32> {
+    let changed = (old.0 - new.0).abs() > 0.5 || (old.1 - new.1).abs() > 0.5;
+    (requested || (changed && follow && old.0 - old.1 - offset <= 80.))
+        .then(|| (new.0 - new.1).max(0.))
 }
 impl Element for ChatExtent {
     fn layout(&mut self, c: SizeConstraint, x: &mut LayoutContext, a: &AppContext) -> Vector2F {
         let old = self.metrics.get();
-        let before = self.tail.as_ref().map(|(scroll, request, follow)|
-            (scroll.scroll_start().as_f32(), request.replace(false), *follow));
+        let before = self.tail.as_ref().map(|(scroll, request, follow)| {
+            (
+                scroll.scroll_start().as_f32(),
+                request.replace(false),
+                *follow,
+            )
+        });
         let size = self.child.layout(c, x, a);
         let (content, viewport) = self.metrics.get();
         self.metrics.set(if self.viewport {
@@ -210,20 +240,44 @@ mod tail_tests {
     use super::tail_offset;
     #[test]
     fn initial_async_history_and_late_images_follow_latest() {
-        assert_eq!(tail_offset((0.,0.), (0.,500.), 0.,true,true),Some(0.));
-        assert_eq!(tail_offset((0.,500.), (4000.,500.),0.,false,true),Some(3500.));
-        assert_eq!(tail_offset((4000.,500.), (4500.,500.),3500.,false,true),Some(4000.));
+        assert_eq!(tail_offset((0., 0.), (0., 500.), 0., true, true), Some(0.));
+        assert_eq!(
+            tail_offset((0., 500.), (4000., 500.), 0., false, true),
+            Some(3500.)
+        );
+        assert_eq!(
+            tail_offset((4000., 500.), (4500., 500.), 3500., false, true),
+            Some(4000.)
+        );
     }
     #[test]
     fn manual_history_reading_and_selection_stay_put() {
-        assert_eq!(tail_offset((4000.,500.), (4500.,500.),2000.,false,true),None);
-        assert_eq!(tail_offset((4000.,500.), (4500.,500.),3500.,false,false),None);
-        assert_eq!(tail_offset((4000.,500.), (4000.,500.),3450.,false,true),None);
+        assert_eq!(
+            tail_offset((4000., 500.), (4500., 500.), 2000., false, true),
+            None
+        );
+        assert_eq!(
+            tail_offset((4000., 500.), (4500., 500.), 3500., false, false),
+            None
+        );
+        assert_eq!(
+            tail_offset((4000., 500.), (4000., 500.), 3450., false, true),
+            None
+        );
     }
     #[test]
     fn mode_session_and_resize_land_on_latest() {
-        assert_eq!(tail_offset((4000.,800.), (5000.,400.),0.,true,true),Some(4600.));
-        assert_eq!(tail_offset((4000.,800.), (5000.,400.),3200.,false,true),Some(4600.));
-        assert_eq!(tail_offset((5000.,400.), (4000.,800.),4600.,false,true),Some(3200.));
+        assert_eq!(
+            tail_offset((4000., 800.), (5000., 400.), 0., true, true),
+            Some(4600.)
+        );
+        assert_eq!(
+            tail_offset((4000., 800.), (5000., 400.), 3200., false, true),
+            Some(4600.)
+        );
+        assert_eq!(
+            tail_offset((5000., 400.), (4000., 800.), 4600., false, true),
+            Some(3200.)
+        );
     }
 }

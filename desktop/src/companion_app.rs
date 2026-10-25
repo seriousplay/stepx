@@ -346,7 +346,7 @@ fn pairing_status(
             updated <= now.saturating_add(2_000) && now.saturating_sub(updated) <= 30_000
         });
     if !alive || !fresh {
-        return (false, "扫码权限已授权，尚未收到有效的系统配对服务状态。请保持已授权的 USB 连接，点击更新／修复伴侣恢复服务；手机重启后也需这样恢复。可临时使用 Android 系统无线调试配对码。".into());
+        return (false, "扫码服务正在恢复。手机刚重启时，请先完成首次解锁并等待片刻；若仍未就绪，可在连接管理查看修复提示或使用系统配对码。".into());
     }
     if state["pairingBridgeReady"].as_bool() != Some(true) {
         return (false, "扫码权限已授权，但伴侣系统配对服务未连接。请保持已授权的 USB 连接，点击更新／修复伴侣启动服务；也可使用 Android 系统无线调试配对码。".into());
@@ -357,7 +357,7 @@ fn pairing_status(
             "系统服务尚未确认支持伴侣扫码配对。当前请使用 Android 系统无线调试配对码。".into(),
         );
     }
-    (true, "已核验当前手机会话的扫码权限和系统配对服务。在手机伴侣连接页开启无线调试，确认当前 Wi-Fi 授权后扫描电脑二维码。手机重启后请通过 USB 连接，点击更新／修复伴侣恢复服务。".into())
+    (true, "扫码服务已就绪。首次扫码需确认当前 Wi-Fi；已配对电脑在同一局域网自动连接。手机重启后先完成系统首次解锁，服务会自动恢复。".into())
 }
 
 fn read_pairing_readiness(adb: &Adb, device: &Device) -> (bool, String) {
@@ -698,25 +698,55 @@ pub fn install(
         );
     }
     installation?;
-    progress("正在适配背屏、扫码连接权限，并核验应用签名…");
-    run_adapter(adb, device, &script, apk.path(), "grant")?;
-    run_adapter(adb, device, &script, apk.path(), "grant-connection")?;
-    progress("正在配置原生任务唤醒权限，并核验固定厂商权限来源…");
-    run_adapter(adb, device, &script, apk.path(), "grant-wake")?;
+    let mut warnings = Vec::new();
     progress("正在授予相机、服务通知与通话状态权限，并逐项回读…");
     grant_runtime_permissions(adb, device)?;
+    // Runtime grants go first: PackageManager can recalculate nonstandard permission flags.
+    progress("正在适配背屏、扫码连接权限，并核验应用签名…");
+    for (operation, label) in [("grant", "背屏权限"), ("grant-connection", "无线配对权限")]
+    {
+        if let Err(error) = run_adapter(adb, device, &script, apk.path(), operation) {
+            warnings.push(format!("{label}未完成：{error}"));
+        }
+    }
     progress("正在配置 StepX伴侣电池优化豁免并保存原状态…");
-    apply_power_exemption(adb, device, apk.path())?;
+    if let Err(error) = apply_power_exemption(adb, device, apk.path()) {
+        warnings.push(format!("后台电量设置未完成：{error}"));
+    }
     progress("正在启用并验证伴侣看屏操作服务…");
-    crate::companion_gui::enable(adb, device)?;
+    if let Err(error) = crate::companion_gui::enable(adb, device) {
+        warnings.push(format!("看屏操作服务未完成：{error}"));
+    }
     progress("正在回读权限、电池豁免与各项实际能力…");
     let checked = inspect(adb, device)?;
-    verify_installation(&checked)?;
+    ensure!(checked.installed, "手机未确认 StepX伴侣已安装");
     progress("正在安装并验证当前手机会话的系统扫码服务…");
     let service = start_pairing_service(adb, device, apk.path());
+    // A CloudWake adapter failure must not prevent installing the independent scanner.
+    progress("正在核验熄屏任务唤醒能力…");
+    if let Err(error) = run_adapter(adb, device, &script, apk.path(), "grant-wake") {
+        warnings.push(format!("熄屏任务唤醒权限未完成：{error}"));
+    }
+    progress("正在安装开机恢复并保存原启动文件与权限记录…");
+    if let Err(error) = install_boot_adapter(adb, device, apk.path()) {
+        warnings.push(format!("开机自动恢复未完成：{error}"));
+    }
     let mut result = inspect(adb, device).unwrap_or(checked);
-    verify_installation(&result)?;
     finish_installation_status(&mut result, service);
+    if let Err(error) = verify_installation(&result) {
+        warnings.push(error.to_string());
+    }
+    if !warnings.is_empty() {
+        result.message = format!(
+            "伴侣已安装。扫码服务：{}。部分功能需要修复：{}",
+            if result.pairing_ready {
+                "已就绪"
+            } else {
+                "未就绪"
+            },
+            warnings.join("；")
+        );
+    }
     Ok(result)
 }
 
@@ -735,7 +765,7 @@ fn finish_installation_status(result: &mut CompanionStatus, service: Result<()>)
         );
     } else {
         result.message = format!(
-            "手机界面、权限和当前会话扫码服务配置完成。{}",
+            "手机界面、权限和扫码服务配置完成。{}",
             result.message
         );
     }
@@ -815,7 +845,34 @@ fn configure_pairing_service(
     confirm_phone()
 }
 
+fn install_boot_adapter(adb: &Adb, device: &Device, apk: &Path) -> Result<()> {
+    let script = crate::resources::root().join("scripts/companion-boot.py");
+    ensure!(script.is_file(), "缺少伴侣开机恢复组件");
+    let mut command = crate::resources::python_command();
+    command.arg(script).arg("install").arg("--apk").arg(apk)
+        .env("STEPX_SERIAL", &device.transport).env("STEPX_DEVICE_SERIAL", &device.serial)
+        .env("STEPX_ADB", &adb.path).env_remove("PYTHONOPTIMIZE");
+    let output = run_process(command, None, Duration::from_secs(100))?;
+    let result: Value = serde_json::from_slice(&output.stdout).context("开机恢复未返回有效回执")?;
+    ensure!(output.status.success() && result["status"] == "installed"
+        && result["config"]["package"] == PACKAGE && result["config"]["version"] == 1,
+        "开机恢复未完成：{}", result["error"].as_str().unwrap_or("回读校验失败"));
+    Ok(())
+}
+
 fn start_pairing_service(adb: &Adb, device: &Device, apk: &Path) -> Result<()> {
+    // The boot adapter runs a scoped Binder in system_server, not a disposable shell process.
+    // A fresh successful roundtrip to the signed app is sufficient; don't spawn a duplicate.
+    if let Ok(raw) = adb.shell(&device.transport, &["cat", &format!("{FILES}/pairing.json")]) {
+        if let Ok(state) = serde_json::from_str::<Value>(&raw) {
+            let system_pid = adb.shell(&device.transport, &["pidof", "system_server"]).ok()
+                .and_then(|pid| pid.trim().parse::<u64>().ok());
+            if state["pairingProcessUid"] == 1000
+                && system_pid.is_some() && state["pairingProcessPid"].as_u64() == system_pid
+                && read_pairing_readiness(adb, device).0 { return Ok(()); }
+        }
+    }
+
     configure_pairing_service(
         |operation| run_pairing_adapter(adb, device, apk, operation),
         || {

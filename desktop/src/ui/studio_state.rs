@@ -92,7 +92,7 @@ impl Companion {
         });
     }
     pub(super) fn tick_studio_cloud(&mut self) {
-        if !(self.page==Page::Studio || (self.page==Page::Amoo && self.workspace.panel==4))
+        if !(self.page == Page::Studio || (self.page == Page::Amoo && self.workspace.panel == 4))
             || self.busy
             || self.demo_mode
             || self.selected.is_none()

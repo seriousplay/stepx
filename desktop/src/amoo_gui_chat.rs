@@ -226,8 +226,7 @@ pub fn cloud_nonce(adb: &Adb, device: &Device) -> Result<String> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    options.open(file)?
-        .write_all(n.as_bytes())?;
+    options.open(file)?.write_all(n.as_bytes())?;
     Ok(n)
 }
 pub fn cloud_install_prompt(adb: &Adb, device: &Device) -> Result<String> {

@@ -44,7 +44,29 @@ class TransportGuardTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, '未授权'): self.check('PHONE123', state='unauthorized')
     def test_invalid_transport_is_rejected(self):
         for transport in ['', '-d', 'phone other']:
-            with self.subTest(transport=transport), self.assertRaisesRegex(RuntimeError, '先选择'): self.check(transport)
+            pattern = '先选择|未找到已验证固件'
+            with self.subTest(transport=transport), self.assertRaisesRegex(RuntimeError, pattern): self.check(transport)
+    def test_empty_serial_auto_selects_single_matching_stepx(self):
+        identity = {'transport': 'ZYPZ261A01M687001HK', 'serial': 'ZYPZ261A01M687001HK',
+                    'fingerprint': common.CONFIG['fingerprint'], 'sdk': common.CONFIG['sdk'],
+                    'abi': common.CONFIG['abi']}
+        with patch.object(common, 'SERIAL', ''), patch.object(common, 'DEVICE_SERIAL', ''), \
+                patch.object(common, 'ADB', ['adb', '-s', '']), \
+                patch.object(common, 'matching_stepx_devices', return_value=[identity]):
+            self.assertEqual(common.resolve_device(), 'ZYPZ261A01M687001HK')
+            self.assertEqual(common.ADB[-1], 'ZYPZ261A01M687001HK')
+            self.assertEqual(common.DEVICE_SERIAL, 'ZYPZ261A01M687001HK')
+    def test_multiple_matching_stepx_require_explicit_selection(self):
+        matches = [
+            {'transport': 'PHONEA', 'serial': 'PHONEA', 'fingerprint': common.CONFIG['fingerprint'],
+             'sdk': common.CONFIG['sdk'], 'abi': common.CONFIG['abi']},
+            {'transport': 'PHONEB', 'serial': 'PHONEB', 'fingerprint': common.CONFIG['fingerprint'],
+             'sdk': common.CONFIG['sdk'], 'abi': common.CONFIG['abi']},
+        ]
+        with patch.object(common, 'SERIAL', ''), patch.object(common, 'DEVICE_SERIAL', ''), \
+                patch.object(common, 'matching_stepx_devices', return_value=matches):
+            with self.assertRaisesRegex(RuntimeError, '多台匹配固件'):
+                common.resolve_device()
     def test_wireless_retains_firmware_guard(self):
         with self.assertRaisesRegex(AssertionError, 'Unsupported firmware'): self.check('192.0.2.10:42123', 'PHONE123', firmware='other-build')
     def test_wireless_retains_native_hash_guard(self): self.check('192.0.2.10:42123', 'PHONE123', native=True)

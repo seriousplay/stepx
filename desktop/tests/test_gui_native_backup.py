@@ -14,8 +14,11 @@ backup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(backup)
 
 
+FIXTURE_SERIAL = 'ZYPZ261A01M687001HK'
+
+
 def snapshot():
-    identity = {'ro.serialno': backup.SERIAL, 'ro.build.fingerprint': backup.FINGERPRINT,
+    identity = {'ro.serialno': FIXTURE_SERIAL, 'ro.build.fingerprint': backup.FINGERPRINT,
                 'ro.build.version.sdk': '36', 'ro.product.cpu.abi': 'arm64-v8a', 'selinux': 'Enforcing'}
     process = dict(present=True, name=backup.PACKAGE, pid=1234, start_ticks='321',
                    boot_id='01234567-0123-0123-0123-0123456789ab', uids=[1000] * 4,
@@ -31,7 +34,7 @@ def snapshot():
 
 
 class FakeAdb:
-    transport = backup.SERIAL
+    transport = FIXTURE_SERIAL
 
     def pull(self, remote, local):
         assert remote == backup.APK
@@ -63,11 +66,26 @@ class NativeGuiBackupTests(unittest.TestCase):
 
     def test_transport_is_never_trusted_without_physical_serial(self):
         class WrongPhone:
+            transport = FIXTURE_SERIAL
             def shell(self, command, name):
                 return {'ro.serialno': 'UNRELATED_PHONE', 'ro.build.fingerprint': backup.FINGERPRINT,
                         'ro.build.version.sdk': '36', 'ro.product.cpu.abi': 'arm64-v8a'}[name]
-        with self.assertRaisesRegex(RuntimeError, 'Physical device serial'):
-            backup.read_identity(WrongPhone())
+        with patch.object(backup, 'SERIAL', FIXTURE_SERIAL):
+            with self.assertRaisesRegex(RuntimeError, 'Physical device serial'):
+                backup.read_identity(WrongPhone())
+
+    def test_matching_firmware_other_serial_is_accepted_when_unselected(self):
+        class OtherStepX:
+            transport = 'ZYPZ261A01M687001HK'
+            def shell(self, *arguments):
+                name = arguments[-1]
+                values = {'ro.serialno': 'ZYPZ261A01M687001HK', 'ro.build.fingerprint': backup.FINGERPRINT,
+                          'ro.build.version.sdk': '36', 'ro.product.cpu.abi': 'arm64-v8a',
+                          'getenforce': 'Enforcing'}
+                return values[name]
+        with patch.object(backup, 'SERIAL', ''):
+            identity = backup.read_identity(OtherStepX())
+            self.assertEqual(identity['ro.serialno'], 'ZYPZ261A01M687001HK')
 
     def test_no_existing_backup_can_be_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:

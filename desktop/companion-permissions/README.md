@@ -1,6 +1,6 @@
 # StepX伴侣背屏权限
 
-该适配仅支持 Google 适配流程已经核验的 StepX PZ261A 固件和当前授权设备。
+该适配仅支持 Google 适配流程已经核验的 StepX PZ261A 固件。任何该固件上的 StepX 均可使用；设备由 `STEPX_SERIAL` / `STEPX_DEVICE_SERIAL`、桌面已选 USB 设备，或唯一一台指纹匹配的已连接手机确定。
 APK 仍是普通 `/data/app` 应用，不会添加系统或特权应用标记，也不会修改
 SELinux、Google 应用权限或开机脚本。
 

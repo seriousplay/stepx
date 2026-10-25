@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Remove a partial fresh APK installation, only while the factory launcher is intact."""
-import json
+import json, os
 from common import ADB, CONFIG, STATE, guard, root_json, run, shell
 
 import argparse
 argparse.ArgumentParser(description=__doc__).parse_args()
 guard()
 baseline = json.loads((STATE / 'baseline.json').read_text())
-assert baseline.get('serial', 'ZYPZ261A01M692000LP') == ADB[-1], 'Wrong device baseline'
+assert not baseline.get('serial') or baseline['serial'] in (ADB[-1], os.environ.get('STEPX_DEVICE_SERIAL', '')), 'Wrong device baseline'
 assert baseline['fingerprint'] == CONFIG['fingerprint']
 proof = root_json("import hashlib,json;print(json.dumps({'sha':hashlib.sha256(open('/usr/local/bin/ubuntu_zygote','rb').read()).hexdigest()}))")
 assert proof['sha'] == CONFIG['stock_sha256'], 'Use full rollback.py while adapter is installed'

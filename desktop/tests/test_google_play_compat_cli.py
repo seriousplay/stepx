@@ -221,7 +221,8 @@ class CliTests(unittest.TestCase):
 
     def test_public_errors_redact_exception_payload(self):
         output = io.StringIO()
-        with mock.patch.object(compat, "state_directory", return_value=self.directory), \
+        with mock.patch.dict(os.environ, {"STEPX_SERIAL": "ZYPZ261A01M687001HK"}), \
+             mock.patch.object(compat, "state_directory", return_value=self.directory), \
              mock.patch.object(compat, "execute", side_effect=RuntimeError(self.transport.private_secret)), \
              contextlib.redirect_stdout(output):
             code = compat.main(["status"])
@@ -270,6 +271,13 @@ class CliTests(unittest.TestCase):
         self.assertIn("if compact(filesm.prepare(scope,discover()))!=expected", source)
         self.assertIn("if db_read()!=expected_db", source)
         self.assertIn("missing_cache_journal", source)
+
+    def test_compat_state_is_keyed_by_selected_serial_not_a_whitelist(self):
+        with mock.patch.dict(os.environ, {"STEPX_SERIAL": "ZYPZ261A01M687001HK",
+                                          "XDG_STATE_HOME": str(self.directory)}):
+            path = compat.state_directory()
+        self.assertEqual(path.name, "ZYPZ261A01M687001HK")
+        self.assertTrue(path.is_dir())
 
     def test_wireless_transport_is_rejected_before_import_or_adb(self):
         with mock.patch.dict(os.environ, {"STEPX_SERIAL": "192.0.2.1:5555"}):

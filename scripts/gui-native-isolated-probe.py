@@ -28,8 +28,7 @@ def module(name, path):
 def run(backup):
     permissions = module('permissions', ROOT / 'scripts/companion-permissions.py')
     recovery = module('recovery', ROOT / 'scripts/gui-native-backup.py')
-    if permissions.ADB[-1] != permissions.AUTHORIZED_SERIAL:
-        raise RuntimeError('Research launch requires the explicitly authorized USB serial')
+    permissions.guard()
     adb = recovery.Adb(permissions.ADB[0], permissions.ADB[-1])
     before = recovery.verify_backup(adb, backup)
     if not before['system_server_unchanged'] or not before['original_process_still_alive']:

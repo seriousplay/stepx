@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Fixed-device Google compatibility repair, with private, scoped recovery.
+"""Validated-firmware Google compatibility repair, with private, scoped recovery.
 
-Public interface: status | apply | rollback; STEPX_SERIAL and STEPX_ADB select
-the existing USB transport. This is not device certification or an APK patch.
+Public interface: status | apply | rollback; STEPX_SERIAL / STEPX_DEVICE_SERIAL
+and STEPX_ADB select the existing USB transport, or the only connected StepX
+whose firmware fingerprint matches the reviewed target. This is not device
+certification or an APK patch.
 Never print worker proofs, cache paths, account names or exception messages.
 """
 
@@ -23,7 +25,6 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(__file__).resolve().parent
-SERIAL = "ZYPZ261A01M692000LP"
 FORMAT = 1
 MAX_PRIVATE_BYTES = 8 * 1024 * 1024
 SCOPES = {
@@ -110,10 +111,24 @@ def _save_private(path, value, replace=False):
                 pass
 
 
-def state_directory():
+def selected_compat_serial():
+    """Physical or USB serial for private recovery; not a hardcoded whitelist."""
+    physical = os.environ.get("STEPX_DEVICE_SERIAL", "").strip()
+    transport = os.environ.get("STEPX_SERIAL", "").strip()
+    if physical:
+        return physical
+    if transport and ":" not in transport and "._adb-tls-connect._tcp" not in transport:
+        return transport
+    return ""
+
+
+def state_directory(serial=None):
     base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
     _require(base.is_absolute(), "invalid_state_path", "XDG_STATE_HOME 必须是绝对路径。")
-    return _private_directory(base / "stepx-google-compat" / SERIAL)
+    serial = serial or selected_compat_serial()
+    _require(bool(serial) and not serial.startswith("-") and not any(c.isspace() for c in serial),
+             "usb_required", "请先连接或选择已验证固件的 StepX 手机。")
+    return _private_directory(base / "stepx-google-compat" / serial)
 
 
 @contextlib.contextmanager
@@ -139,7 +154,7 @@ def current_receipt(directory):
         return None
     path = _private_directory(directory / identifier)
     manifest = _read_private(path / "manifest.json")
-    _require(manifest.get("format") == FORMAT and manifest.get("serial") == SERIAL
+    _require(manifest.get("format") == FORMAT and manifest.get("serial") == directory.name
              and manifest.get("receipt_id") == identifier and manifest.get("pins") == SCOPES,
              "invalid_receipt", "恢复记录不属于当前已验证的兼容补丁。")
     return manifest
@@ -311,12 +326,13 @@ class Transport:
     def __init__(self):
         self.module = None
         self.last_proof = None
+        self.serial = selected_compat_serial()
 
     def check(self):
-        selected = os.environ.get("STEPX_SERIAL", SERIAL)
-        _require(":" not in selected, "usb_required", "此兼容补丁目前需要通过 USB 连接已验证的 StepX 手机。")
-        _require(selected == SERIAL, "unsupported_device", "此兼容补丁仅适用于当前已验证的 StepX 手机。")
-        os.environ["STEPX_SERIAL"] = selected
+        selected = os.environ.get("STEPX_SERIAL", "").strip()
+        physical = os.environ.get("STEPX_DEVICE_SERIAL", "").strip()
+        _require(":" not in selected and "._adb-tls-connect._tcp" not in selected,
+                 "usb_required", "此兼容补丁目前需要通过 USB 连接已验证的 StepX 手机。")
         spec = importlib.util.spec_from_file_location("stepx_compat_permissions", SCRIPTS / "companion-permissions.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -325,8 +341,14 @@ class Transport:
             module.guard(native=True)
         except Exception:
             raise RepairError("unsupported_firmware", "手机系统版本、原生文件或 USB 连接与已验证环境不符，未修改手机。") from None
-        _require(module.shell("getprop", "ro.serialno") == SERIAL,
-                 "unsupported_device", "连接到的手机不是当前已验证的 StepX 手机。")
+        selected = module.ADB[-1]
+        physical = physical or os.environ.get("STEPX_DEVICE_SERIAL", "").strip() or selected
+        _require(":" not in selected and "._adb-tls-connect._tcp" not in selected,
+                 "usb_required", "此兼容补丁目前需要通过 USB 连接已验证的 StepX 手机。")
+        os.environ["STEPX_SERIAL"] = selected
+        _require(module.shell("getprop", "ro.serialno") == physical,
+                 "unsupported_device", "连接的手机与已选设备不一致，未修改手机。")
+        self.serial = physical
         for settings in SCOPES.values():
             package = settings["package"]
             dump = module.shell("dumpsys", "package", package)
@@ -500,7 +522,8 @@ def execute(action, directory, transport):
         prepared[scope] = {key: proof[key] for key in ("file_baseline", "db_baseline")}
     identifier = "compat-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S-") + secrets.token_hex(8)
     _private_directory(directory / identifier)
-    receipt = {"format": FORMAT, "receipt_id": identifier, "serial": SERIAL,
+    receipt = {"format": FORMAT, "receipt_id": identifier,
+               "serial": getattr(transport, "serial", None) or directory.name,
                "pins": SCOPES, "scopes": prepared}
     _save_private(directory / identifier / "manifest.json", receipt)
     _save_private(directory / "current.json", {"receipt_id": identifier, "closed": False}, replace=True)
@@ -534,9 +557,14 @@ def main(argv=None):
     arguments = parser.parse_args(argv)
     directory = None
     try:
-        directory = state_directory()
+        transport = Transport()
+        serial = selected_compat_serial()
+        if not serial:
+            transport.check()
+            serial = transport.serial
+        directory = state_directory(serial)
         with operation_lock(directory):
-            result = execute(arguments.action, directory, Transport())
+            result = execute(arguments.action, directory, transport)
     except Exception as error:
         can_rollback = False
         if directory is not None:

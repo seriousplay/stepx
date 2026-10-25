@@ -1333,7 +1333,7 @@ impl Companion {
                 self.companion_status = CompanionStatus::default();
                 *self.google_progress.lock().unwrap() = String::new();
                 self.with_device_bulk("正在检测 StepX伴侣与实际授权…", |adb, d| {
-                    let companion = companion_app::inspect(adb, &d)?;
+                    let companion = companion_app::inspect_and_recover(adb, &d)?;
                     let message = companion.message.clone();
                     Ok(Outcome::CompanionStatus(companion, message))
                 });

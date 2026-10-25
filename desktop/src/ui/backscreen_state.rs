@@ -1088,7 +1088,7 @@ impl Companion {
                     BackScreenAction::CompanionStop => {
                         CompanionEvent::Stopped(ca::stop(&adb, &device)?)
                     }
-                    _ => CompanionEvent::Inspected(ca::inspect(&adb, &device)?),
+                    _ => CompanionEvent::Inspected(ca::inspect_and_recover(&adb, &device)?),
                 })
             })();
             let _ = sender

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manage fixed StepX伴侣 permission groups on the validated StepX firmware.
+"""Manage StepX伴侣 permission groups on any phone running the validated StepX firmware.
 
 Reuses the existing Google workflow's bounded RootBridge transport and audited
 native loader, but never runs its Google Java payload or changes Google state.
@@ -34,7 +34,6 @@ CONNECTION_SCOPE = 'connection_permissions_v1'
 WAKE_PERMISSIONS = ('com.stepos.cloud.push.permission.MESSAGE',)
 WAKE_OWNER = 'com.stepos.pushservice'
 WAKE_SCOPE = 'wake_permission_v1'
-AUTHORIZED_SERIAL = 'ZYPZ261A01M692000LP'
 LOADER_SHA256 = '279305289749acada3f9951c816d7e9f00367dce4331d4396c04554e4685fbf8'
 WORKER_SHA256 = '71be97798c805fc803b8eef47f9188aadd0c17f23a2b12ac607e8fa242ed188a'
 STATE = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'stepx-companion/permissions'
@@ -75,8 +74,7 @@ def signer(apk):
 
 def inspect(apk=None, preserve_embedded=False):
     # This command deliberately has no RootBridge call and does not start the app.
-    if ADB[-1] != AUTHORIZED_SERIAL:
-        raise RuntimeError('Companion adaptation is scoped to the authorized StepX phone')
+    # Firmware identity is the gate: any StepX on the validated fingerprint is accepted.
     guard()
     dump = shell('dumpsys', 'package', PACKAGE)
     installed = re.search(r'Package \[' + re.escape(PACKAGE) + r'\]', dump) is not None
@@ -184,8 +182,6 @@ def prepare_install(apk, trusted_apk=None):
 
 
 def finish_install():
-    if ADB[-1] != AUTHORIZED_SERIAL:
-        raise RuntimeError('Companion adaptation is scoped to the authorized StepX phone')
     guard()
     path = install_gate_path()
     if not path.exists():
@@ -854,51 +850,130 @@ def wake_permissions(apk, operation):
     return result
 
 
+def grant_race_retryable(error):
+    text = str(error)
+    return ('原有 Google 开机修复' in text or 'Google permission baseline changed' in text
+            or 'Google 权限' in text)
+
+
+def with_google_race_retries(operation, attempts=3, delay=6):
+    """Retry only when Google boot-repair races a successful companion worker."""
+    last = None
+    for attempt in range(attempts):
+        try:
+            return operation()
+        except RuntimeError as error:
+            last = error
+            if not grant_race_retryable(error) or attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+    raise last
+
+
+def apply_backscreen(apk, initial, command):
+    if command not in ('grant', 'revoke'):
+        raise RuntimeError('Unsupported companion permission operation')
+    if not apk or not initial['installed'] or not initial.get('signature_verified'):
+        raise RuntimeError('Install the verified companion APK before granting permission')
+    guard(native=True)
+    cert = signer(apk)
+    state_path = baseline_path(cert, initial['uid'])
+    prior = json.loads(state_path.read_text()) if state_path.exists() else None
+    if command == 'grant' and initial['granted']:
+        return {**ensure_runtime(apk, initial), 'status': 'already_granted'}
+    if command == 'revoke' and not prior:
+        raise RuntimeError('No companion grant baseline available; refusing to invent permission flags')
+    validate_baseline(prior, cert, initial['uid'])
+    result = with_google_race_retries(
+        lambda: inject(cert, command == 'grant', 0 if prior is None else prior['before_flags'], initial['uid']))
+    if command == 'grant' and not prior:
+        private_json(state_path, {'signer': cert, 'fingerprint': CONFIG['fingerprint'],
+                                 'before_flags': result['before_flags'], 'uid': result['uid']})
+    if command == 'grant':
+        runtime = ensure_runtime(apk, {**initial, 'granted': True})
+        result.update({key: value for key, value in runtime.items() if key.startswith('background_')})
+    else:
+        result.update(revoke_runtime(apk, initial))
+    private_json(STATE / 'last-result.json', result)
+    return result
+
+
+def ensure_grants(apk):
+    """Re-apply missing back-screen / connection / wake grants and the OEM freezer exemption."""
+    if not apk:
+        raise RuntimeError('A verified local companion APK is required')
+    initial = inspect(apk)
+    if not initial.get('installed') or not initial.get('signature_verified'):
+        raise RuntimeError('Install the verified companion APK before restoring permissions')
+    recovered, already = [], []
+    if initial.get('granted'):
+        already.append('backscreen')
+        backscreen = {**initial, 'status': 'already_granted'}
+    else:
+        backscreen = apply_backscreen(apk, inspect(apk), 'grant')
+        recovered.append('backscreen')
+    current = inspect(apk)
+    if current.get('connection_permissions_granted'):
+        already.append('connection')
+        connection = {**current, 'status': 'already_granted'}
+    else:
+        connection = with_google_race_retries(lambda: connection_permissions(apk, 'grant'))
+        recovered.append('connection')
+    current = inspect(apk)
+    if current.get('wake_permissions_granted'):
+        already.append('wake')
+        wake = {**current, 'status': 'already_granted'}
+    else:
+        wake = with_google_race_retries(lambda: wake_permissions(apk, 'grant'))
+        recovered.append('wake')
+    runtime = ensure_runtime(apk, inspect(apk))
+    if runtime.get('background_added') or runtime.get('background_thawed'):
+        recovered.append('background')
+    else:
+        already.append('background')
+    final = inspect(apk)
+    ready = (final.get('granted') and final.get('connection_permissions_granted')
+             and final.get('wake_permissions_granted') and runtime.get('background_exempt'))
+    final.update(status='ready' if ready else 'incomplete', recovered=recovered,
+                 already_granted=already, background=runtime,
+                 backscreen=backscreen, connection=connection, wake=wake)
+    if not ready:
+        raise RuntimeError('权限自动恢复未完成：背屏、连接、唤醒或后台豁免仍未就绪')
+    return final
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['preflight', 'inspect', 'prepare-install', 'finish-install', 'grant', 'revoke', 'runtime',
                                            'inspect-connection', 'grant-connection', 'revoke-connection',
-                                           'inspect-wake', 'grant-wake', 'revoke-wake'])
+                                           'inspect-wake', 'grant-wake', 'revoke-wake', 'ensure'])
     parser.add_argument('--apk', type=Path)
     parser.add_argument('--trusted-apk', type=Path, help='Client embedded APK snapshot used as the signing trust anchor')
     args = parser.parse_args()
     if args.command.endswith('-wake'):
-        print(json.dumps(wake_permissions(args.apk, args.command.split('-', 1)[0]), ensure_ascii=False)); return
+        operation = args.command.split('-', 1)[0]
+        action = (lambda: wake_permissions(args.apk, operation))
+        print(json.dumps(with_google_race_retries(action) if operation == 'grant' else action(),
+                         ensure_ascii=False)); return
     if args.command.endswith('-connection'):
-        print(json.dumps(connection_permissions(args.apk, args.command.split('-', 1)[0]), ensure_ascii=False)); return
+        operation = args.command.split('-', 1)[0]
+        action = (lambda: connection_permissions(args.apk, operation))
+        print(json.dumps(with_google_race_retries(action) if operation == 'grant' else action(),
+                         ensure_ascii=False)); return
     if args.command == 'preflight':
         print(json.dumps(preflight(args.apk, args.trusted_apk), ensure_ascii=False)); return
     if args.command == 'prepare-install':
         print(json.dumps(prepare_install(args.apk, args.trusted_apk), ensure_ascii=False)); return
     if args.command == 'finish-install':
         print(json.dumps(finish_install(), ensure_ascii=False)); return
+    if args.command == 'ensure':
+        print(json.dumps(ensure_grants(args.apk), ensure_ascii=False)); return
     initial = inspect(args.apk)
     if args.command == 'inspect':
         print(json.dumps({**initial, **runtime_status(initial['uid'])}, ensure_ascii=False)); return
     if args.command == 'runtime':
         print(json.dumps(ensure_runtime(args.apk, initial), ensure_ascii=False)); return
-    if not args.apk or not initial['installed'] or not initial.get('signature_verified'):
-        raise RuntimeError('Install the verified companion APK before granting permission')
-    guard(native=True)
-    cert = signer(args.apk)
-    state_path = baseline_path(cert, initial['uid'])
-    prior = json.loads(state_path.read_text()) if state_path.exists() else None
-    if args.command == 'grant' and initial['granted']:
-        print(json.dumps({**ensure_runtime(args.apk, initial), 'status': 'already_granted'}, ensure_ascii=False)); return
-    if args.command == 'revoke' and not prior:
-        raise RuntimeError('No companion grant baseline available; refusing to invent permission flags')
-    validate_baseline(prior, cert, initial['uid'])
-    result = inject(cert, args.command == 'grant', 0 if prior is None else prior['before_flags'], initial['uid'])
-    if args.command == 'grant' and not prior:
-        private_json(state_path, {'signer': cert, 'fingerprint': CONFIG['fingerprint'],
-                                 'before_flags': result['before_flags'], 'uid': result['uid']})
-    if args.command == 'grant':
-        runtime = ensure_runtime(args.apk, {**initial, 'granted': True})
-        result.update({key: value for key, value in runtime.items() if key.startswith('background_')})
-    else:
-        result.update(revoke_runtime(args.apk, initial))
-    private_json(STATE / 'last-result.json', result)
-    print(json.dumps(result, ensure_ascii=False))
+    print(json.dumps(apply_backscreen(args.apk, initial, args.command), ensure_ascii=False))
 
 
 if __name__ == '__main__':

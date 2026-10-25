@@ -86,7 +86,7 @@ class PreservationTests(unittest.TestCase):
         def metadata(path):return manifest(path.name=='installed.apk')
         with tempfile.TemporaryDirectory() as temp:
             candidate=Path(temp)/'candidate.apk';candidate.write_bytes(b'candidate')
-            with patch.object(permissions,'AUTHORIZED_SERIAL',permissions.ADB[-1]), patch.object(permissions,'guard') as guard, patch.object(permissions,'shell',side_effect=shell), patch.object(permissions,'signer',return_value='a'*64), patch.object(permissions,'run',return_value=''), patch.object(permissions,'root_json') as root, patch.object(apk,'apk_manifest',side_effect=metadata):
+            with patch.object(permissions,'guard') as guard, patch.object(permissions,'shell',side_effect=shell), patch.object(permissions,'signer',return_value='a'*64), patch.object(permissions,'run',return_value=''), patch.object(permissions,'root_json') as root, patch.object(apk,'apk_manifest',side_effect=metadata):
                 with self.assertRaisesRegex(RuntimeError,'已阻止覆盖'):permissions.preflight(candidate)
                 with self.assertRaisesRegex(RuntimeError,'已阻止覆盖'):permissions.prepare_install(candidate)
                 self.assertEqual(guard.call_count,2)
@@ -97,7 +97,7 @@ class PreservationTests(unittest.TestCase):
             if args==('dumpsys','package',apk.PACKAGE):return 'Package ['+apk.PACKAGE+'] (x):\n  userId=10215\n'
             if args==('pm','path',apk.PACKAGE):return 'package:/data/app/test/base.apk'
             raise AssertionError(args)
-        with patch.object(permissions,'AUTHORIZED_SERIAL',permissions.ADB[-1]),patch.object(permissions,'guard'),patch.object(permissions,'shell',side_effect=shell),patch.object(permissions,'signer',return_value='a'*64),patch.object(permissions,'run',return_value=''),patch.object(permissions,'ensure_update_preserves_runtime') as preservation:
+        with patch.object(permissions,'guard'),patch.object(permissions,'shell',side_effect=shell),patch.object(permissions,'signer',return_value='a'*64),patch.object(permissions,'run',return_value=''),patch.object(permissions,'ensure_update_preserves_runtime') as preservation:
             result=permissions.inspect(Path('ordinary.apk'))
             self.assertTrue(result['signature_verified']);preservation.assert_not_called()
 

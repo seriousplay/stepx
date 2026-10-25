@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.2.31 · 2026-10-25
+
+- **伴侣权限与 Google 交接不再绑定单一序列号**：去掉 `ZYPZ261A01M692000LP` 白名单。桌面已选设备、`STEPX_SERIAL` / `STEPX_DEVICE_SERIAL`，或唯一一台 `ro.build.fingerprint` 与 `handoff/google-play-stepx/target.json` 一致的 StepX 即可做权限适配和 Google 兼容补丁；多台匹配手机会要求明确选择。错误固件与非 StepX 仍拒绝。
+- **连接与重启后自动恢复背屏/伴侣权限**：已安装且签名核验通过时，连接检测与「修复 StepX伴侣」会自动补齐背屏、无线配对、唤醒授权和后台豁免；Google 开机修复抢跑时按间隔重试，成功后在界面标明已恢复。不伪造 Play Integrity / 设备认证。
+
 ## 0.2.30 · 2026-10-25
 
 - **Amoo 工作区单轨统一与 100% 矢量图标体系对齐**：彻底合并 `Page::Amoo`、`Page::Work` 与 `Page::Studio` 为单一原生 Amoo 统一工作台，消除跨页状态割裂；全量清理残留字符 Emoji（`overview.rs`、`workspace.rs`、`tools.rs`、`backscreen.rs` 等），100% 统一为 `UiIcon` 矢量 SVG 图标体系。

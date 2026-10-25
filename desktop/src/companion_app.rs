@@ -940,13 +940,34 @@ fn verify_installation(result: &CompanionStatus) -> Result<()> {
     Ok(())
 }
 
+fn signature_permissions_missing(status: &CompanionStatus) -> bool {
+    status.permissions.iter().any(|permission| {
+        !permission.granted
+            && matches!(
+                permission.name,
+                PERMISSION
+                    | "android.permission.MANAGE_DEBUGGING"
+                    | "android.permission.WRITE_SECURE_SETTINGS"
+                    | "com.stepos.cloud.push.permission.MESSAGE"
+            )
+    })
+}
+
+pub(crate) fn needs_permission_recovery(status: &CompanionStatus) -> bool {
+    status.installed
+        && (!status.permission_granted
+            || !status.pairing_permission_granted
+            || status.oem_freezer_exempt == Some(false)
+            || signature_permissions_missing(status))
+}
+
 fn run_adapter(
     adb: &Adb,
     device: &Device,
     script: &Path,
     apk: &Path,
     operation: &str,
-) -> Result<()> {
+) -> Result<Value> {
     let trusted = if matches!(operation, "preflight" | "prepare-install") {
         Some(compiled_apk_snapshot()?)
     } else {
@@ -965,7 +986,15 @@ fn run_adapter(
     if let Some(anchor) = &trusted {
         command.arg("--trusted-apk").arg(anchor.path());
     }
-    let output = run_process(command, None, Duration::from_secs(180))?;
+    let timeout = if matches!(
+        operation,
+        "grant" | "grant-connection" | "grant-wake" | "ensure"
+    ) {
+        Duration::from_secs(300)
+    } else {
+        Duration::from_secs(180)
+    };
+    let output = run_process(command, None, timeout)?;
     if !output.status.success() {
         let reason = serde_json::from_slice::<Value>(&output.stdout)
             .ok()
@@ -979,7 +1008,7 @@ fn run_adapter(
             });
         bail!("StepX伴侣权限适配未完成：{reason}");
     }
-    Ok(())
+    Ok(serde_json::from_slice::<Value>(&output.stdout).unwrap_or(Value::Null))
 }
 
 fn command_ack(adb: &Adb, device: &Device, op: &str, extras: &[&str]) -> Result<Value> {
@@ -1022,13 +1051,60 @@ fn command_ack(adb: &Adb, device: &Device, op: &str, extras: &[&str]) -> Result<
     bail!("尚未收到 StepX伴侣的执行确认，请检查手机通知和背屏权限后重试")
 }
 
+pub fn ensure_permissions(adb: &Adb, device: &Device) -> Result<CompanionStatus> {
+    device.verify(adb)?;
+    let script = permission_script()?;
+    let apk = installation_apk(&crate::resources::root())?;
+    let proof = run_adapter(adb, device, &script, apk.path(), "ensure")?;
+    let mut status = inspect(adb, device)?;
+    if proof["status"] == "ready" {
+        let recovered = proof["recovered"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            })
+            .unwrap_or_default();
+        status.message = if recovered.is_empty() {
+            format!("伴侣权限已就绪。{}", status.message)
+        } else {
+            format!("已自动恢复伴侣权限（{recovered}）。{}", status.message)
+        };
+    }
+    Ok(status)
+}
+
+pub fn inspect_and_recover(adb: &Adb, device: &Device) -> Result<CompanionStatus> {
+    let status = inspect(adb, device)?;
+    if !needs_permission_recovery(&status) {
+        return Ok(status);
+    }
+    match ensure_permissions(adb, device) {
+        Ok(recovered) => Ok(recovered),
+        Err(error) => {
+            let mut failed = inspect(adb, device).unwrap_or(status);
+            failed.message = format!(
+                "权限适配未完成：{error}。可点击更新／修复 StepX伴侣重试。"
+            );
+            Ok(failed)
+        }
+    }
+}
+
 fn require_ready(adb: &Adb, device: &Device) -> Result<()> {
     let state = inspect(adb, device)?;
     ensure!(state.installed, "请先安装 StepX伴侣");
-    ensure!(
-        state.permission_granted,
-        "StepX伴侣背屏权限尚未就绪，请点击安装／修复"
-    );
+    if needs_permission_recovery(&state) {
+        let recovered = ensure_permissions(adb, device)?;
+        ensure!(
+            recovered.permission_granted,
+            "StepX伴侣背屏权限尚未就绪，请点击安装／修复"
+        );
+        return Ok(());
+    }
     // This firmware freezes even a valid foreground service unless its package
     // is explicitly allowed. Recheck on each user action because that list lives
     // in system_server memory and may have reset after a phone restart.
@@ -1250,6 +1326,28 @@ mod tests {
         std::fs::create_dir_all(candidate.parent().unwrap()).unwrap();
         std::fs::write(&candidate, b"").unwrap();
         assert!(installation_apk(root.path()).is_err());
+    }
+
+    #[test]
+    fn missing_signature_grants_need_recovery_on_matching_firmware() {
+        let mut status = CompanionStatus {
+            installed: true,
+            permission_granted: false,
+            pairing_permission_granted: true,
+            oem_freezer_exempt: Some(true),
+            permissions: permission_status(""),
+            ..Default::default()
+        };
+        assert!(needs_permission_recovery(&status));
+        status.permission_granted = true;
+        for permission in &mut status.permissions {
+            permission.granted = true;
+        }
+        assert!(!needs_permission_recovery(&status));
+        status.oem_freezer_exempt = Some(false);
+        assert!(needs_permission_recovery(&status));
+        status.installed = false;
+        assert!(!needs_permission_recovery(&status));
     }
 
     #[test]

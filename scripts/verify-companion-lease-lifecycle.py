@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real-phone lease lifecycle acceptance. Written for root coordination; never auto-run.
 
-Only ZYPZ261A01M692000LP, no chats, models, account data or arbitrary intents.
+Only a StepX on the validated firmware, no chats, models, account data or arbitrary intents.
 Default requires the phone already noninteractive, and leaves it noninteractive.
 --screen-epochs adds true wake/sleep transitions. It never unlocks/dismisses the
 keyguard or changes lock/security settings; all checks work behind the keyguard.
@@ -21,7 +21,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 ADB = os.environ.get('STEPX_ADB', str(Path.home() / 'Android/Sdk/platform-tools/adb'))
-SERIAL = 'ZYPZ261A01M692000LP'
+SERIAL = os.environ.get('STEPX_DEVICE_SERIAL') or os.environ.get('STEPX_SERIAL', '')
 SERVICE = 'com.stepx.companion.app/.AmooConnectionService'
 STATUS = '/sdcard/Android/data/com.stepx.companion.app/files/amoo-connection.json'
 REPORT = ROOT / 'diagnostics/companion-background-20261022/lease-lifecycle.json'
@@ -49,7 +49,10 @@ def shell(*args):
 
 
 def identify():
-    check(shell('getprop', 'ro.serialno') == SERIAL, 'Connected transport is not the authorized phone')
+    physical = shell('getprop', 'ro.serialno')
+    if SERIAL:
+        check(physical == SERIAL, 'Connected transport is not the selected phone')
+    check(bool(physical), 'Unable to read the physical device serial')
     check(shell('getprop', 'ro.build.fingerprint') == FINGERPRINT, 'Unreviewed phone firmware')
 
 

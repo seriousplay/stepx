@@ -72,7 +72,7 @@ def install(apk):
     cert=p.signer(apk);uid=initial['uid'];baseline=baseline_for(cert,uid)
     files={name:(ROOT/'scripts/companion_boot'/name).read_bytes() for name in ('chain.py','boot.py')}
     files['grant.py']=payload(cert,uid,baseline)
-    config={'version':1,'signer':cert,'uid':uid,'package':p.PACKAGE,'fingerprint':p.CONFIG['fingerprint'],'serial':p.AUTHORIZED_SERIAL,'baseline':baseline,'installed_boot':p.shell('cat','/proc/sys/kernel/random/boot_id'),'grant_sha256':digest(files['grant.py']),'chain_sha256':digest(files['chain.py']),'boot_sha256':digest(files['boot.py']),'original_sha256':ORIGINAL_SHA}
+    config={'version':1,'signer':cert,'uid':uid,'package':p.PACKAGE,'fingerprint':p.CONFIG['fingerprint'],'serial':p.ADB[-1],'baseline':baseline,'installed_boot':p.shell('cat','/proc/sys/kernel/random/boot_id'),'grant_sha256':digest(files['grant.py']),'chain_sha256':digest(files['chain.py']),'boot_sha256':digest(files['boot.py']),'original_sha256':ORIGINAL_SHA}
     config['payload_installed_boot']=config['installed_boot']
     files['config.json']=json.dumps(config).encode()
     encoded={name:base64.b64encode(data).decode() for name,data in files.items()}

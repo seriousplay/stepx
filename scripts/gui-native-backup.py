@@ -17,7 +17,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-SERIAL = 'ZYPZ261A01M692000LP'
+SERIAL = os.environ.get('STEPX_DEVICE_SERIAL') or os.environ.get('STEPX_SERIAL', '')
 FINGERPRINT = 'StepX/pandora/pandora:16/BQ2A.260122.002-BP2A.250705.008/172:user/release-keys'
 PACKAGE = 'com.stepos.ability'
 APK = '/system/priv-app/ability/ability.apk'
@@ -83,10 +83,27 @@ class Adb:
         self.run('pull', remote, str(local), timeout=90)
 
 
+def expected_serial(adb=None):
+    selected = SERIAL
+    transport = getattr(adb, 'transport', '') if adb is not None else ''
+    if selected:
+        return selected
+    if transport and ':' not in transport and '._adb-tls-connect._tcp' not in transport:
+        return transport
+    return ''
+
+
+def firmware_identity(serial):
+    return {'ro.serialno': serial, 'ro.build.fingerprint': FINGERPRINT,
+            'ro.build.version.sdk': '36', 'ro.product.cpu.abi': 'arm64-v8a', 'selinux': 'Enforcing'}
+
+
 def read_identity(adb):
     values = {key: adb.shell('getprop', key) for key in
               ('ro.serialno', 'ro.build.fingerprint', 'ro.build.version.sdk', 'ro.product.cpu.abi')}
-    require(values['ro.serialno'] == SERIAL, 'Physical device serial does not match authorization')
+    expected = expected_serial(adb)
+    if expected:
+        require(values['ro.serialno'] == expected, 'Physical device serial does not match authorization')
     require(values['ro.build.fingerprint'] == FINGERPRINT, 'Firmware fingerprint changed')
     require(values['ro.build.version.sdk'] == '36', 'Android SDK changed')
     require(values['ro.product.cpu.abi'] == 'arm64-v8a', 'Native ABI changed')
@@ -186,10 +203,10 @@ def load_backup(directory):
     require(manifest.get('original_sha256') == APK_SHA256, 'Backup APK hash changed')
     require(digest(directory / 'ability.original.apk') == APK_SHA256, 'Local original APK is corrupt')
     baseline = manifest['snapshot']
-    require(baseline['identity'] == {
-        'ro.serialno': SERIAL, 'ro.build.fingerprint': FINGERPRINT,
-        'ro.build.version.sdk': '36', 'ro.product.cpu.abi': 'arm64-v8a', 'selinux': 'Enforcing'},
-        'Backup belongs to a different device/firmware')
+    serial = baseline.get('identity', {}).get('ro.serialno', '')
+    require(bool(serial), 'Backup is missing physical serial')
+    require(baseline['identity'] == firmware_identity(serial),
+            'Backup belongs to a different firmware')
     require(set(baseline['files']) == set(PINNED_FILES), 'Backup file scope changed')
     for path, sha in PINNED_FILES.items():
         require(baseline['files'][path]['sha256'] == sha, 'Backup native image hash changed')

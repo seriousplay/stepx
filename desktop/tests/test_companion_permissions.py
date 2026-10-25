@@ -22,11 +22,21 @@ class Guards(unittest.TestCase):
                 self.assertEqual(env['JAVA_HOME'],str(jdk))
                 self.assertTrue(env['PATH'].startswith(str(jdk / 'bin') + adapter.os.pathsep))
 
-    def test_wrong_device_rejected_before_any_io(self):
-        with patch.object(adapter, 'ADB', ['adb', '-s', 'different-device']), patch.object(adapter, 'guard') as guard:
-            with self.assertRaisesRegex(RuntimeError, 'authorized'):
+    def test_firmware_guard_is_the_device_gate(self):
+        with patch.object(adapter, 'ADB', ['adb', '-s', 'ZYPZ261A01M687001HK']), \
+                patch.object(adapter, 'guard', side_effect=AssertionError('Unsupported firmware')) as guard:
+            with self.assertRaisesRegex(AssertionError, 'Unsupported firmware'):
                 adapter.inspect()
-            guard.assert_not_called()
+            guard.assert_called_once_with()
+
+    def test_matching_firmware_other_serial_is_inspected(self):
+        dump = '  Package [com.stepx.companion.app] (abcd):\n    appId=10234\n    com.stepos.permission.MANAGE_BACK_SCREEN: granted=true\n'
+        with patch.object(adapter, 'ADB', ['adb', '-s', 'ZYPZ261A01M687001HK']), patch.object(adapter, 'guard'), \
+                patch.object(adapter, 'root_json') as root, patch.object(adapter, 'shell', return_value=dump):
+            result = adapter.inspect()
+            self.assertTrue(result['granted'])
+            self.assertEqual(result['uid'], 10234)
+            root.assert_not_called()
 
     def test_preflight_requires_apk(self):
         with patch.object(adapter, 'inspect') as inspect:
@@ -46,7 +56,7 @@ class Guards(unittest.TestCase):
 
     def test_inspect_has_no_root_or_app_start(self):
         dump = '  Package [com.stepx.companion.app] (abcd):\n    appId=10234\n    com.stepos.permission.MANAGE_BACK_SCREEN: granted=true\n'
-        with patch.object(adapter, 'ADB', ['adb','-s',adapter.AUTHORIZED_SERIAL]), patch.object(adapter, 'guard'), patch.object(adapter, 'root_json') as root, patch.object(adapter, 'shell', return_value=dump) as shell:
+        with patch.object(adapter, 'ADB', ['adb','-s','ZYPZ261A01M687001HK']), patch.object(adapter, 'guard'), patch.object(adapter, 'root_json') as root, patch.object(adapter, 'shell', return_value=dump) as shell:
             result=adapter.inspect()
             self.assertTrue(result['granted']); self.assertEqual(result['uid'],10234)
             root.assert_not_called()
@@ -69,7 +79,7 @@ class Guards(unittest.TestCase):
             self.assertIn('os.geteuid()==0',root.call_args.args[0])
 
     def test_usb_gate_restores_exact_single_package_value(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(adapter,'STATE',Path(directory)), patch.object(adapter,'preflight',return_value={'usb_install_master_enabled':True}), patch.object(adapter,'signer',return_value='a'*64), patch.object(adapter,'ADB',['adb','-s',adapter.AUTHORIZED_SERIAL]), patch.object(adapter,'guard'):
+        with tempfile.TemporaryDirectory() as directory, patch.object(adapter,'STATE',Path(directory)), patch.object(adapter,'preflight',return_value={'usb_install_master_enabled':True}), patch.object(adapter,'signer',return_value='a'*64), patch.object(adapter,'ADB',['adb','-s','ZYPZ261A01M687001HK']), patch.object(adapter,'guard'):
             current={'value':'StepX伴侣:0'}; commands=[]
             def shell(*args):
                 commands.append(args)
@@ -404,6 +414,33 @@ class Guards(unittest.TestCase):
             self.assertFalse(proof['google_permission_baseline_unchanged'])
             self.assertTrue(proof['startup_properties_restored'])
             self.assertEqual(proof['java_result'],json.dumps(answer))
+
+    def test_google_boot_repair_race_is_retried_then_succeeds(self):
+        calls = {'n': 0}
+        def flaky():
+            calls['n'] += 1
+            if calls['n'] < 3:
+                raise RuntimeError('原有 Google 开机修复在本次操作期间更新了 Google 权限')
+            return {'status': 'success'}
+        with patch.object(adapter.time, 'sleep'):
+            self.assertEqual(adapter.with_google_race_retries(flaky), {'status': 'success'})
+        self.assertEqual(calls['n'], 3)
+
+    def test_ensure_grants_skips_already_present_permissions(self):
+        initial = {'installed': True, 'signature_verified': True, 'granted': True, 'uid': 10215,
+                   'connection_permissions_granted': True, 'wake_permissions_granted': True}
+        runtime = {**initial, 'background_exempt': True, 'background_added': False, 'background_thawed': False}
+        with patch.object(adapter, 'inspect', return_value=initial), \
+                patch.object(adapter, 'apply_backscreen') as backscreen, \
+                patch.object(adapter, 'connection_permissions') as connection, \
+                patch.object(adapter, 'wake_permissions') as wake, \
+                patch.object(adapter, 'ensure_runtime', return_value=runtime):
+            result = adapter.ensure_grants(Path('app.apk'))
+            self.assertEqual(result['status'], 'ready')
+            self.assertEqual(result['already_granted'], ['backscreen', 'connection', 'wake', 'background'])
+            backscreen.assert_not_called()
+            connection.assert_not_called()
+            wake.assert_not_called()
 
 
 if __name__ == '__main__':

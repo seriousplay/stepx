@@ -80,6 +80,8 @@ pub(super) struct WorkspaceUi {
     delivery_target: Option<(String, PathBuf, Option<String>, Option<String>)>,
     pub open_phone: bool,
     pub error: Option<String>,
+    pub stream_tool_status: Option<String>,
+    pub stream_delta_count: usize,
     pub preview_scroll: ClippedScrollStateHandle,
     pub panel_entered: Instant,
     writer: Option<mpsc::Sender<Journal>>,
@@ -131,6 +133,8 @@ impl Default for WorkspaceUi {
             delivery_target: None,
             open_phone: false,
             error,
+            stream_tool_status: None,
+            stream_delta_count: 0,
             preview_scroll: Default::default(),
             panel_entered: Instant::now(),
             writer,
@@ -910,6 +914,8 @@ impl Companion {
             .map(|t| t.text.clone())
             .unwrap_or_default();
         self.workspace.next = false;
+        self.workspace.stream_tool_status = None;
+        self.workspace.stream_delta_count = 0;
         self.workspace.running = Some(ActiveRun {
             task: task.id.clone(),
             step: index,
@@ -1039,6 +1045,8 @@ impl Companion {
     pub(super) fn workspace_finish(&mut self, phase: Phase, note: String) {
         // A late download receipt must not complete a later request in the same chat.
         self.workspace.image_delivery = None;
+        self.workspace.stream_tool_status = None;
+        self.workspace.stream_delta_count = 0;
         if let Some(run) = self.workspace.running.take() {
             if let Some(task) = self
                 .workspace
@@ -1052,10 +1060,16 @@ impl Companion {
                     step.note = note.clone();
                 }
                 task.note = note.clone();
-                task.turns.push(Turn {
-                    user: false,
-                    text: note,
-                });
+                if run.executor == Executor::Phone && task.turns.last().is_some_and(|t| !t.user) {
+                    if let Some(last) = task.turns.last_mut() {
+                        last.text = note;
+                    }
+                } else {
+                    task.turns.push(Turn {
+                        user: false,
+                        text: note,
+                    });
+                }
                 task.updated = chrono::Utc::now().timestamp();
                 self.workspace.next =
                     phase == Phase::Done && task.steps.iter().any(|s| s.phase == Phase::Ready);
@@ -1253,6 +1267,10 @@ impl Companion {
             }
         }
         if !self.workspace_busy() {
+            if self.amoo_pending_reply.is_empty() {
+                self.workspace.stream_tool_status = None;
+                self.workspace.stream_delta_count = 0;
+            }
             self.amoo_session_idx = self
                 .workspace_task()
                 .and_then(|t| t.session.as_ref())

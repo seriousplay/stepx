@@ -1,7 +1,7 @@
 # StepX Companion 架构演进与全链路优化总结报告
 
 日期：2026-10-25  
-版本：Desktop `0.2.28` / Android `StepX伴侣` `0.1.26+`  
+版本：Desktop `0.2.29` / Android `StepX伴侣` `0.1.26+`  
 适用设备：StepX PZ261A（`pandora`，Android 16，172 固件）
 
 ---
@@ -142,3 +142,20 @@ StepX Companion 采用「跨平台原生桌面客户端 + Android 伴侣应用 +
 2. **许可证与 Vendor 依赖重写**：自动将公开版 `desktop/Cargo.toml` 的 `license` 重写为 `"AGPL-3.0-only"`，并将 `facloud_ui` 与 `markdown_parser` 路径重写为 `"../vendor/..."`。
 3. **宿主路径与设备序列号脱敏**：自动将构建与验证脚本中的开发机本地 JDK / Android SDK 路径及测试机序列号重写为标准环境变量（`JAVA_HOME`、`ANDROID_HOME`、`STEPX_ADB`、`STEPX_SERIAL`）。
 4. **密钥模式强制阻断扫描**：对所有待同步内容及 `releases/stepx-public` 全量文本文件扫描 `ghp_`、`sk-`、`PRIVATE KEY` 等敏感凭据模式，支持 `--check` 干跑预检模式，一旦命中任何密钥特征立即以非零状态码阻断发布。
+
+---
+
+## 8. 第二阶段深度架构与体验收官（v0.2.29 已全部完成）
+
+针对第一阶段遗留的 5 项深水区工程与体验演进项，已在 Desktop `0.2.29` 中 100% 落地交付：
+
+- [x] **1. Amoo WebSocket 增量事件流（`chat.delta`）实时直推与工具调用状态展示**
+  - **实现细节**：在 `openclaw.rs` 与 `amoo_sync.rs` 中打通 `stream_chat_events_ws` 实时 WebSocket 事件订阅通道，直接解析手机端网关推送的 `chat.delta` 增量文本块、`thinking` 思考链进度以及 `tool.start` / `tool.end` 工具执行状态，实时刷新桌面端 Amoo 主舞台与简洁小窗，彻底告别整轮轮询等待。
+- [x] **2. 前景任务快慢通道（Fast Lane `rx` / Bulk Lane `bulk_rx`）彻底解耦**
+  - **实现细节**：将原单一串行 ADB 任务队列重构为双通道并发架构——高频交互快通道（`sender` / `rx`）专职处理跨页状态读取、短信/电话即时收发与按键控制；重型耗时慢通道（`bulk_sender` / `bulk_rx`）专职承载存储空间全盘扫描、系统压缩检测、Google 服务维护与大文件传输，耗时任务执行期间不再阻塞跨页交互与 UI 响应。
+- [x] **3. 简洁小窗「窗口置顶（Always on Top）」状态保持与「剪贴板一键提问胶囊栏」**
+  - **实现细节**：在简洁 AI 小窗与通知小窗顶栏新增「置顶（Pin）」控制按钮并与窗口状态同步保持；在简洁模式输入框上方新增剪贴板智能感知胶囊栏（`解释` / `翻译` / `提炼要点` / `润色`），一键组合剪贴板文本并填入或发起提问。
+- [x] **4. 存储扩容页「客户端内原生缩略图时间轴网格墙」与列表视图切换**
+  - **实现细节**：在 `expansion_state.rs` 与 `pages/expansion.rs` 中新增 `gallery_grid_mode`（默认开启）及「缩略图时间轴墙 (`exp-view-grid`) / 清单列表 (`exp-view-list`)」视图切换器；按日期桶（`2026-10-25 · 今天`、`2026-10-24 · 昨天` 等）自动聚合归档文件，采用响应式三列等宽网格展示 `118px` 高清 GPU 缩略图（`AssetSource::LocalFile` 原图直出与内置预览回退）、文件格式徽标、空间释放状态胶囊及单卡快捷操作（`打开原件` / `回传手机` / `AI 分析`）。
+- [x] **5. 核心大文件（`ui/mod.rs`、`ui/actions.rs`）模块化拆分**
+  - **实现细节**：按职责边界将 `ui/mod.rs` 与 `ui/actions.rs` 中的后台任务结果应用、键盘/快捷键事件路由、设备侧异步任务构建拆分为独立的 `outcome_apply.rs`、`keyboard_input.rs` 与 `device_actions.rs` 模块，大幅降低单文件认知复杂度并提升模块内聚性。

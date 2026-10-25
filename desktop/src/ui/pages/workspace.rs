@@ -513,6 +513,17 @@ impl Companion {
                         }
                     }
                 }
+                if running
+                    && (self.workspace.stream_tool_status.is_some()
+                        || self.workspace.stream_delta_count > 0)
+                {
+                    let live_label = self
+                        .workspace
+                        .stream_tool_status
+                        .as_deref()
+                        .unwrap_or("WebSocket 实时增量流推送中…");
+                    details.push(self.pill_badge(live_label, p.accent, p.accent_soft));
+                }
                 if failed {
                     details.push(self.ws_button(
                         "retry",

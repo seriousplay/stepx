@@ -9,11 +9,17 @@
 
 mod actions;
 mod desktop_update_state;
+mod device_actions;
 mod github_stars;
+mod keyboard_input;
+mod outcome_apply;
 #[cfg(all(feature = "ui-capture", target_os = "linux"))]
 mod shell_details_check;
 mod shortcuts;
 use desktop_update_state::{DesktopUpdateAction, DesktopUpdateState};
+use device_actions::parent_dir;
+use keyboard_input::{Input, Keyboard};
+use outcome_apply::{read_result, Outcome};
 mod adb_onboarding;
 mod amoo_composer;
 mod amoo_display;
@@ -746,134 +752,7 @@ enum Action {
     ClearContent,
 }
 
-type ReadResult<T> = std::result::Result<Vec<T>, String>;
-
-fn read_result<T>(result: Result<Vec<T>>) -> ReadResult<T> {
-    result.map_err(|error| format!("{error:#}"))
-}
-
-enum Outcome {
-    InputMethod(stepx_companion::input_method::Status, String),
-    AmooUi(AmooUiOutcome),
-    Work(WorkOutcome),
-    StorageScanned(String, StorageReport, Option<toolbox::SystemCompression>),
-    SystemCompression(String, toolbox::SystemCompression),
-    ToolOperated(
-        String,
-        String,
-        toolbox::OperationResult,
-        Option<StorageReport>,
-    ),
-    Sms(ReadResult<Message>, Option<Capabilities>),
-    SmsPrepared(SmsPlan),
-    SmsSent(SmsSendStatus, ReadResult<Message>),
-    SmsStatus(SmsSendStatus),
-    PhoneCallPrepared(phone::DialPlan),
-    DialSubmitted(String, String),
-    CallHangup(String),
-    AmooState(AmooSnapshot, String, bool),
-    AmooRealData(RealAmooData, String),
-    AmooObservationUnavailable,
-    AmooCreated(String),
-    AmooSent(amoo::PendingReply),
-    WorkspaceDelivered(String, PathBuf, String, std::result::Result<String, String>),
-    Transports(Vec<Transport>, Vec<Service>),
-    Reattached(Device),
-    Selected(
-        Device,
-        String,
-        Option<Capabilities>,
-        Option<RealAmooData>,
-        ReadResult<Message>,
-        ReadResult<CallRecord>,
-        ReadResult<ContactEntry>,
-    ),
-    /// Content to show on the page that started the job (e.g. screen text).
-    Text(String),
-    /// Result that only needs a line in the status bar.
-    Notice(String),
-    Summary(String, Option<Capabilities>),
-    Files(String, Vec<Entry>, Option<String>),
-    Apps(Vec<AppInfo>),
-    ApkInstalled(String, Vec<AppInfo>),
-    Mirror(String, String, MirrorSession),
-    Screenshot(tempfile::TempDir, PathBuf),
-    Trash(Trashed),
-    Restored,
-    Qr(Option<String>),
-    Paired(String),
-    BackScreenImportedImage(PathBuf),
-    Studio(StudioOutcome),
-    StudioLab(StudioLabOutcome),
-    PhoneData(ReadResult<CallRecord>, ReadResult<ContactEntry>),
-    GoogleSuite(GoogleSuiteStatus, CompanionStatus, String),
-    CompanionStatus(CompanionStatus, String),
-    NeoStatus(stepx_companion::neo_agent::NeoStatus),
-    SystemServices(Vec<SystemServiceInfo>, String),
-    DeepAmooGranted(String),
-    DeepBackScreenGranted(String),
-}
 type Job = Box<dyn FnOnce(&Adb) -> Result<Outcome> + Send>;
-
-#[derive(Default)]
-struct Input {
-    text: String,
-    cursor: usize,
-    all: bool,
-    preedit: String,
-    anchor: Option<usize>,
-    dragging: bool,
-    undo: Vec<(String, usize)>,
-    redo: Vec<(String, usize)>,
-    last_edit: Option<Instant>,
-}
-
-impl Input {
-    fn clear(&mut self) {
-        self.text.clear();
-        self.cursor = 0;
-        self.all = false;
-        self.preedit.clear();
-        self.anchor = None;
-        self.dragging = false;
-        self.undo.clear();
-        self.redo.clear();
-        self.last_edit = None;
-    }
-
-    fn set(&mut self, text: &str) {
-        self.clear();
-        self.insert(text);
-    }
-
-    fn insert(&mut self, text: &str) {
-        self.delete_selection();
-        let clean: String = text.chars().filter(|c| *c != '\0' && *c != '\r').collect();
-        if self.text.len() + clean.len() > 16_384 {
-            return;
-        }
-        self.text.insert_str(self.cursor, &clean);
-        self.cursor = (self.cursor + clean.len()).min(self.text.len());
-        self.preedit.clear();
-    }
-
-    fn previous(&self) -> usize {
-        self.text[..self.cursor.min(self.text.len())]
-            .char_indices()
-            .last()
-            .map(|(i, _)| i)
-            .unwrap_or(0)
-    }
-
-    fn next(&self) -> usize {
-        let cur = self.cursor.min(self.text.len());
-        self.text[cur..]
-            .chars()
-            .next()
-            .map(|c| cur + c.len_utf8())
-            .unwrap_or(cur)
-    }
-}
 
 /// One conversation in the SMS list.
 struct SmsThread {
@@ -1287,6 +1166,12 @@ struct Companion {
     loading_frame: usize,
     sender: mpsc::Sender<Job>,
     receiver: mpsc::Receiver<Result<Outcome>>,
+    pub(super) bulk_rx: Option<mpsc::Receiver<Outcome>>,
+    pub(super) bulk_busy: bool,
+    pub(super) bulk_status: String,
+    pub(super) bulk_page: Page,
+    pub(super) bulk_tool: Option<ToolPage>,
+    pub(super) bulk_started_at: Option<Instant>,
     last_scan: Instant,
     connection_watch: connection_watch::ConnectionWatch,
     text_selection: SelectionHandle,
@@ -1612,6 +1497,12 @@ impl Companion {
             loading_frame: 0,
             sender,
             receiver,
+            bulk_rx: None,
+            bulk_busy: false,
+            bulk_status: String::new(),
+            bulk_page: Page::Overview,
+            bulk_tool: None,
+            bulk_started_at: None,
             last_scan: Instant::now(),
             connection_watch: Default::default(),
             text_selection: Default::default(),
@@ -1761,6 +1652,7 @@ impl Companion {
             32
         } else if self.mirror.is_some()
             || self.busy
+            || self.bulk_busy
             || self.work.running
             || self.amoo_ui.gui_running
             || self.work_previews_loading()
@@ -1789,7 +1681,11 @@ impl Companion {
         entry.1.clone()
     }
 
-    fn submit(&mut self, label: &str, job: impl FnOnce(&Adb) -> Result<Outcome> + Send + 'static) {
+    pub(super) fn submit(
+        &mut self,
+        label: &str,
+        job: impl FnOnce(&Adb) -> Result<Outcome> + Send + 'static,
+    ) {
         if self.sender.send(Box::new(job)).is_ok() {
             self.amoo_ui.snapshot_generation = self.amoo_ui.snapshot_generation.wrapping_add(1);
             self.busy = true;
@@ -1802,7 +1698,7 @@ impl Companion {
         }
     }
 
-    fn with_device(
+    pub(super) fn with_device(
         &mut self,
         label: &str,
         job: impl FnOnce(&Adb, Device) -> Result<Outcome> + Send + 'static,
@@ -1817,210 +1713,49 @@ impl Companion {
         }
     }
 
-    fn refresh(&mut self) {
-        self.last_scan = Instant::now();
-        let prefs = self.preferences.clone();
-        let pairing_hosts = self.pairing_hosts.clone();
-        self.submit("正在查找设备…", move |adb| {
-            let (devices, services) =
-                stepx_companion::reconnect::scan(adb, &prefs, &pairing_hosts)?;
-            Ok(Outcome::Transports(devices, services))
+    pub(super) fn spawn_bulk(
+        &mut self,
+        status: impl Into<String>,
+        f: impl FnOnce() -> Outcome + Send + 'static,
+    ) {
+        let label = status.into();
+        let (tx, rx) = mpsc::channel();
+        self.bulk_rx = Some(rx);
+        self.bulk_busy = true;
+        self.bulk_status = label.clone();
+        self.bulk_page = self.page;
+        self.bulk_tool = self.tool_page;
+        self.bulk_started_at = Some(Instant::now());
+        self.error = false;
+        if !self.busy {
+            self.status = label;
+        }
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
         });
-        self.job_tool = None;
     }
 
-    fn auto_load_for_page(&mut self) {
-        if self.page == Page::Studio && !self.studio.loaded && !self.busy {
-            self.refresh_studio();
+    pub(super) fn with_device_bulk(
+        &mut self,
+        label: &str,
+        job: impl FnOnce(&Adb, Device) -> Result<Outcome> + Send + 'static,
+    ) {
+        let Some(device) = self.selected.clone() else {
+            self.page = Page::Connect;
+            self.status = "请先连接设备".into();
+            self.error = true;
             return;
-        }
-        if self.busy || self.selected.is_none() {
-            return;
-        }
-        match self.page {
-            Page::Tools
-                if self.tool_page == Some(ToolPage::Storage)
-                    && self.storage_report.is_none()
-                    && !self.demo_mode =>
-            {
-                self.with_device("正在扫描手机公开目录…", |adb, d| {
-                    Ok(Outcome::StorageScanned(
-                        d.serial.clone(),
-                        toolbox::scan(adb, &d)?,
-                        toolbox::probe_system(adb, &d).ok(),
-                    ))
-                });
+        };
+        let page = self.page;
+        let tool = self.tool_page;
+        let label_str = label.to_string();
+        self.spawn_bulk(label_str, move || {
+            let result = Adb::discover().and_then(|adb| job(&adb, device));
+            match result {
+                Ok(outcome) => outcome,
+                Err(error) => Outcome::BulkFailed(page, tool, format!("{error:#}")),
             }
-            Page::Connect if !self.demo_mode && !self.companion_status.checked => {
-                self.handle_device_action(&Action::CompanionInspect);
-            }
-            Page::Tools if !self.demo_mode => match self.tool_page {
-                Some(ToolPage::Google) if !self.google_suite.checked => {
-                    self.handle_device_action(&Action::GoogleSuiteInspect)
-                }
-                Some(ToolPage::Companion) if !self.companion_status.checked => {
-                    self.handle_device_action(&Action::CompanionInspect)
-                }
-                Some(ToolPage::Neo) if !self.neo_status.checked => {
-                    self.handle_device_action(&Action::NeoInspect)
-                }
-                Some(ToolPage::InputMethod) if !self.input_method.checked => {
-                    self.handle_device_action(&Action::InspectInputMethod);
-                }
-                Some(ToolPage::Services) if self.system_services.is_empty() => {
-                    self.handle_device_action(&Action::InspectServices)
-                }
-                Some(ToolPage::Device) if self.summary.is_empty() => {
-                    self.handle_device_action(&Action::Summary)
-                }
-                _ => {}
-            },
-            Page::Overview if !self.demo_mode => {
-                self.with_device("正在刷新设备状态…", |adb, d| {
-                    Ok(Outcome::Summary(
-                        d.summary(adb)?,
-                        bridge::capabilities(adb, &d).ok(),
-                    ))
-                });
-            }
-            Page::Work if !self.demo_mode => self.refresh_work(),
-            Page::Account if !self.demo_mode => {
-                self.handle_amoo_ui_action(&AmooUiAction::RefreshUsage)
-            }
-            Page::Amoo if !self.demo_mode => {
-                let key = self
-                    .amoo_sessions
-                    .get(self.amoo_session_idx)
-                    .map(|s| s.session_key.clone());
-                self.with_device("正在从后台同步 Amoo 会话…", move |adb, d| {
-                    let real = amoo::fetch(adb, &d, key.as_deref())?;
-                    let msg = format!("后台已同步 {} 个真实会话", real.sessions.len());
-                    Ok(Outcome::AmooRealData(real, msg))
-                });
-            }
-            Page::Files if self.files.is_empty() => self.browse(self.directory.clone()),
-            Page::Apps if !self.apps_loaded => {
-                self.with_device("正在读取应用…", move |adb, d| {
-                    Ok(Outcome::Apps(apps::catalog(adb, &d)?))
-                });
-            }
-            Page::Sms if !self.demo_mode => {
-                self.with_device("正在读取短信…", |adb, d| {
-                    let caps = bridge::capabilities(adb, &d).ok();
-                    Ok(Outcome::Sms(read_result(d.messages(adb)), caps))
-                });
-            }
-            Page::Phone if !self.demo_mode => {
-                self.with_device("正在读取通话记录与通讯录…", |adb, d| {
-                    let logs = read_result(d.call_logs(adb));
-                    let contacts = read_result(d.contacts(adb));
-                    Ok(Outcome::PhoneData(logs, contacts))
-                });
-            }
-            Page::Studio => {}
-            _ => {}
-        }
-    }
-
-    fn clear_device_state(&mut self) {
-        self.clear_text_interaction();
-        self.speech = Default::default();
-        let mode = self.push.shell_mode;
-        let pin = self.push.pin_window;
-        self.push = PushUiState::default();
-        self.push.shell_mode = mode;
-        self.push.pin_window = pin;
-        for index in [F_IM_REPLY, F_PUSH_REPLY, F_TOAST_REPLY] {
-            self.fields[index].clear();
-        }
-        self.studio_lab.cloud_models.clear();
-        self.studio_lab.cloud_model = None;
-        self.studio_lab.cloud_scope = None;
-        self.studio.phone_note = None;
-        self.studio.cloud = None;
-        self.studio.web = None;
-        self.studio.web_selected = None;
-        self.studio.web_error = None;
-        self.studio.cloud_selected = None;
-        self.studio.cloud_checked = None;
-        self.studio.cloud_error = None;
-        self.studio.connecting_until = None;
-        let native_gui_unconfirmed =
-            (self.amoo_ui.gui_running && !self.amoo_ui.gui_desktop) || self.amoo_ui.gui_unconfirmed;
-        self.google_suite = GoogleSuiteStatus::default();
-        self.companion_status = CompanionStatus::default();
-        self.neo_status = Default::default();
-        self.phone_link_notice = None;
-        self.deep_backscreen_granted = false;
-        self.deep_amoo_granted = false;
-        self.amoo_bg_keepalive = false;
-        self.system_services.clear();
-        self.tool_confirmation = None;
-        self.tools_feedback = None;
-        self.storage_report = None;
-        self.tools_pending = None;
-        self.tools_result_page = 0;
-        self.system_compression = None;
-        self.tools_last_result = None;
-        self.stop_mirror();
-        self.capabilities = None;
-        self.amoo_snapshot = None;
-        self.amoo_poll_remaining = 0;
-        self.amoo_pending_reply.clear();
-        self.input_method = Default::default();
-        self.amoo_ui = AmooUiState::default();
-        self.amoo_attachments.clear();
-        self.amoo_cron_jobs.clear();
-        self.amoo_gateway_online = false;
-        self.work.disconnect();
-        self.back_screen = BackScreenUiState::default();
-        self.updates = UpdateState::default();
-        if !self.demo_mode {
-            self.amoo_sessions.clear();
-            self.amoo_skills.clear();
-            self.amoo_memories.clear();
-            self.amoo_cron_count = 0;
-            self.amoo_bm25_entries = 0;
-        }
-        self.pending_sms_plan = None;
-        self.last_sms_status = None;
-        self.selected_thread = None;
-        self.content.clear();
-        self.sms.clear();
-        self.sms_loaded = false;
-        self.phone_loaded = false;
-        self.pending_call = None;
-        self.selected_call_sim = None;
-        self.call_logs.clear();
-        self.contacts.clear();
-        self.sms_error = None;
-        self.call_logs_error = None;
-        self.contacts_error = None;
-        self.selected_sim = None;
-        self.active_call_number = None;
-        self.selected_contact = 0;
-        for field in [
-            F_SMS_TO,
-            F_SMS_BODY,
-            F_PHONE_DIAL,
-            F_CONTACT_SEARCH,
-            F_SMS_SEARCH,
-        ] {
-            self.fields[field].clear();
-        }
-        self.summary.clear();
-        self.files.clear();
-        self.apps.clear();
-        self.apps_loaded = false;
-        self.apps_error = None;
-        self.pending_app_uninstall = None;
-        self.screenshot = None;
-        self.selected_file = None;
-        self.file_modal = None;
-        self.trash_confirm = false;
-        if native_gui_unconfirmed {
-            self.status = "已停止桌面等待，手机原生操作可能仍继续，请在手机上核对".into();
-        }
+        });
     }
 
     fn tick(&mut self, ctx: &mut ViewContext<Self>) {
@@ -2169,6 +1904,9 @@ impl Companion {
                 Ok(outcome) => {
                     self.status = "就绪".into();
                     self.apply(outcome);
+                    if self.bulk_busy && !self.bulk_status.is_empty() && self.status == "就绪" {
+                        self.status = self.bulk_status.clone();
+                    }
                 }
             }
             if completed_page == Page::Tools
@@ -2182,6 +1920,42 @@ impl Companion {
                 self.auto_load_for_page();
             }
             ctx.notify();
+        }
+        if let Some(rx) = &self.bulk_rx {
+            match rx.try_recv() {
+                Ok(outcome) => {
+                    let completed_page = self.bulk_page;
+                    let completed_tool = self.bulk_tool;
+                    self.bulk_busy = false;
+                    self.bulk_started_at = None;
+                    self.bulk_rx = None;
+                    self.bulk_tool = None;
+                    let prev_bulk_status = std::mem::take(&mut self.bulk_status);
+                    if !self.busy {
+                        self.error = false;
+                        self.status = "就绪".into();
+                    }
+                    self.apply(outcome);
+                    if completed_page == Page::Tools
+                        && completed_tool.is_some()
+                        && !self.busy
+                        && self.status != prev_bulk_status
+                    {
+                        self.tools_feedback =
+                            Some((completed_tool, self.status.clone(), self.error));
+                    }
+                    ctx.notify();
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.bulk_busy = false;
+                    self.bulk_started_at = None;
+                    self.bulk_rx = None;
+                    self.bulk_tool = None;
+                    self.bulk_status.clear();
+                    ctx.notify();
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
         }
         if self.poll_amoo_sync() {
             ctx.notify();
@@ -2392,1071 +2166,9 @@ impl Companion {
         }
     }
 
-    fn apply(&mut self, outcome: Outcome) {
-        match outcome {
-            Outcome::Work(result) => self.apply_work(result),
-            Outcome::AmooUi(result) => self.apply_amoo_ui(result),
-            Outcome::StorageScanned(serial, report, system) => {
-                if self.selected.as_ref().is_some_and(|d| d.serial == serial) {
-                    self.status = format!(
-                        "已扫描 {} 个公开文件；{} 个文件未完成重复校验",
-                        report.scanned_files, report.hash_skipped
-                    );
-                    self.storage_report = Some(report);
-                    self.system_compression = system;
-                    self.tools_pending = None;
-                    self.tools_result_page = 0;
-                }
-            }
-            Outcome::SystemCompression(serial, result) => {
-                if self.selected.as_ref().is_some_and(|d| d.serial == serial) {
-                    self.status = if result.volume_support {
-                        "数据分区支持压缩，仍需验证写入与还原兼容性"
-                    } else {
-                        "数据分区未启用 compression，系统权限无法单独开启透明压缩"
-                    }
-                    .into();
-                    self.system_compression = Some(result);
-                }
-            }
-            Outcome::ToolOperated(serial, label, result, report) => {
-                if self.selected.as_ref().is_some_and(|d| d.serial == serial) {
-                    let delta = result.available_after as i128 - result.available_before as i128;
-                    let change = format!(
-                        "{}{}",
-                        if delta < 0 { "−" } else { "+" },
-                        storage::format_bytes(delta.unsigned_abs() as u64)
-                    );
-                    let text = format!(
-                        "{label}{} · 手机可用空间变化 {change} · {} → {}",
-                        if result.completed {
-                            "完成"
-                        } else {
-                            "未完全完成"
-                        },
-                        storage::format_bytes(result.available_before),
-                        storage::format_bytes(result.available_after)
-                    );
-                    self.status = text.clone();
-                    self.tools_last_result = Some(format!("{text}\n{}", result.result_path));
-                    self.storage_report = report;
-                    self.tools_pending = None;
-                    self.tools_result_page = 0;
-                }
-            }
-            Outcome::Transports(devices, services) => {
-                if self.selected.as_ref().is_some_and(|d| {
-                    !devices
-                        .iter()
-                        .any(|t| t.id == d.transport && t.state == "device")
-                }) {
-                    self.connection_watch.detached_serial =
-                        self.selected.as_ref().map(|d| d.serial.clone());
-                    self.selected = None;
-                    self.amoo_gateway_online = false;
-                    self.stop_mirror();
-                    self.status = "连接暂时断开，正在自动重连；草稿与附件已保留".into();
-                }
-                self.devices = devices;
-                self.mdns_services = services;
-                if self.selected.is_none() {
-                    self.auto_select();
-                }
-            }
-            Outcome::Reattached(device) => {
-                if self.connection_watch.detached_serial.as_deref() == Some(device.serial.as_str())
-                {
-                    self.connection_watch.detached_serial = None;
-                    self.connection_watch.identity_at = None;
-                    self.selected = Some(device);
-                    self.initializing = false;
-                    self.error = false;
-                    self.status = "已自动恢复连接 · 会话与草稿已保留".into();
-                }
-            }
-            Outcome::Selected(device, summary, caps, real_amoo, sms, call_logs, contacts) => {
-                self.allow_first_connect = false;
-                let resumed = self.connection_watch.detached_serial.take().as_deref()
-                    == Some(device.serial.as_str());
-                if !resumed {
-                    self.clear_device_state();
-                }
-                self.connection_watch.identity_at = None;
-                self.apply_capabilities(caps);
-                self.apply_sms_data(sms);
-                self.apply_phone_data(call_logs, contacts);
-                if !self.demo_mode && self.selected_thread.is_none() {
-                    if let Some(first) = self.sms_threads().first() {
-                        let addr = first.address.clone();
-                        self.fields[F_SMS_TO].set(&addr);
-                        self.selected_thread = Some(addr);
-                    }
-                }
-                if let Some(real) = real_amoo {
-                    self.apply_real_amoo_data(real);
-                }
-                self.preferences
-                    .remember(device.serial.clone(), device.model.clone());
-                if let Err(e) = self.preferences.save() {
-                    self.status = format!("已连接，但保存设备失败：{e}");
-                    self.error = true;
-                } else {
-                    self.status = format!("已连接 {}", device.model);
-                }
-                self.initializing = false;
-                self.selected = Some(device);
-                self.summary = summary;
-                // Keep an explicitly opened connection page visible after discovery.
-                // Normal launches already start on Overview; active guides advance here.
-                if self.page == Page::Connect && self.connect_guide_step.is_some() {
-                    self.connect_guide_step = Some(
-                        if self.connect_guide_step.is_some_and(|step| step >= 3)
-                            && self
-                                .selected
-                                .as_ref()
-                                .is_some_and(|d| is_wireless(&d.transport))
-                        {
-                            5
-                        } else {
-                            2
-                        },
-                    );
-                }
-                if self.page == Page::Overview {
-                    self.with_device("正在读取应用数量与图标…", |adb, d| {
-                        Ok(Outcome::Apps(apps::catalog(adb, &d)?))
-                    });
-                } else {
-                    self.auto_load_for_page();
-                }
-            }
-            Outcome::Text(text) => {
-                self.content = text;
-                self.output_page = self.job_page;
-            }
-            Outcome::Notice(text) => {
-                if text != "就绪" && text != "已记住的设备不在线" {
-                    self.record_notice("执行反馈", text.clone());
-                }
-                self.initializing = false;
-                self.status = text;
-            }
-            Outcome::Summary(text, caps) => {
-                self.summary = text;
-                self.apply_capabilities(caps);
-            }
-            Outcome::Sms(messages, caps) => {
-                self.apply_capabilities(caps);
-                self.apply_sms_data(messages);
-                if !self.demo_mode && self.selected_thread.is_none() {
-                    if let Some(first) = self.sms_threads().first() {
-                        let addr = first.address.clone();
-                        self.fields[F_SMS_TO].set(&addr);
-                        self.selected_thread = Some(addr);
-                    }
-                }
-            }
-            Outcome::SmsPrepared(plan) => {
-                self.status = format!(
-                    "已就绪：将通过 {} 发送至 {}，请点击「确认发送」",
-                    plan.subscription_label, plan.number
-                );
-                let target = self
-                    .selected
-                    .as_ref()
-                    .map(|d| format!("手机：{} · {}", d.model, d.serial))
-                    .unwrap_or_default();
-                self.review_action(
-                    &Action::ConfirmDirectSms,
-                    "确认发送这条短信？",
-                    target,
-                    vec![
-                        format!("收件人：{} · 使用 {}", plan.number, plan.subscription_label),
-                        plan.body.clone(),
-                        format!(
-                            "共 {} 段短信，运营商可能按套餐计费。确认后实际从手机发出。",
-                            plan.parts
-                        ),
-                    ],
-                    "确认发送",
-                    true,
-                    false,
-                );
-                self.pending_sms_plan = Some(plan);
-            }
-            Outcome::SmsSent(send_status, messages) => {
-                self.pending_sms_plan = None;
-                if send_status.state == "sent" {
-                    self.fields[F_SMS_BODY].clear();
-                }
-                self.status = send_status.summary_label();
-                self.error = send_status.state == "failed";
-                self.last_sms_status = Some(send_status);
-                let send_notice = self.status.clone();
-                self.apply_sms_data(messages);
-                self.status = if self.sms_error.is_some() {
-                    format!("{send_notice}；短信列表读取失败，请刷新")
-                } else {
-                    send_notice
-                };
-                Self::scroll_to_end(&self.scroll_aux);
-            }
-            Outcome::SmsStatus(send_status) => {
-                self.status = send_status.summary_label();
-                self.error = send_status.state == "failed";
-                self.last_sms_status = Some(send_status);
-            }
-            Outcome::AmooState(snapshot, msg, start_poll) => {
-                let count = snapshot.turns.len();
-                if !self.demo_mode && !snapshot.turns.is_empty() {
-                    if let Some(sess) = self.amoo_sessions.get_mut(self.amoo_session_idx) {
-                        let mut new_items = Vec::new();
-                        for t in &snapshot.turns {
-                            if t.is_user {
-                                new_items.push(AmooChatItem::UserText {
-                                    attachment: None,
-                                    text: t.text.clone(),
-                                });
-                            } else {
-                                let has_bolt = t.text.contains("背屏") || t.text.contains("点阵");
-                                new_items.push(AmooChatItem::AssistantRich {
-                                    thinking_time: "已完成".into(),
-                                    thinking_steps: vec![
-                                        format!("会话：{}", sess.title),
-                                        "来源：手机 Amoo (com.stepos.ailauncher) 实时同步".into(),
-                                    ],
-                                    tools_summary: "手机 Amoo · 实机消息".into(),
-                                    text: Some(t.text.clone()),
-                                    has_bolt_artifact: has_bolt,
-                                    has_invoice_artifact: false,
-                                    has_safety_confirm: false,
-                                    time_label: sess.status.clone(),
-                                });
-                            }
-                        }
-                        if !new_items.is_empty() {
-                            sess.items = new_items;
-                        }
-                    }
-                } else if let Some(last_ai) = snapshot
-                    .turns
-                    .iter()
-                    .rev()
-                    .find(|t| !t.is_user && !t.text.trim().is_empty())
-                {
-                    if let Some(sess) = self.amoo_sessions.get_mut(self.amoo_session_idx) {
-                        if let Some(AmooChatItem::AssistantRich {
-                            text,
-                            tools_summary,
-                            ..
-                        }) = sess.items.last_mut()
-                        {
-                            if text.is_some() {
-                                *text = Some(last_ai.text.clone());
-                                *tools_summary = "手机端 Amoo 实时回复".into();
-                            }
-                        }
-                    }
-                }
-                self.amoo_snapshot = Some(snapshot);
-                if self.page == Page::Amoo {
-                    self.reveal_latest_chat();
-                }
-                if start_poll {
-                    self.fields[F_AMOO].clear();
-                    self.amoo_poll_remaining = 4;
-                    self.last_amoo_poll = Instant::now();
-                }
-                self.status = if msg.is_empty() {
-                    format!("已同步 {count} 条消息")
-                } else {
-                    msg
-                };
-            }
-            Outcome::AmooCreated(key) => {
-                self.amoo_sessions.insert(
-                    0,
-                    AmooSessionItem {
-                        session_key: key,
-                        title: "新对话".into(),
-                        agent: "Amoo 助手".into(),
-                        status: "待提问".into(),
-                        status_kind: 0,
-                        meta: "后台已创建 · 尚无消息".into(),
-                        items: Vec::new(),
-                    },
-                );
-                self.amoo_session_idx = 0;
-                self.amoo_poll_remaining = 0;
-                self.status = "已在后台创建 Amoo 会话，可直接输入消息".into();
-            }
-            Outcome::WorkspaceDelivered(task, path, serial, result) => {
-                let note = result
-                    .clone()
-                    .unwrap_or_else(|e| format!("发送未完成：{e}"));
-                self.status = note.clone();
-                self.error = result.is_err();
-                if let Some(task) = self
-                    .workspace
-                    .journal
-                    .tasks
-                    .iter_mut()
-                    .find(|t| t.id == task)
-                {
-                    task.receipts
-                        .push(stepx_companion::amoo_workspace::Receipt {
-                            path,
-                            note,
-                            success: result.is_ok(),
-                            device: serial,
-                            account: None,
-                            cloud_url: None,
-                        });
-                }
-                self.workspace_persist();
-            }
-            Outcome::AmooSent(receipt) => {
-                self.workspace_bind_session(&receipt.key);
-                let key = receipt.key.clone();
-                let text = receipt.text.clone();
-                self.amoo_ui
-                    .session_started
-                    .insert(key.clone(), Instant::now());
-                self.amoo_pending_reply.insert(key.clone(), receipt);
-                if let Some(session) = self.amoo_sessions.iter_mut().find(|s| s.session_key == key)
-                {
-                    session.items.push(AmooChatItem::UserText {
-                        attachment: None,
-                        text,
-                    });
-                    session.status = "等待回复".into();
-                    session.status_kind = 1;
-                    session.meta = "后台已接收 · 正在等待回复".into();
-                }
-                self.amoo_poll_remaining = 100;
-                self.last_amoo_poll = Instant::now();
-                self.status = "Amoo 后台已接收消息，正在等待回复".into();
-                self.reveal_latest_chat();
-            }
-            Outcome::AmooObservationUnavailable => {
-                // Idle reads are not task failures. Retain the loaded history,
-                // draft and attachments while marking the connection unconfirmed.
-                self.amoo_gateway_online = false;
-                self.amoo_poll_remaining = 0;
-                self.status = "手机 Amoo 暂未连接，已保留上次内容；发送任务时会重新连接".into();
-            }
-            Outcome::AmooRealData(real, mut msg) => {
-                // Measure completion before removing the matching pending run.
-                self.record_amoo_usage(&real);
-                self.reply_motion
-                    .live
-                    .extend(self.amoo_pending_reply.keys().cloned());
-                let was_pending = self.amoo_pending_reply.len();
-                let finished_error = self.amoo_pending_reply.values().find_map(|pending| {
-                    let session = real.sessions.iter().find(|s| pending.finished(s))?;
-                    session
-                        .messages
-                        .iter()
-                        .rev()
-                        .find(|m| m.run_id == pending.run_id && m.is_error)
-                        .map(|m| {
-                            m.error_message
-                                .clone()
-                                .unwrap_or_else(|| "手机返回了错误，请查看会话后继续".into())
-                        })
-                });
-                if let Some(run) = self.workspace.running.clone().filter(|r| {
-                    matches!(
-                        r.executor,
-                        stepx_companion::amoo_workspace::Executor::Phone
-                            | stepx_companion::amoo_workspace::Executor::Image
-                    )
-                }) {
-                    let key = self
-                        .workspace
-                        .journal
-                        .tasks
-                        .iter()
-                        .find(|t| t.id == run.task)
-                        .and_then(|t| t.session.as_ref());
-                    let completed = key
-                        .and_then(|key| self.amoo_pending_reply.get(key))
-                        .and_then(|pending| {
-                            real.sessions
-                                .iter()
-                                .find(|s| pending.finished(s))
-                                .map(|s| (s, pending))
-                        });
-                    if let Some((session, pending)) = completed {
-                        let failure = session
-                            .messages
-                            .iter()
-                            .rev()
-                            .find(|m| m.run_id == pending.run_id && m.is_error)
-                            .map(|m| {
-                                m.error_message
-                                    .clone()
-                                    .unwrap_or("手机返回错误，请查看回复".into())
-                            });
-                        let note = session
-                            .messages
-                            .iter()
-                            .filter(|m| m.run_id == pending.run_id && m.role == "assistant")
-                            .filter_map(|m| {
-                                stepx_companion::work_protocol::display_text(&m.text, false)
-                            })
-                            .filter(|t| !t.trim().is_empty())
-                            .collect::<Vec<_>>()
-                            .join("\n\n");
-                        if let Some(error) = failure {
-                            self.workspace_finish(
-                                stepx_companion::amoo_workspace::Phase::Failed,
-                                error,
-                            );
-                        } else if run.executor == stepx_companion::amoo_workspace::Executor::Image {
-                            self.workspace_deliver_images(
-                                session
-                                    .messages
-                                    .iter()
-                                    .filter(|m| m.run_id == pending.run_id && m.role != "user")
-                                    .cloned()
-                                    .collect(),
-                                note,
-                            );
-                        } else {
-                            self.workspace_finish(
-                                stepx_companion::amoo_workspace::Phase::Done,
-                                note,
-                            );
-                        }
-                    }
-                }
-                self.amoo_pending_reply
-                    .retain(|_, pending| !real.sessions.iter().any(|s| pending.finished(s)));
-                if self.amoo_pending_reply.len() < was_pending {
-                    if self.amoo_pending_reply.is_empty() {
-                        self.amoo_poll_remaining = 0;
-                    }
-                    if let Some(error) = finished_error {
-                        msg = error.clone();
-                        self.work.error = Some(error);
-                        self.error = true;
-                    } else {
-                        msg = "已收到 Amoo 本次请求的结果".into();
-                    }
-                } else if !self.amoo_pending_reply.is_empty() && self.amoo_poll_remaining == 0 {
-                    msg = "Amoo 尚未返回完整结果，后台会继续同步；请勿重复发送".into();
-                }
-                let follow_tail = self.chat_near_end() && self.selected_text.is_none();
-                let previous = self
-                    .amoo_sessions
-                    .get(self.amoo_session_idx)
-                    .map(|s| (s.session_key.clone(), s.items.clone()));
-                self.apply_real_amoo_data_recorded(real);
-                let current = self
-                    .amoo_sessions
-                    .get(self.amoo_session_idx)
-                    .map(|s| (s.session_key.clone(), s.items.clone()));
-                if matches!(self.page, Page::Amoo | Page::Work)
-                    && previous != current
-                    && follow_tail
-                {
-                    self.reveal_latest_chat();
-                }
-                if !msg.is_empty() {
-                    self.status = msg;
-                }
-            }
-            Outcome::Files(path, files, notice) => {
-                if path != self.directory {
-                    self.scroll = Default::default();
-                    self.fields[F_FILE_SEARCH].clear();
-                    if self.focus == Some(F_FILE_SEARCH) {
-                        self.focus = None;
-                    }
-                }
-                self.directory = path;
-                self.files = files;
-                self.file_page = 0;
-                self.selected_file = None;
-                self.file_modal = None;
-                self.trash_confirm = false;
-                if let Some(msg) = notice {
-                    self.record_notice("文件操作", msg.clone());
-                    self.status = msg;
-                }
-            }
-            Outcome::Apps(apps) => {
-                self.apps_loaded = true;
-                self.apps_error = None;
-                self.status = format!("已读取 {} 个应用", apps.len());
-                self.apps = apps;
-            }
-            Outcome::ApkInstalled(msg, apps) => {
-                self.apps_loaded = true;
-                self.apps_error = None;
-                self.status = msg;
-                self.apps = apps;
-            }
-            Outcome::Mirror(serial, transport, child) => {
-                if self
-                    .selected
-                    .as_ref()
-                    .is_some_and(|d| d.serial == serial && d.transport == transport)
-                {
-                    self.status = child.started_message().into();
-                    self.mirror = Some(child);
-                } else {
-                    // Dropping the session closes a window started for a stale selection.
-                    self.status = "设备已切换，已取消原设备的投屏".into();
-                }
-            }
-            Outcome::Screenshot(directory, path) => {
-                self.screenshot = Some((directory, path));
-                self.status = "已截图".into();
-            }
-            Outcome::Trash(record) => {
-                self.trashed = Some(record);
-                self.status = "已移到回收站".into();
-                self.browse(self.directory.clone());
-            }
-            Outcome::Restored => {
-                self.trashed = None;
-                self.status = "已恢复".into();
-                self.browse(self.directory.clone());
-            }
-            Outcome::Qr(endpoint) => {
-                if let Some(endpoint) = endpoint {
-                    self.remember_pairing_host(&endpoint);
-                    self.qr = None;
-                    self.status = "配对成功，正在连接…".into();
-                    self.refresh();
-                } else {
-                    self.refresh();
-                    self.status = "等待扫码 · 正在检查设备通道…".into();
-                }
-            }
-            Outcome::Paired(endpoint) => {
-                self.remember_pairing_host(&endpoint);
-                self.fields[F_PAIR_CODE].clear();
-                self.status = format!("已连接 {endpoint}，正在验证…");
-                self.refresh();
-            }
-            Outcome::BackScreenImportedImage(path) => {
-                self.page = Page::BackScreen;
-                self.back_screen.tab = 2;
-                match self.back_screen.apply_image(path, "手机文件") {
-                    Ok(()) => {
-                        self.status = "正在转换手机图片，请预览后播放".into();
-                    }
-                    Err(error) => {
-                        self.status = error.to_string();
-                        self.error = true;
-                    }
-                }
-            }
-            Outcome::Studio(result) => self.apply_studio(result),
-            Outcome::StudioLab(result) => self.apply_studio_lab(result),
-            Outcome::PhoneData(logs, contacts) => {
-                self.apply_phone_data(logs, contacts);
-            }
-            Outcome::PhoneCallPrepared(plan) => {
-                if self
-                    .selected
-                    .as_ref()
-                    .is_some_and(|d| d.serial == plan.device_serial)
-                    && phone::normalize_number(&self.fields[F_PHONE_DIAL].text)
-                        .ok()
-                        .as_deref()
-                        == Some(plan.number.as_str())
-                    && self
-                        .selected_call_sim
-                        .map_or(true, |id| id == plan.subscription)
-                {
-                    self.status = format!(
-                        "请确认通过 {} 呼叫 {}",
-                        plan.subscription_label, plan.number
-                    );
-                    let target = format!("手机：{}", plan.device_serial);
-                    self.review_action(
-                        &Action::PhoneConfirmCall,
-                        "确认用手机拨打？",
-                        target,
-                        vec![
-                            format!("号码：{}", plan.number),
-                            format!("SIM：{}", plan.subscription_label),
-                            "确认后手机将发起实际通话，可能产生运营商费用。".into(),
-                        ],
-                        "确认拨打",
-                        true,
-                        false,
-                    );
-                    self.pending_call = Some(plan);
-                }
-            }
-            Outcome::DialSubmitted(number, notice) => {
-                self.active_call_number = Some(number);
-                self.status = notice;
-            }
-            Outcome::CallHangup(notice) => {
-                self.active_call_number = None;
-                self.status = notice;
-            }
-            Outcome::GoogleSuite(suite, companion, msg) => {
-                self.google_suite = suite;
-                self.companion_status = companion;
-                self.status = msg;
-            }
-            Outcome::NeoStatus(neo) => {
-                self.status = neo.message.clone();
-                self.neo_status = neo;
-            }
-            Outcome::CompanionStatus(companion, msg) => {
-                self.companion_status = companion;
-                self.status = msg;
-            }
-            Outcome::InputMethod(report, message) => {
-                self.fcitx5_active = report.active;
-                self.input_method = report;
-                self.status = message;
-            }
-            Outcome::SystemServices(services, msg) => {
-                self.fcitx5_active = services
-                    .iter()
-                    .find(|s| s.package == "org.fcitx.fcitx5.android")
-                    .map(|s| s.status_note.contains("当前默认"))
-                    .unwrap_or(self.fcitx5_active);
-                self.system_services = services;
-                self.status = msg;
-            }
-            Outcome::DeepAmooGranted(msg) => {
-                self.deep_amoo_granted = true;
-                self.amoo_bg_keepalive = true;
-                self.status = msg;
-            }
-            Outcome::DeepBackScreenGranted(msg) => {
-                self.deep_backscreen_granted = true;
-                self.status = msg;
-            }
-        }
-    }
-
-    fn apply_capabilities(&mut self, caps: Option<Capabilities>) {
-        let selected = caps.as_ref().and_then(|c| {
-            self.selected_sim
-                .filter(|id| c.subscriptions.iter().any(|s| s.id == *id))
-                .or_else(|| {
-                    c.subscriptions
-                        .iter()
-                        .find(|s| s.id == c.default_subscription)
-                        .map(|s| s.id)
-                })
-                .or_else(|| (c.subscriptions.len() == 1).then(|| c.subscriptions[0].id))
-        });
-        if self.selected_sim != selected {
-            self.pending_sms_plan = None;
-        }
-        self.selected_sim = selected;
-        self.capabilities = caps;
-    }
-
-    fn apply_sms_data(&mut self, result: ReadResult<Message>) {
-        self.sms_loaded = result.is_ok();
-        match result {
-            Ok(messages) => {
-                self.status = format!("已从手机读取 {} 条短信", messages.len());
-                self.sms = messages;
-                self.sms_error = None;
-                // Never leave a deleted thread selected or a previous recipient in the composer.
-                if self.selected_thread.as_deref().is_some_and(|addr| {
-                    addr != "__new__"
-                        && !self.sms.iter().any(|m| {
-                            stepx_companion::sms::normalize_address(&m.address)
-                                == stepx_companion::sms::normalize_address(addr)
-                        })
-                }) {
-                    self.selected_thread = None;
-                    self.fields[F_SMS_TO].clear();
-                    self.pending_sms_plan = None;
-                }
-            }
-            Err(error) => {
-                self.sms.clear();
-                self.status = format!("短信读取失败：{error}");
-                self.sms_error = Some(error);
-                self.error = true;
-            }
-        }
-    }
-
-    fn apply_phone_data(
-        &mut self,
-        logs: ReadResult<CallRecord>,
-        contacts: ReadResult<ContactEntry>,
-    ) {
-        self.phone_loaded = true;
-        match logs {
-            Ok(logs) => {
-                self.call_logs = logs;
-                self.call_logs_error = None;
-            }
-            Err(error) => {
-                self.call_logs.clear();
-                self.call_logs_error = Some(error);
-            }
-        }
-        match contacts {
-            Ok(contacts) => {
-                self.contacts = contacts;
-                self.contacts_error = None;
-            }
-            Err(error) => {
-                self.contacts.clear();
-                self.contacts_error = Some(error);
-            }
-        }
-        self.error = self.call_logs_error.is_some() || self.contacts_error.is_some();
-        self.status = if self.error {
-            "部分手机数据读取失败，详情见页面".into()
-        } else {
-            format!(
-                "已同步 {} 条通话记录与 {} 位联系人",
-                self.call_logs.len(),
-                self.contacts.len()
-            )
-        };
-        self.selected_contact = 0;
-    }
-
-    /// Reconnect the remembered phone, or auto-select the only StepX phone on first launch.
-    fn auto_select(&mut self) {
-        let candidates: Vec<_> = self
-            .devices
-            .iter()
-            .filter(|d| d.state == "device" && is_stepx_model(&d.model))
-            .map(|d| d.id.clone())
-            .collect();
-        if let Some(preferred) = self.preferences.selected_serial.clone() {
-            let resuming = self.connection_watch.detached_serial.clone();
-            if !candidates.is_empty() {
-                let allow_fallback = self.allow_first_connect && candidates.len() == 1;
-                self.submit("正在连接 StepX 设备…", move |adb| {
-                    for id in &candidates {
-                        if let Ok(device) = Device::inspect(adb, id) {
-                            if device.serial == preferred || allow_fallback {
-                                if resuming.as_deref() == Some(device.serial.as_str()) {
-                                    return Ok(Outcome::Reattached(device));
-                                }
-                                let summary = device.summary(adb)?;
-                                let caps = bridge::capabilities(adb, &device).ok();
-                                let real_amoo = None; // Load conversations lazily on the Amoo page.
-                                let sms = read_result(device.messages(adb));
-                                let call_logs = read_result(device.call_logs(adb));
-                                let contacts = read_result(device.contacts(adb));
-                                return Ok(Outcome::Selected(
-                                    device, summary, caps, real_amoo, sms, call_logs, contacts,
-                                ));
-                            }
-                        }
-                    }
-                    Ok(Outcome::Notice("已记住的设备不在线".into()))
-                });
-            } else {
-                self.initializing = false;
-                self.status = "已记住的设备不在线".into();
-            }
-        } else if candidates.len() == 1 && self.allow_first_connect {
-            let id = candidates[0].clone();
-            self.select(id);
-        } else if self.devices.is_empty() {
-            self.initializing = false;
-            self.status = "未连接设备".into();
-        } else {
-            self.initializing = false;
-            self.status = format!("发现 {} 台设备", self.devices.len());
-        }
-    }
-
-    fn select(&mut self, id: String) {
-        self.submit("正在验证设备…", move |adb| {
-            let device = Device::inspect(adb, &id)?;
-            let summary = device.summary(adb)?;
-            let caps = bridge::capabilities(adb, &device).ok();
-            let real_amoo = None; // Load conversations lazily on the Amoo page.
-            let sms = read_result(device.messages(adb));
-            let call_logs = read_result(device.call_logs(adb));
-            let contacts = read_result(device.contacts(adb));
-            Ok(Outcome::Selected(
-                device, summary, caps, real_amoo, sms, call_logs, contacts,
-            ))
-        });
-    }
-
-    fn apply_real_amoo_data(&mut self, real: RealAmooData) {
-        self.record_amoo_usage(&real);
-        self.apply_real_amoo_data_recorded(real);
-    }
-
-    fn apply_real_amoo_data_recorded(&mut self, real: RealAmooData) {
-        self.record_work_attachment_identities(&real);
-        for session in &real.sessions {
-            if !session.model.is_empty() {
-                self.work
-                    .session_models
-                    .insert(session.key.clone(), session.model.clone());
-            }
-        }
-        self.amoo_gateway_version = real.gateway_version;
-        self.amoo_gateway_online = real.gateway_online;
-        self.amoo_cron_count = real.cron_jobs.len();
-        self.amoo_cron_jobs = real.cron_jobs.clone();
-        self.amoo_bm25_entries = real.memory_bm25_entries;
-        self.amoo_total_skills = real.total_skills_count;
-        self.amoo_memory_enabled = real.memory_initialized;
-
-        let current_key = self
-            .amoo_sessions
-            .get(self.amoo_session_idx)
-            .map(|s| s.session_key.clone());
-
-        let current_key = real.selected_session.or(current_key);
-        let mut new_sessions = Vec::new();
-        for s in real.sessions {
-            let mut items = if s.history_loaded || !s.messages.is_empty() {
-                Vec::new()
-            } else {
-                self.amoo_sessions
-                    .iter()
-                    .find(|old| old.session_key == s.key)
-                    .map(|old| old.items.clone())
-                    .unwrap_or_default()
-            };
-            items.extend(amoo_display::chat_items(&s.key, s.messages, s.status_kind));
-            let pending = self.amoo_pending_reply.contains_key(&s.key);
-            new_sessions.push(AmooSessionItem {
-                session_key: s.key,
-                title: s.title,
-                agent: s.agent,
-                status: if pending {
-                    "等待完整结果".into()
-                } else {
-                    s.status
-                },
-                status_kind: if pending { 1 } else { s.status_kind },
-                meta: s.meta,
-                items,
-            });
-        }
-
-        for old in &self.amoo_sessions {
-            if (old.status == "待提问" || self.amoo_pending_reply.contains_key(&old.session_key))
-                && !new_sessions
-                    .iter()
-                    .any(|s| s.session_key == old.session_key)
-            {
-                new_sessions.push(old.clone());
-            }
-        }
-        if !self.settings.value.reduced_motion && !self.settings.hidden {
-            for next in &new_sessions {
-                if current_key.as_deref() != Some(&next.session_key)
-                    || !(self.amoo_pending_reply.contains_key(&next.session_key)
-                        || self.reply_motion.live.contains(&next.session_key))
-                {
-                    continue;
-                }
-                let Some(old) = self
-                    .amoo_sessions
-                    .iter()
-                    .find(|s| s.session_key == next.session_key)
-                else {
-                    continue;
-                };
-                for (i, item) in next.items.iter().enumerate() {
-                    if let AmooChatItem::AssistantRich {
-                        text: Some(text), ..
-                    } = item
-                    {
-                        let previous = match old.items.get(i) {
-                            Some(AmooChatItem::AssistantRich { text: Some(t), .. }) => t.as_str(),
-                            _ => "",
-                        };
-                        let before = stepx_companion::work_protocol::display_text(previous, false)
-                            .unwrap_or_default();
-                        let after = stepx_companion::work_protocol::display_text(text, false)
-                            .unwrap_or_default();
-                        self.reply_motion
-                            .track(next.session_key.clone(), i, &before, &after);
-                    }
-                }
-            }
-        }
-        self.reply_motion.live.clear();
-        self.amoo_sessions = new_sessions;
-        // Passive updates preserve the user's session-list scroll position.
-        if let Some(key) = current_key {
-            if let Some(pos) = self.amoo_sessions.iter().position(|s| s.session_key == key) {
-                self.amoo_session_idx = pos;
-            } else {
-                self.amoo_session_idx = 0;
-            }
-        } else {
-            self.amoo_session_idx = 0;
-        }
-
-        {
-            self.amoo_skills = real
-                .skills
-                .into_iter()
-                .map(|sk| AmooSkillEntry {
-                    skill_key: sk.skill_key,
-                    name: sk.display_name,
-                    enabled: sk.enabled,
-                    prompt: sk.prompt,
-                })
-                .collect();
-        }
-
-        let mut user_mems: Vec<AmooMemoryEntry> = self
-            .amoo_memories
-            .iter()
-            .filter(|m| m.sub.starts_with("桌面") || m.sub.starts_with("对话"))
-            .cloned()
-            .collect();
-        for (title, sub) in real.memory_entries {
-            user_mems.push(AmooMemoryEntry { title, sub });
-        }
-        self.amoo_memories = user_mems;
-        self.load_work_previews();
-    }
-
-    fn remember_pairing_host(&mut self, endpoint: &str) {
-        if let Ok(address) = pairing::validate_endpoint(endpoint) {
-            if !self.pairing_hosts.contains(&address.ip()) {
-                self.pairing_hosts.push(address.ip());
-            }
-        }
-    }
-
-    fn browse(&mut self, path: String) {
-        if self.busy {
-            return;
-        }
-        self.with_device("正在读取目录…", move |adb, device| {
-            Ok(Outcome::Files(
-                path.clone(),
-                storage::list(adb, &device, &path)?,
-                None,
-            ))
-        });
-    }
-
     /// Chat-like panes start at the newest message; the scroll view clamps the offset.
-    fn scroll_to_end(state: &ClippedScrollStateHandle) {
+    pub(super) fn scroll_to_end(state: &ClippedScrollStateHandle) {
         state.scroll_to(facloud_ui::units::Pixels::new(1.0e7));
-    }
-
-    fn stop_mirror(&mut self) {
-        if let Some(child) = self.mirror.take() {
-            child.stop_in_background();
-        }
-    }
-
-    fn filtered_files(&self) -> Vec<(usize, &Entry)> {
-        let query = self.fields[F_FILE_SEARCH].text.trim().to_lowercase();
-        let mut items: Vec<(usize, &Entry)> = self
-            .files
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| {
-                query.is_empty()
-                    || e.name.to_lowercase().contains(&query)
-                    || e.kind_badge().contains(&query)
-            })
-            .collect();
-        match self.file_sort {
-            FileSort::Name => {}
-            FileSort::Size => items.sort_by(|(_, a), (_, b)| {
-                b.directory
-                    .cmp(&a.directory)
-                    .then(b.bytes.cmp(&a.bytes))
-                    .then(a.name.cmp(&b.name))
-            }),
-            FileSort::Kind => items.sort_by(|(_, a), (_, b)| {
-                b.directory
-                    .cmp(&a.directory)
-                    .then(a.kind_badge().cmp(b.kind_badge()))
-                    .then(a.name.cmp(&b.name))
-            }),
-        }
-        items
-    }
-
-    pub(super) fn thread_messages(&self, address: &str) -> Vec<&Message> {
-        let norm_target = stepx_companion::sms::normalize_address(address);
-        let mut items: Vec<&Message> = self
-            .sms
-            .iter()
-            .filter(|m| stepx_companion::sms::normalize_address(&m.address) == norm_target)
-            .collect();
-        items.sort_by_key(|m| m.date_ms);
-        items
-    }
-
-    pub(super) fn sms_threads(&self) -> Vec<SmsThread> {
-        let query = self.fields[F_SMS_SEARCH].text.trim().to_lowercase();
-        let mut threads: Vec<SmsThread> = Vec::new();
-        for m in &self.sms {
-            let matches_filter = match self.sms_filter {
-                SmsFilter::All => true,
-                SmsFilter::Incoming => m.kind == 1,
-                SmsFilter::Outgoing => m.kind == 2,
-            };
-            if !matches_filter
-                || (!query.is_empty()
-                    && !m.address.to_lowercase().contains(&query)
-                    && !m.body.to_lowercase().contains(&query)
-                    && !self.contacts.iter().any(|c| {
-                        stepx_companion::sms::normalize_address(&c.number)
-                            == stepx_companion::sms::normalize_address(&m.address)
-                            && c.name.to_lowercase().contains(&query)
-                    }))
-            {
-                continue;
-            }
-            let addr = m.address.trim().to_string();
-            if let Some(t) = threads.iter_mut().find(|t| {
-                stepx_companion::sms::normalize_address(&t.address)
-                    == stepx_companion::sms::normalize_address(&addr)
-            }) {
-                t.count += 1;
-                t.unread |= m.kind == 1 && !m.read;
-                if m.date_ms >= t.last_ms {
-                    t.last_ms = m.date_ms;
-                    t.last_body = m.body.clone();
-                }
-            } else {
-                threads.push(SmsThread {
-                    address: addr,
-                    count: 1,
-                    last_ms: m.date_ms,
-                    last_body: m.body.clone(),
-                    unread: m.kind == 1 && !m.read,
-                });
-            }
-        }
-        threads.sort_by(|a, b| b.last_ms.cmp(&a.last_ms));
-        threads
-    }
-
-    fn filtered_apps(&self) -> Vec<&AppInfo> {
-        let query = self.fields[F_APP_SEARCH].text.trim();
-        self.apps
-            .iter()
-            .filter(|app| {
-                (self.include_system_apps || app.in_default_scope()) && app.matches_query(query)
-            })
-            .collect()
     }
 }
 
@@ -3631,325 +2343,5 @@ impl Drop for Companion {
     fn drop(&mut self) {
         self.workspace_flush();
         self.stop_mirror();
-    }
-}
-
-/// Handles committed IME text separately from key presses so Chinese input is neither lost
-/// nor inserted twice, and maps Cmd (macOS) / Ctrl (Windows, Linux) shortcuts.
-struct Keyboard {
-    accept_attachments: bool,
-    context_menu: bool,
-    shortcut: stepx_companion::settings::CompactShortcut,
-    recording_shortcut: bool,
-    child: Box<dyn Element>,
-    active: bool,
-    multiline: bool,
-    composing: bool,
-}
-impl Element for Keyboard {
-    fn layout(&mut self, c: SizeConstraint, ctx: &mut LayoutContext, app: &AppContext) -> Vector2F {
-        self.child.layout(c, ctx, app)
-    }
-    fn after_layout(&mut self, ctx: &mut AfterLayoutContext, app: &AppContext) {
-        self.child.after_layout(ctx, app);
-    }
-    fn paint(&mut self, o: Vector2F, ctx: &mut PaintContext, app: &AppContext) {
-        self.child.paint(o, ctx, app);
-        if self.active {
-            app.report_active_cursor_position_update();
-        }
-    }
-    fn size(&self) -> Option<Vector2F> {
-        self.child.size()
-    }
-    fn origin(&self) -> Option<Point> {
-        self.child.origin()
-    }
-    fn dispatch_event(
-        &mut self,
-        event: &DispatchedEvent,
-        ctx: &mut EventContext,
-        app: &AppContext,
-    ) -> bool {
-        #[cfg(feature = "ui-capture")]
-        if std::env::var_os("STEPX_ENTER_TEST").is_some() {
-            if let Event::KeyDown {
-                keystroke,
-                is_composing,
-                ..
-            } = event.raw_event()
-            {
-                eprintln!(
-                    "ENTER_KEY key={} shift={} active={} composing={}/{}",
-                    keystroke.key, keystroke.shift, self.active, self.composing, is_composing
-                );
-            }
-            match event.raw_event() {
-                Event::TypedCharacters { chars } => eprintln!(
-                    "ENTER_TEXT bytes={} control={:?}",
-                    chars.len(),
-                    chars.chars().filter(|c| c.is_control()).collect::<Vec<_>>()
-                ),
-                Event::SetMarkedText { marked_text, .. } => {
-                    eprintln!("ENTER_PREEDIT bytes={}", marked_text.len())
-                }
-                Event::ClearMarkedText => eprintln!("ENTER_PREEDIT clear"),
-                _ => {}
-            }
-        }
-        if self.context_menu {
-            if let Event::KeyDown { keystroke, .. } = event.raw_event() {
-                let a = match keystroke.key.as_str() {
-                    "up" => Some(Action::ContextNavigate(-1)),
-                    "down" => Some(Action::ContextNavigate(1)),
-                    "enter" | "return" => Some(Action::ContextActivate),
-                    "escape" | "tab" => Some(Action::ContextClose),
-                    _ => None,
-                };
-                if let Some(a) = a {
-                    ctx.dispatch_typed_action(a);
-                    return true;
-                }
-            }
-        }
-        if let Event::KeyDown {
-            keystroke,
-            is_composing: false,
-            ..
-        } = event.raw_event()
-        {
-            if !self.composing {
-                let action = if self.recording_shortcut {
-                    Some(Action::Settings(if keystroke.key == "escape" {
-                        SettingsAction::CancelShortcut
-                    } else {
-                        SettingsAction::CaptureShortcut(shortcuts::Shortcuts::captured(keystroke))
-                    }))
-                } else if shortcuts::Shortcuts::matches(&self.shortcut, keystroke) {
-                    Some(Action::CompactChat)
-                } else {
-                    None
-                };
-                if let Some(action) = action {
-                    ctx.dispatch_typed_action(action);
-                    return true;
-                }
-            }
-        }
-        if self.recording_shortcut
-            && matches!(
-                event.raw_event(),
-                Event::TypedCharacters { .. } | Event::SetMarkedText { .. }
-            )
-        {
-            return true;
-        }
-        if self.child.dispatch_event(event, ctx, app) {
-            return true;
-        }
-        let action = self.action_for_event(event.raw_event());
-        if let Some(action) = action {
-            ctx.dispatch_typed_action(action);
-            true
-        } else {
-            false
-        }
-    }
-}
-
-impl Keyboard {
-    fn action_for_event(&self, event: &Event) -> Option<Action> {
-        match event {
-            Event::DragAndDropFiles { paths, .. } if self.accept_attachments => Some(
-                Action::AmooDropFiles(paths.iter().map(PathBuf::from).collect()),
-            ),
-            Event::TypedCharacters { chars } if self.active => Some(Action::Insert(chars.clone())),
-            Event::SetMarkedText { marked_text, .. } if self.active => {
-                Some(Action::Preedit(marked_text.clone()))
-            }
-            Event::ClearMarkedText if self.active => Some(Action::Preedit(String::new())),
-            Event::KeyDown {
-                keystroke: k,
-                is_composing: false,
-                ..
-            } if !self.composing => {
-                let cmd = k.ctrl || k.cmd;
-                let typing = self.active;
-                match k.key.as_str() {
-                    "1" if cmd => Some(Action::Page(Page::Overview)),
-                    "2" if cmd => Some(Action::Page(Page::Amoo)),
-                    "3" if cmd => Some(Action::Page(Page::Sms)),
-                    "4" if cmd => Some(Action::Page(Page::Files)),
-                    "5" if cmd => Some(Action::Page(Page::Apps)),
-                    "6" if cmd => Some(Action::Page(Page::Connect)),
-                    "7" if cmd => Some(Action::Page(Page::Tools)),
-                    "8" if cmd => Some(Action::Page(Page::BackScreen)),
-                    "," if cmd => Some(Action::Page(Page::Settings)),
-                    "k" if cmd => Some(Action::FocusSearch),
-                    "r" if cmd => Some(Action::ContextRefresh),
-                    "f5" => Some(Action::ContextRefresh),
-                    "m" if cmd => Some(Action::Mirror),
-                    "t" if cmd => Some(Action::CycleTheme),
-                    "f" if cmd => Some(Action::FocusSearch),
-                    "n" if cmd && !typing => Some(Action::OpenNewFolder),
-                    "escape" => Some(Action::Escape),
-                    "tab" => Some(Action::NextField(k.shift)),
-                    "enter" | "return" if typing && k.shift && self.multiline => {
-                        Some(Action::Insert("\n".into()))
-                    }
-                    "enter" | "return" if typing => Some(Action::SubmitFocused),
-                    "enter" | "return" => Some(Action::ActivateSelectedFile),
-                    "up" if !typing => Some(Action::MoveFileSelection(-1)),
-                    "down" if !typing => Some(Action::MoveFileSelection(1)),
-                    "backspace" if !typing => Some(Action::ParentDirectory),
-                    "delete" if !typing => Some(Action::Trash),
-                    "f2" if !typing => Some(Action::OpenRename),
-                    "z" if cmd && k.shift && typing => Some(Action::RedoInput),
-                    "z" if cmd && typing => Some(Action::UndoInput),
-                    "y" if cmd && typing => Some(Action::RedoInput),
-                    "v" if cmd && typing => Some(Action::Paste),
-                    "c" if cmd && typing => Some(Action::CopyInput),
-                    "c" if cmd => Some(Action::Copy),
-                    "x" if cmd && typing => Some(Action::CutInput),
-                    "a" if cmd && typing => Some(Action::SelectAll),
-                    "backspace" if cmd => Some(Action::BackspaceLine),
-                    "backspace" => Some(Action::Backspace),
-                    "delete" => Some(Action::Delete),
-                    "left" if k.shift && typing => {
-                        Some(Action::ExtendSelection(if cmd { -2 } else { -1 }))
-                    }
-                    "right" if k.shift && typing => {
-                        Some(Action::ExtendSelection(if cmd { 2 } else { 1 }))
-                    }
-                    "home" if k.shift && typing => Some(Action::ExtendSelection(-2)),
-                    "end" if k.shift && typing => Some(Action::ExtendSelection(2)),
-                    "left" if k.cmd && typing => Some(Action::Home),
-                    "right" if k.cmd && typing => Some(Action::End),
-                    "left" if typing => Some(Action::Left),
-                    "right" if typing => Some(Action::Right),
-                    "home" if typing => Some(Action::Home),
-                    "end" if typing => Some(Action::End),
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
-    }
-}
-
-#[cfg(test)]
-mod input_tests {
-    use super::*;
-
-    fn keyboard(composing: bool) -> Keyboard {
-        Keyboard {
-            accept_attachments: false,
-            context_menu: false,
-            child: Empty::new().finish(),
-            shortcut: Default::default(),
-            recording_shortcut: false,
-            active: true,
-            multiline: true,
-            composing,
-        }
-    }
-
-    fn key(name: &str, is_composing: bool) -> Event {
-        Event::KeyDown {
-            keystroke: facloud_ui::keymap::Keystroke {
-                key: name.into(),
-                ..Default::default()
-            },
-            chars: String::new(),
-            details: Default::default(),
-            is_composing,
-        }
-    }
-
-    #[test]
-    fn ime_candidate_keys_do_not_submit_or_edit_committed_text() {
-        for name in [
-            "enter",
-            "return",
-            "backspace",
-            "left",
-            "right",
-            "escape",
-            "tab",
-        ] {
-            assert!(keyboard(true).action_for_event(&key(name, false)).is_none());
-            assert!(keyboard(false).action_for_event(&key(name, true)).is_none());
-        }
-        assert!(matches!(
-            keyboard(false).action_for_event(&key("enter", false)),
-            Some(Action::SubmitFocused)
-        ));
-    }
-
-    #[test]
-    fn enter_and_shift_enter_share_input_rules() {
-        for name in ["enter", "return"] {
-            let mut event = key(name, false);
-            assert!(matches!(
-                keyboard(false).action_for_event(&event),
-                Some(Action::SubmitFocused)
-            ));
-            if let Event::KeyDown { keystroke, .. } = &mut event {
-                keystroke.shift = true;
-            }
-            assert!(
-                matches!(keyboard(false).action_for_event(&event), Some(Action::Insert(text)) if text == "\n")
-            );
-            assert!(keyboard(true).action_for_event(&event).is_none());
-        }
-    }
-
-    #[test]
-    fn dropped_files_only_enter_an_available_composer() {
-        let event = Event::DragAndDropFiles {
-            paths: vec!["/tmp/example.csv".into()],
-            location: Vector2F::new(20., 20.),
-        };
-        let mut input = keyboard(false);
-        assert!(input.action_for_event(&event).is_none());
-        input.accept_attachments = true;
-        assert!(
-            matches!(input.action_for_event(&event), Some(Action::AmooDropFiles(paths)) if paths == vec![PathBuf::from("/tmp/example.csv")])
-        );
-    }
-
-    #[test]
-    fn chinese_commit_replaces_selection_once_and_preserves_utf8_cursor() {
-        let mut input = Input::default();
-        input.set("旧内容");
-        input.all = true;
-        let action = keyboard(true)
-            .action_for_event(&Event::SetMarkedText {
-                marked_text: "ni hao".into(),
-                selected_range: 0..6,
-            })
-            .unwrap();
-        if let Action::Preedit(text) = action {
-            input.preedit = text;
-        } else {
-            panic!("expected preedit");
-        }
-        assert_eq!(input.text, "旧内容");
-        let action = keyboard(true)
-            .action_for_event(&Event::TypedCharacters {
-                chars: "你好🙂".into(),
-            })
-            .unwrap();
-        if let Action::Insert(text) = action {
-            input.insert(&text);
-        } else {
-            panic!("expected commit");
-        }
-        assert_eq!(input.text, "你好🙂");
-        assert!(input.preedit.is_empty());
-        input.cursor = input.previous();
-        input.insert("，Amoo");
-        assert_eq!(input.text, "你好，Amoo🙂");
-        assert!(input.text.is_char_boundary(input.cursor));
     }
 }

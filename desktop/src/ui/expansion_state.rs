@@ -23,6 +23,8 @@ pub(super) enum ExpansionAction {
     More,
     Open(String),
     Restore(String),
+    AnalyzeWithAmoo(String),
+    SetGalleryGrid(bool),
     Refresh,
 }
 pub(super) struct ExpansionUi {
@@ -34,6 +36,7 @@ pub(super) struct ExpansionUi {
     pub draft_folder: Option<PathBuf>,
     pub settings: bool,
     pub confirm: bool,
+    pub gallery_grid_mode: bool,
     pub limit: usize,
     pub feedback: String,
     pub pending: Option<mpsc::Receiver<std::result::Result<Value, String>>>,
@@ -45,7 +48,14 @@ pub(super) struct ExpansionUi {
 impl Default for ExpansionUi {
     fn default() -> Self {
         let config = expansion::config();
-        let snapshot = Snapshot::default();
+        let demo =
+            std::env::args().any(|a| a == "--demo") && std::env::var_os("STEPX_EMPTY").is_none();
+        let mut snapshot = Snapshot::default();
+        if demo {
+            snapshot.online = true;
+            snapshot.status = demo_status();
+            snapshot.files = demo_files();
+        }
         let (tx, local) = mpsc::channel();
         let disk = config.clone();
         std::thread::spawn(move || {
@@ -60,6 +70,7 @@ impl Default for ExpansionUi {
             draft_folder: config.folder.clone(),
             settings: false,
             confirm: false,
+            gallery_grid_mode: true,
             limit: 40,
             feedback: String::new(),
             pending: None,
@@ -126,8 +137,10 @@ impl Companion {
             changed = true;
         }
         if let Ok(files) = self.expansion.local.try_recv() {
-            self.expansion.snapshot.files = files;
-            changed = true;
+            if !files.is_empty() || !self.demo_mode {
+                self.expansion.snapshot.files = files;
+                changed = true;
+            }
         }
         while let Some(s) = self
             .expansion
@@ -373,6 +386,9 @@ impl Companion {
                     self.save_expansion_view()?;
                 }
                 ExpansionAction::More => self.expansion.limit += 40,
+                ExpansionAction::SetGalleryGrid(grid) => {
+                    self.expansion.gallery_grid_mode = *grid;
+                }
                 ExpansionAction::Open(id) => {
                     let j = self
                         .expansion
@@ -380,11 +396,79 @@ impl Companion {
                         .files
                         .iter()
                         .find(|j| j["id"] == *id)
+                        .cloned()
+                        .or_else(|| demo_files().into_iter().find(|j| j["id"] == *id))
                         .ok_or_else(|| anyhow::anyhow!("文件记录已变化"))?;
-                    super::work_state::open_work_path(&expansion::local_file(
-                        &self.expansion.config,
-                        j,
-                    )?)?;
+                    if let Ok(p) = expansion::local_file(&self.expansion.config, &j) {
+                        super::work_state::open_work_path(&p)?;
+                    } else if let Some(local) = j["localPath"]
+                        .as_str()
+                        .filter(|s| !s.is_empty() && std::path::Path::new(s).is_file())
+                    {
+                        super::work_state::open_work_path(std::path::Path::new(local))?;
+                    } else if self.demo_mode || j["demo"] == true {
+                        self.expansion.feedback = format!(
+                            "已定位电脑归档原件：{}",
+                            j["name"].as_str().unwrap_or("原件")
+                        );
+                    } else {
+                        super::work_state::open_work_path(&expansion::local_file(
+                            &self.expansion.config,
+                            &j,
+                        )?)?;
+                    }
+                }
+                ExpansionAction::AnalyzeWithAmoo(id) => {
+                    let j = self
+                        .expansion
+                        .snapshot
+                        .files
+                        .iter()
+                        .find(|j| j["id"] == *id)
+                        .cloned()
+                        .or_else(|| demo_files().into_iter().find(|j| j["id"] == *id))
+                        .ok_or_else(|| anyhow::anyhow!("文件记录已变化"))?;
+                    let name = j["name"].as_str().unwrap_or("归档文件").to_string();
+                    let size_bytes = j["size"].as_u64().unwrap_or(0);
+                    let kind = j["kind"].as_str().unwrap_or("");
+                    let local_path = expansion::local_file(&self.expansion.config, &j)
+                        .ok()
+                        .or_else(|| {
+                            j["localPath"]
+                                .as_str()
+                                .filter(|s| !s.is_empty())
+                                .map(PathBuf::from)
+                                .filter(|p| p.is_file())
+                        });
+                    if let Some(path) = &local_path {
+                        let is_img = kind == "photos"
+                            || path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                                matches!(
+                                    e.to_ascii_lowercase().as_str(),
+                                    "png" | "jpg" | "jpeg" | "webp" | "gif"
+                                )
+                            });
+                        if !self
+                            .amoo_attachments
+                            .iter()
+                            .any(|a| a.local_path.as_ref() == Some(path))
+                        {
+                            self.amoo_attachments.push(AmooAttachment {
+                                name: name.clone(),
+                                size_label: storage::format_bytes(size_bytes),
+                                is_image: is_img,
+                                local_path: Some(path.clone()),
+                            });
+                        }
+                    }
+                    if self.fields[F_AMOO].text.trim().is_empty() {
+                        self.fields[F_AMOO].set(&format!("请帮我分析这份扩容归档文件：{name}"));
+                    }
+                    self.page = Page::Amoo;
+                    self.scroll = Default::default();
+                    self.reveal_latest_chat();
+                    self.focus_field(F_AMOO, ctx);
+                    self.status = format!("已载入扩容原件「{name}」至 Amoo 对话框");
                 }
                 ExpansionAction::Restore(id) => {
                     self.expansion_command(Command::Restore(id.clone()))
@@ -450,7 +534,7 @@ impl ExpansionUi {
                 "请先暂停自动迁移，再更换保存位置"
             );
             anyhow::ensure!(
-                self.snapshot.files.is_empty(),
+                self.snapshot.files.iter().all(|j| j["demo"] == true),
                 "已有原件保存在旧目录，请保留此目录"
             );
         }
@@ -501,4 +585,125 @@ impl ExpansionUi {
         }
         lines
     }
+}
+
+pub(super) fn demo_files() -> Vec<Value> {
+    vec![
+        json!({
+            "id": "10000000000000000000000000000001",
+            "name": "IMG_20261025_141802_StepX.jpg",
+            "path": "DCIM/Camera/IMG_20261025_141802_StepX.jpg",
+            "kind": "photos",
+            "state": "archived",
+            "size": 6_842_112u64,
+            "modified": 1792909082000i64,
+            "mtimeMs": 1792909082000i64,
+            "archivedAt": 1792909500000i64,
+            "archivedAtMs": 1792909500000i64,
+            "dateGroup": "2026-10-25 · 今天",
+            "previewAsset": "stepx_home_screen.png",
+            "localPath": "desktop/assets/stepx_home_screen.png",
+            "demo": true
+        }),
+        json!({
+            "id": "10000000000000000000000000000002",
+            "name": "IMG_20261025_110544_HDR.png",
+            "path": "DCIM/Camera/IMG_20261025_110544_HDR.png",
+            "kind": "photos",
+            "state": "archived",
+            "size": 8_388_608u64,
+            "modified": 1792897544000i64,
+            "mtimeMs": 1792897544000i64,
+            "archivedAt": 1792898100000i64,
+            "archivedAtMs": 1792898100000i64,
+            "dateGroup": "2026-10-25 · 今天",
+            "previewAsset": "neo_front_frame.png",
+            "localPath": "desktop/assets/neo_front_frame.png",
+            "demo": true
+        }),
+        json!({
+            "id": "10000000000000000000000000000003",
+            "name": "VID_20261025_093012_4K60.mp4",
+            "path": "DCIM/Camera/VID_20261025_093012_4K60.mp4",
+            "kind": "videos",
+            "state": "archived",
+            "size": 1_482_686_464u64,
+            "modified": 1792891812000i64,
+            "mtimeMs": 1792891812000i64,
+            "archivedAt": 1792892400000i64,
+            "archivedAtMs": 1792892400000i64,
+            "dateGroup": "2026-10-25 · 今天",
+            "demo": true
+        }),
+        json!({
+            "id": "10000000000000000000000000000004",
+            "name": "IMG_20261024_194210_Matrix.png",
+            "path": "DCIM/Camera/IMG_20261024_194210_Matrix.png",
+            "kind": "photos",
+            "state": "restored",
+            "size": 5_242_880u64,
+            "modified": 1792842130000i64,
+            "mtimeMs": 1792842130000i64,
+            "archivedAt": 1792843000000i64,
+            "archivedAtMs": 1792843000000i64,
+            "dateGroup": "2026-10-24 · 昨天",
+            "previewAsset": "neo_rear_housing.png",
+            "localPath": "desktop/assets/neo_rear_housing.png",
+            "demo": true
+        }),
+        json!({
+            "id": "10000000000000000000000000000005",
+            "name": "StepX_Q4_架构评审纪要.pdf",
+            "path": "Documents/StepX_Q4_架构评审纪要.pdf",
+            "kind": "documents",
+            "state": "archived",
+            "size": 18_454_937u64,
+            "modified": 1792826400000i64,
+            "mtimeMs": 1792826400000i64,
+            "archivedAt": 1792827000000i64,
+            "archivedAtMs": 1792827000000i64,
+            "dateGroup": "2026-10-24 · 昨天",
+            "demo": true
+        }),
+        json!({
+            "id": "10000000000000000000000000000006",
+            "name": "VID_20261024_151208_SlowMo.mp4",
+            "path": "DCIM/Camera/VID_20261024_151208_SlowMo.mp4",
+            "kind": "videos",
+            "state": "archived",
+            "size": 671_088_640u64,
+            "modified": 1792825928000i64,
+            "mtimeMs": 1792825928000i64,
+            "archivedAt": 1792826500000i64,
+            "archivedAtMs": 1792826500000i64,
+            "dateGroup": "2026-10-24 · 昨天",
+            "demo": true
+        }),
+    ]
+}
+
+pub(super) fn demo_status() -> Value {
+    let recent = demo_files();
+    let released: u64 = recent
+        .iter()
+        .filter(|j| j["state"] == "archived")
+        .map(|j| j["size"].as_u64().unwrap_or(0))
+        .sum();
+    let count = recent.iter().filter(|j| j["state"] == "archived").count() as u64;
+    json!({
+        "ok": true,
+        "permission": true,
+        "releasedBytes": released,
+        "count": count,
+        "recentFiles": recent,
+        "policy": {
+            "enabled": true,
+            "photos": true,
+            "videos": true,
+            "documents": true,
+            "retentionDays": 7,
+            "desktopId": "demo-desktop",
+            "epoch": 1
+        }
+    })
 }

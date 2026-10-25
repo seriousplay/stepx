@@ -81,6 +81,8 @@ pub(super) enum PushAction {
     CompactInbox,
     CompactSystemNotices,
     TogglePinWindow,
+    AskClipboard(u8),
+    CaptureClipboardPreview,
     OpenMiniAiWindow,
     OpenMiniNotifyWindow,
     TriggerTestToast,
@@ -118,6 +120,7 @@ pub(super) struct PushUiState {
     pub seen_toast_keys: HashSet<String>,
     pub shell_mode: ShellMode,
     pub pin_window: bool,
+    pub clipboard_preview: String,
     pub expanded_mini_card: Option<String>,
     pub last_sync: Instant,
     pub outcome_tx: mpsc::Sender<PushOutcome>,
@@ -149,6 +152,7 @@ impl Default for PushUiState {
             seen_toast_keys: HashSet::new(),
             shell_mode: ShellMode::Full,
             pin_window: false,
+            clipboard_preview: String::new(),
             expanded_mini_card: None,
             last_sync: Instant::now()
                 .checked_sub(Duration::from_secs(10))
@@ -766,7 +770,60 @@ impl Companion {
                     self.reveal_latest_chat();
                 }
             }
-            PushAction::TogglePinWindow => self.set_compact_pin(!self.push.pin_window, ctx),
+            PushAction::TogglePinWindow => {
+                let next = !self.push.pin_window;
+                self.set_compact_pin(next, ctx);
+                self.status = if self.push.pin_window {
+                    "已开启小窗置顶（Always on Top）".into()
+                } else {
+                    "已取消小窗置顶".into()
+                };
+                self.error = false;
+            }
+            PushAction::CaptureClipboardPreview => {
+                let text = ctx.clipboard().read().plain_text.trim().to_string();
+                self.push.clipboard_preview = Self::truncate_chars(&text, 240);
+                self.status = if self.push.clipboard_preview.is_empty() {
+                    "剪贴板暂无文本内容".into()
+                } else {
+                    "已读取系统剪贴板内容".into()
+                };
+                self.error = false;
+            }
+            PushAction::AskClipboard(kind) => {
+                let raw_clip = ctx.clipboard().read().plain_text.trim().to_string();
+                let clip = if !raw_clip.is_empty() {
+                    raw_clip
+                } else if !self.push.clipboard_preview.trim().is_empty() {
+                    self.push.clipboard_preview.trim().to_string()
+                } else if self.demo_mode {
+                    "StepX Companion Desktop AI Workspace & Mobile Bridge".to_string()
+                } else {
+                    String::new()
+                };
+                if !clip.is_empty() {
+                    self.push.clipboard_preview = Self::truncate_chars(&clip, 240);
+                }
+                let prompt = match *kind {
+                    0 => format!("请帮我详细解释以下剪贴板内容的核心含义：\n\n{clip}"),
+                    1 => format!(
+                        "请将以下剪贴板内容准确翻译为自然流畅的中文（若已是中文则翻译为英文）：\n\n{clip}"
+                    ),
+                    2 => format!("请帮我提炼以下剪贴板内容的关键要点与行动项：\n\n{clip}"),
+                    _ => format!("请帮我润色或优化以下剪贴板内容：\n\n{clip}"),
+                };
+                if self.push.shell_mode == ShellMode::MiniNotify {
+                    self.set_compact_mode(ShellMode::MiniAi, ctx);
+                }
+                self.compact.history = false;
+                self.workspace.history = false;
+                self.workspace.panel = 0;
+                self.fields[F_AMOO].set(&prompt);
+                self.focus_field(F_AMOO, ctx);
+                self.status = "已将剪贴板提问填入输入框，按 Enter 即可发送".into();
+                self.error = false;
+                ctx.notify();
+            }
             PushAction::OpenMiniAiWindow => self.set_compact_mode(ShellMode::MiniAi, ctx),
             PushAction::OpenMiniNotifyWindow => self.set_compact_mode(ShellMode::MiniNotify, ctx),
             PushAction::TriggerTestToast => {

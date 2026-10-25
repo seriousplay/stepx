@@ -1,7 +1,7 @@
 use super::super::{
     expansion_state::ExpansionAction as EA, icons::UiIcon, theme::*, widgets::*, *,
 };
-use facloud_ui::{elements::*, fonts::Weight};
+use facloud_ui::{assets::asset_cache::AssetSource, elements::*, fonts::Weight};
 use serde_json::Value;
 fn label(v: &Value, key: &str) -> String {
     v[key].as_str().unwrap_or("").into()
@@ -13,6 +13,68 @@ fn state(v: &Value) -> &'static str {
         "failed" => "未完成",
         "verified" => "等待手机确认",
         _ => "待迁移",
+    }
+}
+fn timeline_date_bucket(j: &Value) -> String {
+    if let Some(group) = j["dateGroup"].as_str().filter(|s| !s.trim().is_empty()) {
+        return group.to_string();
+    }
+    let ts = j["mtimeMs"]
+        .as_i64()
+        .or_else(|| j["modified"].as_i64())
+        .or_else(|| j["archivedAtMs"].as_i64())
+        .or_else(|| j["archivedAt"].as_i64())
+        .unwrap_or(0);
+    if ts > 0 {
+        if let Some(dt) = chrono::DateTime::from_timestamp_millis(ts) {
+            let local = dt.with_timezone(&chrono::Local);
+            let today = chrono::Local::now().date_naive();
+            let d = local.date_naive();
+            if d == today {
+                return format!("{} · 今天", local.format("%Y-%m-%d"));
+            } else if Some(d) == today.pred_opt() {
+                return format!("{} · 昨天", local.format("%Y-%m-%d"));
+            }
+            return local.format("%Y-%m-%d").to_string();
+        }
+    }
+    let name = j["name"].as_str().unwrap_or("");
+    let bytes = name.as_bytes();
+    if bytes.len() >= 8 {
+        for w in bytes.windows(8) {
+            if w.starts_with(b"20") && w.iter().all(|b| b.is_ascii_digit()) {
+                let y = std::str::from_utf8(&w[0..4]).unwrap_or("");
+                let m = std::str::from_utf8(&w[4..6]).unwrap_or("");
+                let d = std::str::from_utf8(&w[6..8]).unwrap_or("");
+                return format!("{y}-{m}-{d}");
+            }
+        }
+    }
+    "最近归档".into()
+}
+fn media_ext_badge(j: &Value) -> String {
+    let name = j["name"].as_str().unwrap_or("");
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    if ext == "MP4" && name.contains("4K") {
+        return "MP4 4K".into();
+    }
+    if (ext == "PNG" || ext == "JPG" || ext == "JPEG") && name.contains("HDR") {
+        return format!("{ext} HDR");
+    }
+    if !ext.is_empty() {
+        return ext;
+    }
+    match j["kind"].as_str() {
+        Some("photos") => "JPG".into(),
+        Some("videos") => "MP4".into(),
+        Some("documents") => "PDF".into(),
+        Some("audiobooks") => "M4B".into(),
+        Some("packages") => "APK".into(),
+        _ => "FILE".into(),
     }
 }
 impl Companion {
@@ -575,8 +637,47 @@ impl Companion {
             sections.push(self.text(&e.snapshot.phase, BODY, p.danger));
         }
 
-        if !e.settings && !e.snapshot.files.is_empty() {
-            sections.push(self.heading("迁移记录"));
+        let fallback_demo = if e.snapshot.files.is_empty()
+            && self.demo_mode
+            && std::env::var_os("STEPX_EMPTY").is_none()
+        {
+            expansion_state::demo_files()
+        } else {
+            Vec::new()
+        };
+        let all_files = if !e.snapshot.files.is_empty() {
+            &e.snapshot.files
+        } else {
+            &fallback_demo
+        };
+
+        if !e.settings && !all_files.is_empty() {
+            let view_switcher = self.hstack(
+                S2,
+                vec![
+                    self.ex_button(
+                        "exp-view-grid",
+                        "缩略图时间轴墙",
+                        EA::SetGalleryGrid(true),
+                        if e.gallery_grid_mode {
+                            Btn::Primary
+                        } else {
+                            Btn::Secondary
+                        },
+                    ),
+                    self.ex_button(
+                        "exp-view-list",
+                        "清单列表",
+                        EA::SetGalleryGrid(false),
+                        if !e.gallery_grid_mode {
+                            Btn::Primary
+                        } else {
+                            Btn::Secondary
+                        },
+                    ),
+                ],
+            );
+            sections.push(self.between(self.heading("已扩容文件 · 迁移记录"), view_switcher));
             let mut controls = vec![];
             for (k, n) in [
                 ("all", "全部"),
@@ -649,9 +750,7 @@ impl Companion {
                 self.between(self.wrap(controls), self.wrap(sorts)),
                 self.wrap(status_filters),
             ]));
-            let mut files = e
-                .snapshot
-                .files
+            let mut files = all_files
                 .iter()
                 .filter(|j| {
                     (e.config.kind == "all" || j["kind"] == e.config.kind)
@@ -673,59 +772,87 @@ impl Companion {
                 }
             });
             if files.is_empty() {
-                sections.push(self.panel(if e.snapshot.files.is_empty(){vec![self.heading("尚未迁移文件"),self.text("先选择文件类型和电脑保存位置，再确认开启。不会因为点击上面的分类按钮就迁移文件。",BODY,p.text2),self.ex_button("exp-empty-settings","设置迁移规则",EA::Settings,Btn::Primary)]}else{vec![self.heading("没有符合筛选条件的记录"),self.text("切换为“全部”和“全部状态”可查看其他文件。迁移规则未改变。",BODY,p.text2)]}));
-            }
-            for j in files.iter().take(e.limit) {
-                let id = label(j, "id");
-                let date =
-                    chrono::DateTime::from_timestamp_millis(j["modified"].as_i64().unwrap_or(0))
-                        .map(|d| {
-                            d.with_timezone(&chrono::Local)
-                                .format("%Y-%m-%d %H:%M")
-                                .to_string()
-                        })
-                        .unwrap_or_default();
-                let icon = match j["kind"].as_str() {
-                    Some("photos") => UiIcon::Image,
-                    Some("videos") => UiIcon::Video,
-                    _ => UiIcon::File,
-                };
-                let mut actions = vec![self.ex_button(
-                    format!("exp-open-{id}"),
-                    "打开原件",
-                    EA::Open(id.clone()),
-                    Btn::Secondary,
-                )];
-                if j["state"] == "archived" {
-                    actions.push(self.ex_button(
-                        format!("exp-restore-{id}"),
-                        "恢复到手机",
-                        EA::Restore(id),
-                        Btn::Ghost,
-                    ));
+                sections.push(self.panel(if all_files.is_empty() {
+                    vec![
+                        self.heading("尚未迁移文件"),
+                        self.text(
+                            "先选择文件类型和电脑保存位置，再确认开启。不会因为点击上面的分类按钮就迁移文件。",
+                            BODY,
+                            p.text2,
+                        ),
+                        self.ex_button("exp-empty-settings", "设置迁移规则", EA::Settings, Btn::Primary),
+                    ]
+                } else {
+                    vec![
+                        self.heading("没有符合筛选条件的记录"),
+                        self.text("切换为“全部”和“全部状态”可查看其他文件。迁移规则未改变。", BODY, p.text2),
+                    ]
+                }));
+            } else if e.gallery_grid_mode {
+                let limited: Vec<&Value> = files.iter().copied().take(e.limit).collect();
+                sections.extend(self.expansion_timeline_gallery(&limited));
+            } else {
+                for j in files.iter().take(e.limit) {
+                    let id = label(j, "id");
+                    let date = chrono::DateTime::from_timestamp_millis(
+                        j["modified"].as_i64().unwrap_or(0),
+                    )
+                    .map(|d| {
+                        d.with_timezone(&chrono::Local)
+                            .format("%Y-%m-%d %H:%M")
+                            .to_string()
+                    })
+                    .unwrap_or_default();
+                    let icon = match j["kind"].as_str() {
+                        Some("photos") => UiIcon::Image,
+                        Some("videos") => UiIcon::Video,
+                        _ => UiIcon::File,
+                    };
+                    let mut actions = vec![
+                        self.ex_button(
+                            format!("exp-open-{id}"),
+                            "打开原件",
+                            EA::Open(id.clone()),
+                            Btn::Secondary,
+                        ),
+                        self.ex_button(
+                            format!("exp-ai-{id}"),
+                            "AI 分析",
+                            EA::AnalyzeWithAmoo(id.clone()),
+                            Btn::Ghost,
+                        ),
+                    ];
+                    if j["state"] == "archived" {
+                        actions.push(self.ex_button(
+                            format!("exp-restore-{id}"),
+                            "恢复到手机",
+                            EA::Restore(id),
+                            Btn::Ghost,
+                        ));
+                    }
+                    sections.push(self.panel(vec![
+                        self.between(
+                            self.hstack(
+                                S2,
+                                vec![
+                                    self.ui_icon(icon, 20., p.text2),
+                                    self.heading(label(j, "name")),
+                                ],
+                            ),
+                            self.pill_badge(state(j), p.text2, p.hover),
+                        ),
+                        self.text(
+                            format!(
+                                "{date} · {} · {}",
+                                storage::format_bytes(j["size"].as_u64().unwrap_or(0)),
+                                label(j, "path")
+                            ),
+                            CAPTION,
+                            p.text3,
+                        ),
+                        self.wrap(actions),
+                    ]));
                 }
-                sections.push(self.panel(vec![
-                    self.between(
-                        self.hstack(
-                            S2,
-                            vec![
-                                self.ui_icon(icon, 20., p.text2),
-                                self.heading(label(j, "name")),
-                            ],
-                        ),
-                        self.pill_badge(state(j), p.text2, p.hover),
-                    ),
-                    self.text(
-                        format!(
-                            "{date} · {} · {}",
-                            storage::format_bytes(j["size"].as_u64().unwrap_or(0)),
-                            label(j, "path")
-                        ),
-                        CAPTION,
-                        p.text3,
-                    ),
-                    self.wrap(actions),
-                ]));
             }
             if files.len() > e.limit {
                 sections.push(self.ex_button("exp-more", "加载更多", EA::More, Btn::Secondary));
@@ -792,5 +919,225 @@ impl Companion {
             .with_child(Expanded::new(1., body).finish())
             .with_child(footer)
             .finish()
+    }
+
+    fn expansion_timeline_gallery(&self, files: &[&Value]) -> Vec<El> {
+        let p = self.p();
+        let mut groups: Vec<(String, Vec<&Value>)> = Vec::new();
+        for j in files {
+            let bucket = timeline_date_bucket(j);
+            if let Some((_, list)) = groups.iter_mut().find(|(b, _)| *b == bucket) {
+                list.push(*j);
+            } else {
+                groups.push((bucket, vec![*j]));
+            }
+        }
+        let mut out = Vec::new();
+        for (bucket_title, items) in groups {
+            let dot = ConstrainedBox::new(
+                Container::new(Empty::new().finish())
+                    .with_background_color(p.success)
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                    .finish(),
+            )
+            .with_width(8.)
+            .with_height(8.)
+            .finish();
+            let header = self.between(
+                self.hstack(
+                    S2,
+                    vec![
+                        dot,
+                        self.line_w(&bucket_title, SUBHEAD, p.text, Weight::Semibold),
+                    ],
+                ),
+                self.pill_badge(format!("共 {} 项", items.len()), p.text2, p.hover),
+            );
+            out.push(header);
+            for chunk in items.chunks(3) {
+                let mut row_cards = Vec::with_capacity(3);
+                for j in chunk {
+                    row_cards.push(Expanded::new(1., self.expansion_media_card(j)).finish());
+                }
+                while row_cards.len() < 3 {
+                    row_cards.push(Expanded::new(1., Empty::new().finish()).finish());
+                }
+                out.push(self.hstack(S3, row_cards));
+            }
+        }
+        out
+    }
+
+    fn expansion_media_card(&self, j: &Value) -> El {
+        let p = self.p();
+        let id = label(j, "id");
+        let name = label(j, "name");
+        let path_str = label(j, "path");
+        let kind = j["kind"].as_str().unwrap_or("");
+        let size_str = storage::format_bytes(j["size"].as_u64().unwrap_or(0));
+        let ext_badge = media_ext_badge(j);
+
+        let resolved_local =
+            stepx_companion::storage_expansion::local_file(&self.expansion.config, j)
+                .ok()
+                .or_else(|| {
+                    j["localPath"]
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                        .map(PathBuf::from)
+                        .filter(|path| path.is_file())
+                });
+        let is_local_image = resolved_local.as_ref().is_some_and(|path| {
+            path.is_file()
+                && path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                    matches!(
+                        e.to_ascii_lowercase().as_str(),
+                        "png" | "jpg" | "jpeg" | "webp" | "gif"
+                    )
+                })
+        });
+
+        let preview_area = if is_local_image {
+            let local_path = resolved_local.unwrap();
+            let img = ConstrainedBox::new(
+                Image::new(
+                    AssetSource::LocalFile {
+                        path: local_path.to_string_lossy().into_owned(),
+                    },
+                    CacheOption::BySize,
+                )
+                .contain()
+                .finish(),
+            )
+            .with_height(118.)
+            .finish();
+            let badge = self.pill_badge(format!("{ext_badge} · 原图"), p.text, p.bg);
+            Stack::new()
+                .with_child(
+                    Container::new(img)
+                        .with_background_color(p.surface)
+                        .with_border(Border::all(1.).with_border_color(p.border))
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+                        .finish(),
+                )
+                .with_positioned_child(
+                    badge,
+                    OffsetPositioning::offset_from_parent(
+                        vec2f(-S2, S2),
+                        ParentOffsetBounds::Unbounded,
+                        ParentAnchor::TopRight,
+                        ChildAnchor::TopRight,
+                    ),
+                )
+                .finish()
+        } else if j["previewAsset"].as_str().is_some() || (self.demo_mode && kind == "photos") {
+            let asset_name = match j["previewAsset"].as_str() {
+                Some("neo_front_frame.png") => "neo_front_frame.png",
+                Some("neo_rear_housing.png") => "neo_rear_housing.png",
+                _ => "stepx_home_screen.png",
+            };
+            let img = ConstrainedBox::new(
+                Image::new(
+                    AssetSource::Bundled { path: asset_name },
+                    CacheOption::BySize,
+                )
+                .contain()
+                .finish(),
+            )
+            .with_height(118.)
+            .finish();
+            let badge = self.pill_badge(format!("{ext_badge} · 缩略图"), p.text, p.bg);
+            Stack::new()
+                .with_child(
+                    Container::new(img)
+                        .with_background_color(p.surface)
+                        .with_border(Border::all(1.).with_border_color(p.border))
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+                        .finish(),
+                )
+                .with_positioned_child(
+                    badge,
+                    OffsetPositioning::offset_from_parent(
+                        vec2f(-S2, S2),
+                        ParentOffsetBounds::Unbounded,
+                        ParentAnchor::TopRight,
+                        ChildAnchor::TopRight,
+                    ),
+                )
+                .finish()
+        } else {
+            let icon = match kind {
+                "videos" => UiIcon::Monitor,
+                "documents" => UiIcon::Folder,
+                "audiobooks" => UiIcon::Music,
+                "packages" => UiIcon::Package,
+                "photos" => UiIcon::Image,
+                _ => UiIcon::File,
+            };
+            ConstrainedBox::new(
+                Container::new(
+                    Flex::column()
+                        .with_main_axis_size(MainAxisSize::Max)
+                        .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                        .with_child(self.between(
+                            self.pill_badge(&ext_badge, p.text, p.bg),
+                            self.pill_badge(&size_str, p.text2, p.bg),
+                        ))
+                        .with_child(
+                            Flex::row()
+                                .with_main_axis_size(MainAxisSize::Max)
+                                .with_main_axis_alignment(MainAxisAlignment::Center)
+                                .with_child(self.ui_icon(icon, 28., p.text2))
+                                .finish(),
+                        )
+                        .with_child(self.line(&path_str, MICRO, p.text3))
+                        .finish(),
+                )
+                .with_uniform_padding(S2)
+                .with_background_color(p.surface)
+                .with_border(Border::all(1.).with_border_color(p.border))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+                .finish(),
+            )
+            .with_height(118.)
+            .finish()
+        };
+
+        let (badge_text, badge_fg, badge_bg) = match j["state"].as_str().unwrap_or("") {
+            "archived" => ("已释放手机空间", p.success_text, p.success_soft),
+            "restored" => ("双端保留", p.accent, p.accent_soft),
+            _ => (state(j), p.text2, p.hover),
+        };
+        let meta_row = self.between(
+            self.pill_badge(badge_text, badge_fg, badge_bg),
+            self.mono(&size_str, MICRO, p.text2),
+        );
+        let actions = self.wrap(vec![
+            self.ex_button(
+                format!("exp-open-{id}"),
+                "打开原件",
+                EA::Open(id.clone()),
+                Btn::Secondary,
+            ),
+            self.ex_button(
+                format!("exp-restore-{id}"),
+                "回传手机",
+                EA::Restore(id.clone()),
+                Btn::Ghost,
+            ),
+            self.ex_button(
+                format!("exp-ai-{id}"),
+                "AI 分析",
+                EA::AnalyzeWithAmoo(id),
+                Btn::Ghost,
+            ),
+        ]);
+        self.panel(vec![
+            preview_area,
+            self.line_w(&name, BODY, p.text, Weight::Medium),
+            meta_row,
+            actions,
+        ])
     }
 }

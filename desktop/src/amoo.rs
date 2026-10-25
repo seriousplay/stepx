@@ -104,12 +104,253 @@ fn read_local_frame(
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StreamDelta {
+    pub session_key: String,
+    pub run_id: String,
+    pub delta_text: String,
+    pub full_text: String,
+    pub thinking_text: String,
+    pub tool_status: Option<String>,
+    pub finished: bool,
+}
+
+fn extract_content(value: &Value) -> Option<String> {
+    if let Some(s) = value.as_str() {
+        if !s.is_empty() {
+            return Some(crate::amoo_gui_chat::display_text(s));
+        }
+    }
+    if let Some(parts) = value.as_array() {
+        let joined = parts
+            .iter()
+            .filter(|p| p["type"] == "text" || p.get("type").is_none())
+            .filter_map(|p| p["text"].as_str().or_else(|| p["content"].as_str()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !joined.is_empty() {
+            return Some(crate::amoo_gui_chat::display_text(&joined));
+        }
+    }
+    None
+}
+
+pub fn parse_stream_event(frame: &Value) -> Option<StreamDelta> {
+    if frame.get("type").and_then(Value::as_str) != Some("event") {
+        return None;
+    }
+    let event = string(frame, &["event"]);
+    let supported = matches!(
+        event,
+        "chat"
+            | "chat.delta"
+            | "chat.message"
+            | "agent"
+            | "agent.event"
+            | "tool"
+            | "tool.call"
+            | "tool.status"
+            | "run"
+            | "run.delta"
+            | "message"
+            | "message.delta"
+    ) || event.starts_with("chat.")
+        || event.starts_with("agent.")
+        || event.starts_with("tool.")
+        || event.starts_with("run.")
+        || event.starts_with("message.");
+    if !supported {
+        return None;
+    }
+
+    let payload = frame.get("payload").unwrap_or(frame);
+    let data = payload.get("data").filter(|v| v.is_object());
+
+    let raw_session_key = string(
+        payload,
+        &["sessionKey", "session_key", "sessionId", "session_id"],
+    );
+    let raw_session_key = if raw_session_key.is_empty() {
+        string(
+            frame,
+            &["sessionKey", "session_key", "sessionId", "session_id"],
+        )
+    } else {
+        raw_session_key
+    };
+    let session_key = if raw_session_key.is_empty() {
+        "agent:main:main".to_string()
+    } else {
+        raw_session_key.to_string()
+    };
+
+    let run_id = {
+        let r = string(payload, &["runId", "run_id", "id"]);
+        if r.is_empty() {
+            string(frame, &["runId", "run_id"]).to_string()
+        } else {
+            r.to_string()
+        }
+    };
+
+    let mut delta_text = string(
+        payload,
+        &["delta", "textDelta", "contentDelta", "deltaText"],
+    )
+    .to_string();
+    if delta_text.is_empty() {
+        if let Some(delta_obj) = payload.get("delta").filter(|v| v.is_object()) {
+            delta_text =
+                string(delta_obj, &["text", "content", "textDelta", "contentDelta"]).to_string();
+            if delta_text.is_empty() {
+                if let Some(full) = extract_content(&delta_obj["content"]) {
+                    delta_text = full;
+                }
+            }
+        }
+    }
+    if delta_text.is_empty() {
+        if let Some(d) = data {
+            delta_text = string(d, &["delta", "textDelta", "contentDelta", "text"]).to_string();
+        }
+    }
+
+    let full_text = extract_content(&payload["text"])
+        .or_else(|| extract_content(&payload["content"]))
+        .or_else(|| {
+            payload.get("message").and_then(|m| {
+                extract_content(&m["text"]).or_else(|| extract_content(&m["content"]))
+            })
+        })
+        .unwrap_or_default();
+
+    let mut thinking_text =
+        string(payload, &["thinking", "reasoning", "thinkingDelta"]).to_string();
+    if thinking_text.is_empty() {
+        if let Some(delta_obj) = payload.get("delta").filter(|v| v.is_object()) {
+            thinking_text = string(delta_obj, &["thinking", "reasoning"]).to_string();
+        }
+    }
+    if thinking_text.is_empty() {
+        if let Some(msg_obj) = payload.get("message").filter(|v| v.is_object()) {
+            thinking_text = string(msg_obj, &["thinking", "reasoning"]).to_string();
+        }
+    }
+    if thinking_text.is_empty() {
+        if let Some(d) = data {
+            thinking_text = string(d, &["thinking", "reasoning"]).to_string();
+        }
+    }
+
+    let state = string(payload, &["state", "status", "stopReason", "stop_reason"]);
+    let state = if state.is_empty() {
+        payload
+            .get("message")
+            .map(|m| string(m, &["stopReason", "stop_reason", "state", "status"]))
+            .unwrap_or("")
+    } else {
+        state
+    };
+    let finished = payload["done"].as_bool() == Some(true)
+        || payload["finished"].as_bool() == Some(true)
+        || payload["final"].as_bool() == Some(true)
+        || matches!(
+            state.to_ascii_lowercase().as_str(),
+            "done"
+                | "completed"
+                | "finished"
+                | "final"
+                | "error"
+                | "aborted"
+                | "stop"
+                | "end_turn"
+                | "cancelled"
+        );
+
+    let is_tool_event = event == "tool"
+        || event.contains("tool")
+        || matches!(
+            state.to_ascii_lowercase().as_str(),
+            "tool_use" | "tool_calls" | "tool" | "calling_tool"
+        )
+        || payload["stream"].as_str() == Some("tool")
+        || payload.get("tool").is_some()
+        || payload.get("toolName").is_some()
+        || payload.get("tool_name").is_some()
+        || payload
+            .get("toolCalls")
+            .and_then(Value::as_array)
+            .is_some_and(|a| !a.is_empty());
+
+    let mut tool_name = string(payload, &["tool", "toolName", "tool_name"]).to_string();
+    if tool_name.is_empty() {
+        if let Some(tool_obj) = payload.get("tool").filter(|v| v.is_object()) {
+            tool_name = string(tool_obj, &["name", "toolName", "id"]).to_string();
+        }
+    }
+    if tool_name.is_empty() && is_tool_event {
+        tool_name = string(payload, &["name"]).to_string();
+    }
+    if tool_name.is_empty() {
+        if let Some(d) = data {
+            tool_name = string(d, &["tool", "toolName", "tool_name", "name"]).to_string();
+        }
+    }
+    if tool_name.is_empty() {
+        if let Some(tools) = payload.get("toolCalls").and_then(Value::as_array) {
+            tool_name = tools
+                .iter()
+                .filter_map(|t| t["name"].as_str().filter(|s| !s.is_empty()))
+                .collect::<Vec<_>>()
+                .join(" · ");
+        }
+    }
+
+    let tool_status = if !tool_name.is_empty() {
+        Some(format!("正在调用工具：{tool_name}"))
+    } else if is_tool_event && !finished {
+        let status_label = string(payload, &["status", "phase"]);
+        if !status_label.is_empty()
+            && !matches!(
+                status_label.to_ascii_lowercase().as_str(),
+                "tool_use" | "tool" | "running" | "started"
+            )
+        {
+            Some(format!("正在调用工具：{status_label}"))
+        } else {
+            Some("正在调用工具…".to_string())
+        }
+    } else {
+        None
+    };
+
+    if delta_text.is_empty()
+        && full_text.is_empty()
+        && thinking_text.is_empty()
+        && tool_status.is_none()
+        && !finished
+    {
+        return None;
+    }
+
+    Some(StreamDelta {
+        session_key,
+        run_id,
+        delta_text,
+        full_text,
+        thinking_text,
+        tool_status,
+        finished,
+    })
+}
+
 pub struct AgentBus {
     _lease: Option<crate::amoo_background::Lease>,
     stream: TcpStream,
     _forward: Forward,
     device: Device,
     pub version: String,
+    pending_events: Vec<StreamDelta>,
 }
 
 struct Forward {
@@ -126,29 +367,30 @@ impl Drop for Forward {
     }
 }
 
-fn read_frame(stream: &mut TcpStream, deadline: Instant) -> Result<Value> {
-    fn exact(stream: &mut TcpStream, mut bytes: &mut [u8], deadline: Instant) -> Result<()> {
-        while !bytes.is_empty() {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .context("Amoo 后台响应超时")?;
-            stream.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))?;
-            let count = stream.read(bytes).context("Amoo 云连接已中断或超时；请检查手机网络及小工具中的伴侣后台协作状态，未确认发送的草稿与附件已保留")?;
-            if count == 0 {
-                bail!("Amoo 后台连接已关闭");
-            }
-            bytes = &mut bytes[count..];
+fn read_exact_until(stream: &mut TcpStream, mut bytes: &mut [u8], deadline: Instant) -> Result<()> {
+    while !bytes.is_empty() {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .context("Amoo 后台响应超时")?;
+        stream.set_read_timeout(Some(remaining.max(Duration::from_millis(1))))?;
+        let count = stream.read(bytes).context("Amoo 云连接已中断或超时；请检查手机网络及小工具中的伴侣后台协作状态，未确认发送的草稿与附件已保留")?;
+        if count == 0 {
+            bail!("Amoo 后台连接已关闭");
         }
-        Ok(())
+        bytes = &mut bytes[count..];
     }
+    Ok(())
+}
+
+fn read_frame(stream: &mut TcpStream, deadline: Instant) -> Result<Value> {
     let mut header = [0; 4];
-    exact(stream, &mut header, deadline)?;
+    read_exact_until(stream, &mut header, deadline)?;
     let size = u32::from_be_bytes(header) as usize;
     if size == 0 || size > MAX_FRAME {
         bail!("Amoo 后台返回了无效的数据帧长度");
     }
     let mut body = vec![0; size];
-    exact(stream, &mut body, deadline)?;
+    read_exact_until(stream, &mut body, deadline)?;
     serde_json::from_slice(&body).context("Amoo 后台返回了无效的 JSON 数据")
 }
 
@@ -234,6 +476,7 @@ impl AgentBus {
             _forward: forward,
             device: device.clone(),
             version: String::new(),
+            pending_events: Vec::new(),
         };
         let hello = bus
             .call_with_timeout(
@@ -279,6 +522,11 @@ impl AgentBus {
         loop {
             let response = read_frame(&mut self.stream, deadline)
                 .context("手机本机图片上传未确认完成；附件已保留，请勿重复提交")?;
+            if response.get("type").and_then(Value::as_str) == Some("event") {
+                if let Some(delta) = parse_stream_event(&response) {
+                    self.pending_events.push(delta);
+                }
+            }
             if response["type"] != "req"
                 || response["method"] != "node.invoke.result"
                 || response["params"]["id"].as_str() != Some(&id)
@@ -363,6 +611,11 @@ impl AgentBus {
         loop {
             match read_local_frame(&mut self.stream, deadline, cancel) {
                 LocalInvokeEnd::Reply(response) => {
+                    if response.get("type").and_then(Value::as_str) == Some("event") {
+                        if let Some(delta) = parse_stream_event(&response) {
+                            self.pending_events.push(delta);
+                        }
+                    }
                     if response["type"] == "req"
                         && response["method"] == "node.invoke.result"
                         && response["params"]["id"].as_str() == Some(&id)
@@ -397,6 +650,11 @@ impl AgentBus {
         let deadline = Instant::now() + timeout;
         loop {
             let response = read_frame(&mut self.stream, deadline)?;
+            if response.get("type").and_then(Value::as_str) == Some("event") {
+                if let Some(delta) = parse_stream_event(&response) {
+                    self.pending_events.push(delta);
+                }
+            }
             if response["id"].as_str() != Some(&id) {
                 continue;
             }
@@ -415,6 +673,13 @@ impl AgentBus {
                 .cloned()
                 .context("Amoo 后台响应缺少 payload");
         }
+    }
+
+    pub fn poll_stream_events(&mut self, wait: Duration) -> Result<Vec<StreamDelta>> {
+        let mut out = std::mem::take(&mut self.pending_events);
+        let polled = poll_stream_events_from_stream(&mut self.stream, wait, !out.is_empty())?;
+        out.extend(polled);
+        Ok(out)
     }
 
     pub fn snapshot(&mut self, selected: Option<&str>) -> Result<RealAmooData> {
@@ -708,6 +973,52 @@ impl PendingReply {
                 m.role == "assistant" && m.run_id == self.run_id && is_terminal(&m.stop_reason)
             })
     }
+}
+
+pub(crate) fn poll_stream_events_from_stream(
+    stream: &mut TcpStream,
+    wait: Duration,
+    already_have_events: bool,
+) -> Result<Vec<StreamDelta>> {
+    let mut out = Vec::new();
+    for _ in 0..16 {
+        let first_wait = if out.is_empty() && !already_have_events {
+            wait.max(Duration::from_millis(5))
+        } else {
+            Duration::from_millis(5)
+        };
+        stream.set_read_timeout(Some(first_wait))?;
+        let mut header = [0u8; 4];
+        match stream.read(&mut header[..1]) {
+            Ok(0) => bail!("Amoo 后台连接已关闭"),
+            Ok(1) => {}
+            Ok(_) => unreachable!(),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err.into()),
+        }
+        let frame_deadline = Instant::now() + Duration::from_secs(5);
+        read_exact_until(stream, &mut header[1..], frame_deadline)?;
+        let size = u32::from_be_bytes(header) as usize;
+        if size == 0 || size > MAX_FRAME {
+            bail!("Amoo 响应帧长度异常：{size}");
+        }
+        let mut body = vec![0u8; size];
+        read_exact_until(stream, &mut body, frame_deadline)?;
+        if let Ok(frame) = serde_json::from_slice::<Value>(&body) {
+            if let Some(delta) = parse_stream_event(&frame) {
+                out.push(delta);
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn is_terminal(reason: &str) -> bool {
@@ -1553,6 +1864,106 @@ mod tests {
             true
         );
         assert!(read_frame(&mut stream, Instant::now() + Duration::from_secs(2)).is_err());
+        sender.join().unwrap();
+    }
+
+    #[test]
+    fn parse_stream_event_extracts_delta_tool_and_completion() {
+        let delta_frame = json!({
+            "type": "event",
+            "event": "chat.delta",
+            "payload": {
+                "sessionId": "agent:main:s1",
+                "runId": "run-42",
+                "delta": "增量内容",
+                "thinking": "推理步骤"
+            }
+        });
+        let delta = parse_stream_event(&delta_frame).unwrap();
+        assert_eq!(delta.session_key, "agent:main:s1");
+        assert_eq!(delta.run_id, "run-42");
+        assert_eq!(delta.delta_text, "增量内容");
+        assert_eq!(delta.thinking_text, "推理步骤");
+        assert!(!delta.finished);
+
+        let tool_frame = json!({
+            "type": "event",
+            "event": "agent.tool.call",
+            "payload": {
+                "sessionKey": "agent:main:s1",
+                "runId": "run-42",
+                "toolName": "web_search"
+            }
+        });
+        let tool_delta = parse_stream_event(&tool_frame).unwrap();
+        assert_eq!(tool_delta.session_key, "agent:main:s1");
+        assert_eq!(
+            tool_delta.tool_status.as_deref(),
+            Some("正在调用工具：web_search")
+        );
+        assert!(!tool_delta.finished);
+
+        let done_frame = json!({
+            "type": "event",
+            "event": "chat.message.completed",
+            "payload": {
+                "sessionId": "agent:main:s1",
+                "runId": "run-42",
+                "text": "完整回复内容",
+                "stopReason": "STOP"
+            }
+        });
+        let done_delta = parse_stream_event(&done_frame).unwrap();
+        assert_eq!(done_delta.full_text, "完整回复内容");
+        assert!(done_delta.finished);
+    }
+
+    #[test]
+    fn poll_stream_events_reads_pushed_frames_and_returns_cleanly_on_timeout() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let sender = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let f1 = serde_json::to_vec(&json!({
+                "type": "event",
+                "event": "chat.delta",
+                "payload": {
+                    "sessionId": "s1",
+                    "runId": "r1",
+                    "delta": "你好"
+                }
+            }))
+            .unwrap();
+            s.write_all(&(f1.len() as u32).to_be_bytes()).unwrap();
+            s.write_all(&f1).unwrap();
+            let f2 = serde_json::to_vec(&json!({
+                "type": "event",
+                "event": "chat.delta",
+                "payload": {
+                    "sessionId": "s1",
+                    "runId": "r1",
+                    "delta": "，世界",
+                    "stopReason": "STOP"
+                }
+            }))
+            .unwrap();
+            s.write_all(&(f2.len() as u32).to_be_bytes()).unwrap();
+            s.write_all(&f2).unwrap();
+            std::thread::sleep(Duration::from_millis(120));
+        });
+        let mut client = TcpStream::connect(addr).unwrap();
+        let events =
+            poll_stream_events_from_stream(&mut client, Duration::from_millis(50), false).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].delta_text, "你好");
+        assert!(!events[0].finished);
+        assert_eq!(events[1].delta_text, "，世界");
+        assert!(events[1].finished);
+
+        let empty =
+            poll_stream_events_from_stream(&mut client, Duration::from_millis(15), false).unwrap();
+        assert!(empty.is_empty());
         sender.join().unwrap();
     }
 }

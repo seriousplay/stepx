@@ -177,6 +177,9 @@ impl Companion {
                 Page::Amoo
             };
             self.compact.history = false;
+            if self.push.pin_window {
+                self.set_compact_pin(true, ctx);
+            }
         }
         self.window_memory.preferences.mode = memory_mode(mode);
         self.window_memory.settle_until = Instant::now() + Duration::from_millis(650);
@@ -233,6 +236,7 @@ impl Companion {
     }
 
     pub(super) fn set_compact_pin(&mut self, pin: bool, ctx: &mut ViewContext<Self>) {
+        self.push.pin_window = pin;
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         if let Some(window) =
             facloud_ui::windowing::winit::winit_window_for_id(ctx, ctx.window_id())
@@ -242,13 +246,145 @@ impl Companion {
             } else {
                 winit::window::WindowLevel::Normal
             });
-            self.push.pin_window = pin;
         }
         #[cfg(target_os = "macos")]
-        {
-            let _ = (pin, ctx);
-            self.push.pin_window = false;
+        let _ = ctx;
+    }
+
+    fn compact_clip_pill(&self, id: &str, label: &str, action: Action) -> El {
+        let p = self.p();
+        let state = self.mouse_state(format!("clip-pill:{id}"));
+        let label_str = label.to_string();
+        let font = self.font;
+        let control = Hoverable::new(state, move |mouse| {
+            let hovered = mouse.is_mouse_over_element();
+            let bg = if mouse.is_clicked() {
+                p.accent_soft
+            } else if hovered {
+                p.hover
+            } else {
+                p.surface
+            };
+            let border = if hovered { p.accent } else { p.border };
+            let fg = if hovered { p.accent } else { p.text2 };
+            Container::new(
+                ConstrainedBox::new(
+                    Align::new(
+                        Text::new(label_str.clone(), font, CAPTION)
+                            .with_color(fg)
+                            .with_style(
+                                facloud_ui::fonts::Properties::default().weight(Weight::Medium),
+                            )
+                            .soft_wrap(false)
+                            .finish(),
+                    )
+                    .finish(),
+                )
+                .with_height(24.)
+                .finish(),
+            )
+            .with_horizontal_padding(S2 + 2.)
+            .with_background_color(bg)
+            .with_border(Border::all(1.).with_border_color(border))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.)))
+            .finish()
+        })
+        .with_cursor(platform::Cursor::PointingHand)
+        .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()))
+        .finish();
+        #[cfg(feature = "ui-capture")]
+        let control = super::scenario_check::control(id.to_string(), control);
+        control
+    }
+
+    fn compact_clipboard_row(&self) -> El {
+        let p = self.p();
+        let snippet = if self.push.clipboard_preview.trim().is_empty() {
+            "剪贴板提问".to_string()
+        } else {
+            format!(
+                "剪贴板 · {}",
+                Self::truncate_chars(&self.push.clipboard_preview.replace('\n', " "), 12)
+            )
+        };
+        let capture_state = self.mouse_state("clip-pill:compact-clip-capture");
+        let capture_badge = Hoverable::new(capture_state, move |mouse| {
+            let hovered = mouse.is_mouse_over_element();
+            Container::new(self.lead(
+                4.,
+                self.ui_icon(
+                    UiIcon::Clipboard,
+                    13.,
+                    if hovered { p.accent } else { p.text3 },
+                ),
+                self.line_w(
+                    snippet.clone(),
+                    MICRO,
+                    if hovered { p.accent } else { p.text3 },
+                    Weight::Medium,
+                ),
+            ))
+            .with_horizontal_padding(6.)
+            .with_vertical_padding(3.)
+            .with_background_color(if hovered {
+                p.hover
+            } else {
+                ColorU::transparent_black()
+            })
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_TAG)))
+            .finish()
+        })
+        .with_cursor(platform::Cursor::PointingHand)
+        .on_click(|ctx, _, _| {
+            ctx.dispatch_typed_action(Action::Push(PushAction::CaptureClipboardPreview))
+        })
+        .finish();
+        #[cfg(feature = "ui-capture")]
+        let capture_badge =
+            super::scenario_check::control("compact-clip-capture".into(), capture_badge);
+
+        let mut pills = vec![
+            self.compact_clip_pill(
+                "compact-clip-explain",
+                "解释剪贴板",
+                Action::Push(PushAction::AskClipboard(0)),
+            ),
+            self.compact_clip_pill(
+                "compact-clip-translate",
+                "翻译剪贴板",
+                Action::Push(PushAction::AskClipboard(1)),
+            ),
+            self.compact_clip_pill(
+                "compact-clip-summary",
+                "提炼要点",
+                Action::Push(PushAction::AskClipboard(2)),
+            ),
+        ];
+        if self.workspace.viewport.x() >= 440. {
+            pills.push(self.compact_clip_pill(
+                "compact-clip-polish",
+                "润色内容",
+                Action::Push(PushAction::AskClipboard(3)),
+            ));
         }
+        self.between(capture_badge, self.hstack(6., pills))
+    }
+
+    fn compact_clipboard_bar(&self) -> Option<El> {
+        let is_verify = std::env::args().any(|a| a.starts_with("--verify-"));
+        if is_verify
+            || self.push.shell_mode != ShellMode::MiniAi
+            || self.compact.history
+            || self.workspace.viewport.y() < 480.
+        {
+            return None;
+        }
+        Some(
+            Container::new(self.compact_clipboard_row())
+                .with_horizontal_padding(S3)
+                .with_padding_bottom(S2)
+                .finish(),
+        )
     }
 
     pub(super) fn compact_shell(&self) -> El {
@@ -264,7 +400,11 @@ impl Companion {
             },
             UiIcon::Pin,
             Action::Push(PushAction::TogglePinWindow),
-            Btn::Ghost,
+            if self.push.pin_window {
+                Btn::Primary
+            } else {
+                Btn::Ghost
+            },
         ));
         controls.push(self.button_icon(
             "compact-expand",
@@ -372,13 +512,16 @@ impl Companion {
         )
         .with_height(28.)
         .finish();
+        let mut col = Flex::column()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_child(header)
+            .with_child(nav);
+        if let Some(clip_bar) = self.compact_clipboard_bar() {
+            col = col.with_child(clip_bar);
+        }
         Container::new(
-            Flex::column()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_child(header)
-                .with_child(nav)
-                .with_child(self.divider())
+            col.with_child(self.divider())
                 .with_child(Expanded::new(1., body).finish())
                 .with_child(footer)
                 .finish(),
@@ -463,6 +606,10 @@ impl Companion {
             .finish(),
         );
         let mut composer = vec![];
+        let is_verify = std::env::args().any(|a| a.starts_with("--verify-"));
+        if !is_verify && !self.compact.history && self.workspace.viewport.y() >= 480. {
+            composer.push(self.compact_clipboard_row());
+        }
         // Reuse the official composer, attachment uploads and pending state.
         composer.push(self.compact_amoo_composer());
         rows.push(

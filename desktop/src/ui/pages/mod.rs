@@ -326,6 +326,7 @@ impl Companion {
     }
 
     /// Chat bubble shared by Amoo and SMS. `mine` aligns right with the accent tint.
+    #[allow(dead_code)]
     pub(super) fn bubble(&self, mine: bool, meta: String, body: El, footer: Option<El>) -> El {
         let p = self.p();
         let mut inner = vec![body];

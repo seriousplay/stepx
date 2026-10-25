@@ -1086,6 +1086,185 @@ impl Companion {
         }
         self.panel(settings)
     }
+    fn bs_smart_linkage_and_pomodoro_panel(&self) -> El {
+        let p = self.p();
+        let state = &self.back_screen;
+        let rem = state.pomodoro_remaining_secs();
+        let total = state.pomodoro_duration_secs.max(1);
+        let progress_pct = if state.pomodoro_active {
+            ((total.saturating_sub(rem)).saturating_mul(100) / total).min(100) as u8
+        } else {
+            0
+        };
+        let time_str = format!("{:02}:{:02}", rem / 60, rem % 60);
+
+        let linkage_row = self.vstack(
+            S2,
+            vec![
+                self.between(
+                    self.vstack(
+                        S1,
+                        vec![
+                            self.line_w(
+                                "Amoo 思考时自动开启呼吸光环",
+                                BODY,
+                                p.text,
+                                Weight::Medium,
+                            ),
+                            self.line(
+                                "桌面或手机端 Amoo 推理期间，背屏自动切入柔和呼吸光环，任务完成自动恢复。",
+                                CAPTION,
+                                p.text2,
+                            ),
+                        ],
+                    ),
+                    self.bs_button(
+                        "toggle-ai-breath",
+                        if state.auto_ai_breath {
+                            "已开启 · 呼吸联动"
+                        } else {
+                            "已关闭 · 点击开启"
+                        },
+                        BsAction::ToggleAutoAiBreath,
+                        if state.auto_ai_breath {
+                            Btn::Primary
+                        } else {
+                            Btn::Secondary
+                        },
+                    ),
+                ),
+                self.divider(),
+                self.between(
+                    self.vstack(
+                        S1,
+                        vec![
+                            self.line_w(
+                                "收到验证码/重要消息时背屏闪烁",
+                                BODY,
+                                p.text,
+                                Weight::Medium,
+                            ),
+                            self.line(
+                                "检测到短信验证码、快递取件码或高优通知时，背屏点阵脉冲闪烁提醒。",
+                                CAPTION,
+                                p.text2,
+                            ),
+                        ],
+                    ),
+                    self.bs_button(
+                        "toggle-notify-flash",
+                        if state.auto_notify_flash {
+                            "已开启 · 闪烁提醒"
+                        } else {
+                            "已关闭 · 点击开启"
+                        },
+                        BsAction::ToggleAutoNotifyFlash,
+                        if state.auto_notify_flash {
+                            Btn::Primary
+                        } else {
+                            Btn::Secondary
+                        },
+                    ),
+                ),
+            ],
+        );
+
+        let pomodoro_card = Container::new(self.vstack(
+            S2,
+            vec![
+                self.between(
+                    self.hstack(
+                        S2,
+                        vec![
+                            self.ui_icon(UiIcon::Clock, 16., p.accent),
+                            self.line_w(
+                                "25 分钟背屏专注番茄钟",
+                                BODY,
+                                p.text,
+                                Weight::Semibold,
+                            ),
+                            self.pill_badge(
+                                if state.pomodoro_active {
+                                    "专注倒计时中"
+                                } else {
+                                    "准备就绪"
+                                },
+                                if state.pomodoro_active {
+                                    p.success
+                                } else {
+                                    p.text2
+                                },
+                                p.bg,
+                            ),
+                        ],
+                    ),
+                    self.mono(&time_str, TITLE, if state.pomodoro_active { p.accent } else { p.text }),
+                ),
+                self.progress(Some(progress_pct), p.accent),
+                self.text(
+                    if state.pomodoro_active {
+                        format!(
+                            "剩余 {} · 手机物理背屏正在同步显示 Countdown 像素倒计时，计时结束自动恢复原状。",
+                            time_str
+                        )
+                    } else {
+                        "一键在桌面与手机物理背屏同步开启 25 分钟专注番茄钟或 5 分钟小憩倒计时。"
+                            .into()
+                    },
+                    CAPTION,
+                    p.text2,
+                ),
+                self.wrap(vec![
+                    self.bs_button(
+                        "pomodoro-start-25",
+                        "开启 25 分钟专注 (背屏同步倒计时)",
+                        BsAction::StartPomodoro(1500),
+                        Btn::Primary,
+                    ),
+                    self.bs_button(
+                        "pomodoro-start-5",
+                        "5 分钟小憩",
+                        BsAction::StartPomodoro(300),
+                        Btn::Secondary,
+                    ),
+                    self.bs_button(
+                        "pomodoro-stop",
+                        "结束专注",
+                        BsAction::StopPomodoro,
+                        if state.pomodoro_active {
+                            Btn::Danger
+                        } else {
+                            Btn::Ghost
+                        },
+                    ),
+                ]),
+            ],
+        ))
+        .with_uniform_padding(S3)
+        .with_background_color(p.surface)
+        .with_border(Border::all(1.).with_border_color(p.border))
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+        .finish();
+
+        self.panel(vec![
+            self.between(
+                self.bs_title(UiIcon::Star, "背屏场景化自动律动 & 25 分钟专注番茄钟"),
+                self.pill_badge(
+                    if state.pomodoro_active {
+                        "番茄钟运行中"
+                    } else if state.auto_ai_breath || state.auto_notify_flash {
+                        "智能律动已启用"
+                    } else {
+                        "手动模式"
+                    },
+                    p.accent,
+                    p.accent_soft,
+                ),
+            ),
+            linkage_row,
+            pomodoro_card,
+        ])
+    }
     pub(in super::super) fn backscreen_page(&self) -> El {
         let state = &self.back_screen;
         let tabs = self.segmented(
@@ -1128,6 +1307,9 @@ impl Companion {
         let mut creative = Vec::new();
         if state.advanced {
             creative.push(self.bs_advanced());
+        }
+        if state.tab == 0 || state.tab == 3 {
+            creative.push(self.bs_smart_linkage_and_pomodoro_panel());
         }
         creative.push(content);
         let right = Flex::column()

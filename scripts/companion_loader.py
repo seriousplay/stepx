@@ -1,4 +1,5 @@
 """Compatibility fix for the hash-pinned loader; never changes the Google payload."""
+import os
 import re
 
 IMAGE_BASE = '''def image_base(name):
@@ -8,6 +9,44 @@ IMAGE_BASE = '''def image_base(name):
   if len(bases)!=1:raise RuntimeError('No unique executable native image: '+name)
   return bases.pop()
 '''
+
+DOUBLE_FORK_SNIPPET = '''child=os.fork()
+if child:
+ try:os.waitpid(child,0)
+ except ChildProcessError:pass
+ os.execv('/usr/local/bin/ubuntu_zygote',['/usr/local/bin/ubuntu_zygote'])
+grandchild=os.fork()
+if grandchild:os._exit(0)
+'''
+
+
+def reap_zombies():
+    """Reap any exited child processes in the current process group without blocking."""
+    reaped = 0
+    while True:
+        try:
+            pid, _ = os.waitpid(-1, os.WNOHANG)
+            if pid <= 0:
+                break
+            reaped += 1
+        except (ChildProcessError, OSError):
+            break
+    return reaped
+
+
+def wrap_detached_subshell(command):
+    """Wrap a background shell command in a double-fork subshell so init (PID 1) reaps it."""
+    cmd = command.strip()
+    return f"( nohup {cmd} >/dev/null 2>&1 & )"
+
+
+def adapt_double_fork(launcher_source):
+    """Replace single-fork before ubuntu_zygote execv with double-fork + waitpid to prevent [stepx-gms-worke] zombies."""
+    target = "child=os.fork()\nif child:os.execv('/usr/local/bin/ubuntu_zygote',['/usr/local/bin/ubuntu_zygote'])\n"
+    if target in launcher_source:
+        return launcher_source.replace(target, DOUBLE_FORK_SNIPPET, 1)
+    return launcher_source
+
 
 def adapt(source):
     source,count=re.subn(r'def image_base\(name\):\n.*?(?=for soname,expected)',IMAGE_BASE,source,flags=re.S)
@@ -20,3 +59,4 @@ for address in (cb+0x79170,cb+0xd77c0,ab+0x669a4c):
 '''
     if source.count(marker)!=1:raise RuntimeError('Native entry point template changed')
     return source.replace(marker,marker+validation)
+

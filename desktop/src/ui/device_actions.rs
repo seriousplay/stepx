@@ -10,6 +10,7 @@ impl Companion {
         self.submit("正在查找设备…", move |adb| {
             let (devices, services) =
                 stepx_companion::reconnect::scan(adb, &prefs, &pairing_hosts)?;
+            let devices = stepx_companion::device::deduplicate_transports(devices);
             Ok(Outcome::Transports(devices, services))
         });
         self.job_tool = None;

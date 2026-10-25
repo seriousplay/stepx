@@ -1,7 +1,7 @@
 # StepX Companion 架构演进与全链路优化总结报告
 
 日期：2026-10-25  
-版本：Desktop `0.2.29` / Android `StepX伴侣` `0.1.26+`  
+版本：Desktop `0.2.30` / Android `StepX伴侣` `0.1.26+`  
 适用设备：StepX PZ261A（`pandora`，Android 16，172 固件）
 
 ---
@@ -159,3 +159,21 @@ StepX Companion 采用「跨平台原生桌面客户端 + Android 伴侣应用 +
   - **实现细节**：在 `expansion_state.rs` 与 `pages/expansion.rs` 中新增 `gallery_grid_mode`（默认开启）及「缩略图时间轴墙 (`exp-view-grid`) / 清单列表 (`exp-view-list`)」视图切换器；按日期桶（`2026-10-25 · 今天`、`2026-10-24 · 昨天` 等）自动聚合归档文件，采用响应式三列等宽网格展示 `118px` 高清 GPU 缩略图（`AssetSource::LocalFile` 原图直出与内置预览回退）、文件格式徽标、空间释放状态胶囊及单卡快捷操作（`打开原件` / `回传手机` / `AI 分析`）。
 - [x] **5. 核心大文件（`ui/mod.rs`、`ui/actions.rs`）模块化拆分**
   - **实现细节**：按职责边界将 `ui/mod.rs` 与 `ui/actions.rs` 中的后台任务结果应用、键盘/快捷键事件路由、设备侧异步任务构建拆分为独立的 `outcome_apply.rs`、`keyboard_input.rs` 与 `device_actions.rs` 模块，大幅降低单文件认知复杂度并提升模块内聚性。
+
+---
+
+## 9. 第三阶段全仓深度重构、StepOS 原生生态融合与多通道容灾收官（v0.2.30 已全部完成）
+
+针对全仓系统性走查报告（`docs/SYSTEMATIC_REVIEW_AND_ROADMAP_20261025.md`）识别出的架构冗余、ADB 串行延迟、StepOS 专属硬件/MCP 能力未充分释放、多通道重复展示及僵尸进程问题，已在 Desktop `0.2.30` 中完成全量闭环：
+
+- [x] **1. Amoo 工作台单轨收口与全仓 `UiIcon` 矢量图标 100% 统一**
+  - **实现细节**：彻底统一 `Amoo` / `Work` / `Studio` 路由与工作区视图，消除重复状态机；将 `overview.rs`、`workspace.rs`、`tools.rs`、`backscreen.rs` 等页面中残余的字符 Emoji 全部替换为 `UiIcon` 矢量 SVG 图标，实现跨平台一致的高清渲染。
+- [x] **2. ADB 单脚本聚合探测（Single-Shot Script）与 `openclaw` 全量会话索引**
+  - **实现细节**：将 `bridge::capabilities` 与 `amoo::fetch` 的多次串行 `adb shell` 调用合并为单次聚合脚本执行，大幅压缩跨端 I/O 往返耗时；移除 `openclaw` 会话读取的 500 行截断限制，支持全量历史消息索引与增量同步。
+- [x] **3. StepOS 6 大原生 AI 服务矩阵、背屏动态律动与概览页数字健康/剪贴板卡片**
+  - **实现细节**：打通手机端 `com.stepos.mcp`（闹钟/待办/便签 MCP 服务）、`com.stepos.alphame`（个人记忆画像）、`com.stepos.stepclaw`、`com.stepos.backscreen`、`com.stepos.ailauncher` 与 `com.stepos.speech` 状态巡检与快捷调用；背屏工坊支持音乐频谱律动、25 分钟番茄钟倒计时与呼吸灯动画；概览页新增「手机数字健康与 AlphaMe 个人画像」与「双端剪贴板无感同步 & StepOS 原生 MCP 快捷操作」双卡片。
+- [x] **4. USB + 无线双通道智能去重与拔线无感热备切换（Auto-Failover）**
+  - **实现细节**：在 `device.rs` 中实现 `parse_devices` 与 `deduplicate_multi_transport_devices` 多通道去重器，按 `USB 物理序列号 > 显式 IP:Port > mDNS TLS` 优先级自动聚合同一台手机的多条连接通道并记录无线热备列表；在 `outcome_apply.rs` 中实现 USB 断开时毫秒级自动切换至在线无线通道，会话与草稿完全无损。
+- [x] **5. 特权桥接双 Fork 僵尸进程根治与全仓零警告（Zero-Warning）编译验证**
+  - **实现细节**：在 `scripts/companion_loader.py` 中提供 `DOUBLE_FORK_SNIPPET`、`wrap_detached_subshell` 与 `reap_zombies` 非阻塞回收机制，并在 `GoogleLoginRuntime.java` 中完善 `HandlerThread` 生命周期清理，彻底消除 `ubuntu_zygote` 下的 `[stepx-gms-worke] <defunct>` 僵尸进程；全仓通过 `cargo check` 与单元测试零警告验证。
+

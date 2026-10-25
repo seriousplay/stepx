@@ -18,6 +18,61 @@ use std::{
 
 const MAX_FRAME: usize = 16 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const AMOO_CONTEXT_TTL: Duration = Duration::from_secs(60);
+
+static AMOO_CONTEXT_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, (Instant, Value)>>,
+> = std::sync::OnceLock::new();
+
+fn amoo_context_cache(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, (Instant, Value)>> {
+    AMOO_CONTEXT_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn amoo_context_cache_key_for(serial: &str, transport: &str) -> String {
+    if serial.is_empty() {
+        transport.to_string()
+    } else {
+        serial.to_string()
+    }
+}
+
+fn amoo_context_cache_key(device: &Device) -> String {
+    amoo_context_cache_key_for(&device.serial, &device.transport)
+}
+
+fn get_cached_amoo_context_at(key: &str, now: Instant) -> Option<Value> {
+    let mut guard = amoo_context_cache().lock().ok()?;
+    if let Some((cached_at, val)) = guard.get(key) {
+        if now.saturating_duration_since(*cached_at) < AMOO_CONTEXT_TTL {
+            return Some(val.clone());
+        }
+    }
+    guard.remove(key);
+    None
+}
+
+fn put_cached_amoo_context_at(key: String, now: Instant, val: Value) {
+    if let Ok(mut guard) = amoo_context_cache().lock() {
+        guard.insert(key, (now, val));
+    }
+}
+
+fn cached_amoo_context(adb: &Adb, device: &Device) -> Result<Value> {
+    let key = amoo_context_cache_key(device);
+    let now = Instant::now();
+    if let Some(cached) = get_cached_amoo_context_at(&key, now) {
+        return Ok(cached);
+    }
+    let val = crate::bridge::call_bridge(
+        adb,
+        device,
+        &json!({"op":"amoo_context"}),
+        Duration::from_secs(10),
+    )?;
+    put_cached_amoo_context_at(key, Instant::now(), val.clone());
+    Ok(val)
+}
 
 pub(crate) enum LocalInvokeEnd {
     Reply(Value),
@@ -892,12 +947,7 @@ impl AgentBus {
         if key.is_empty() || text.trim().is_empty() {
             bail!("请先创建会话并输入消息");
         }
-        let mut context = crate::bridge::call_bridge(
-            &self._forward.adb,
-            &self.device,
-            &json!({"op":"amoo_context"}),
-            Duration::from_secs(10),
-        )?;
+        let mut context = cached_amoo_context(&self._forward.adb, &self.device)?;
         let run_id = format!("stepx-{:032x}", rand::random::<u128>());
         context
             .as_object_mut()
@@ -1965,5 +2015,29 @@ mod tests {
             poll_stream_events_from_stream(&mut client, Duration::from_millis(15), false).unwrap();
         assert!(empty.is_empty());
         sender.join().unwrap();
+    }
+
+    #[test]
+    fn amoo_context_cache_ttl_hit_and_expiration() {
+        let now = Instant::now();
+        let key = amoo_context_cache_key_for("SERIAL-CACHE-TEST-01", "192.168.1.99:5555");
+        assert_eq!(key, "SERIAL-CACHE-TEST-01");
+        assert_eq!(
+            amoo_context_cache_key_for("", "192.168.1.99:5555"),
+            "192.168.1.99:5555"
+        );
+
+        let ctx_val = json!({"ok": true, "brand": "stepos", "model": "AI Phone"});
+        put_cached_amoo_context_at(key.clone(), now, ctx_val.clone());
+
+        // Hit within 60-second TTL
+        let hit = get_cached_amoo_context_at(&key, now + Duration::from_secs(30));
+        assert_eq!(hit, Some(ctx_val));
+
+        // Expired at 60 seconds
+        let expired = get_cached_amoo_context_at(&key, now + AMOO_CONTEXT_TTL);
+        assert!(expired.is_none());
+        // Entry was evicted upon expiration check
+        assert!(get_cached_amoo_context_at(&key, now + Duration::from_secs(10)).is_none());
     }
 }

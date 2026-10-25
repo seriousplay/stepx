@@ -31,6 +31,14 @@ pub(super) enum WorkspaceAction {
     AddOutput(usize),
     OpenProject(usize),
     SelectLab(String),
+    SelectPersona(usize),
+    SelectAgentRole(usize),
+    ToggleOpenClawSkill(usize),
+    UseOpenClawSkill(usize),
+    UseMemory(String),
+    ToggleMemory,
+    McpPrompt(u8),
+    SubView(u8),
 }
 #[derive(Clone)]
 pub(super) struct Proposal {
@@ -69,6 +77,7 @@ pub(super) struct WorkspaceUi {
     pub left_rail_open: bool,
     pub history: bool,
     pub panel: u8,
+    pub sub_view: u8,
     pub viewport: Vector2F,
     pub intent: Intent,
     pub proposal: Option<Proposal>,
@@ -122,6 +131,7 @@ impl Default for WorkspaceUi {
             left_rail_open: !is_verification_harness(),
             history: false,
             panel: 0,
+            sub_view: 0,
             viewport: Vector2F::new(1320., 860.),
             intent: Intent::Chat,
             proposal: None,
@@ -417,7 +427,45 @@ impl Companion {
                 self.handle_action(&Action::AmooSelectSession(*i), ctx);
             }
             A::Suggest(i) => {
-                let (intent,prompt)=match i {0=>(Intent::Files,"分析附件中的表格，核对数据与异常，生成可核对的结果表和分析报告。"),1=>(Intent::Files,"根据提供的资料制作一份汇报 PPT，先梳理结构，再生成可编辑文件。"),2=>(Intent::Image,"生成一张"),_=>(Intent::App,"做一个适合手机使用的专注计时器，支持开始、暂停、继续、重置，实际检查交互。")};
+                let (intent, prompt) = match *i {
+                    0 => (
+                        Intent::Files,
+                        "请帮我总结所选资料的核心结论、关键数据与待办事项：",
+                    ),
+                    1 => (
+                        Intent::Files,
+                        "请分析这份表格数据的核心趋势、异常指标并生成汇总报告：",
+                    ),
+                    2 => (
+                        Intent::Files,
+                        "请帮我润色并修订这份文档的结构与表述，输出修改后的完整文档：",
+                    ),
+                    3 => (
+                        Intent::Image,
+                        "请生成一张高质感视觉海报，画面主题为：",
+                    ),
+                    4 => (
+                        Intent::App,
+                        "帮我制作一个交互流畅的手机离线网页应用/小游戏，功能需求如下：",
+                    ),
+                    5 => (
+                        Intent::Files,
+                        "请根据以下主题制作一份结构清晰的演示文稿（PPT）：",
+                    ),
+                    6 => (
+                        Intent::Chat,
+                        "调用手机日历与闹钟 MCP 能力，帮我查看今日日程并设置提醒：",
+                    ),
+                    7 => (
+                        Intent::Chat,
+                        "调用手机相册 MCP 能力，帮我在手机相册中搜索以下照片：",
+                    ),
+                    _ => (
+                        Intent::App,
+                        "做一个适合手机使用的专注计时器，支持开始、暂停、继续、重置，实际检查交互。",
+                    ),
+                };
+                self.workspace.sub_view = 0;
                 self.workspace.intent = intent;
                 self.fields[F_AMOO].set(prompt);
                 self.workspace.proposal = None;
@@ -431,7 +479,9 @@ impl Companion {
                 };
                 self.workspace.proposal = None;
             }
-            A::Menu(7) => self.open_workspace_intent_menu(ctx),
+            A::Menu(7) if is_verification_harness() || self.push.shell_mode != ShellMode::Full => {
+                self.open_workspace_intent_menu(ctx);
+            }
             A::Menu(panel) => {
                 if *panel == 3 && !(1..=4).contains(&self.work.tab) {
                     self.work.tab = 2;
@@ -782,6 +832,102 @@ impl Companion {
                         )?))
                     },
                 );
+            }
+            A::SelectPersona(idx) => {
+                self.amoo_style_idx = *idx % 3;
+                let label = match self.amoo_style_idx {
+                    0 => "直接精炼 · 不长篇解释",
+                    1 => "温和详细 · 分步拆解",
+                    _ => "极客专业 · 附带命令",
+                };
+                self.status = format!("Amoo 沟通风格已切换为：{label}");
+                self.error = false;
+            }
+            A::SelectAgentRole(idx) => {
+                self.amoo_agent_idx = *idx % 4;
+                let label = match self.amoo_agent_idx {
+                    0 => "Amoo 全能助手",
+                    1 => "桌面交付伙伴",
+                    2 => "办公协同专员",
+                    _ => "研发架构专家",
+                };
+                self.status = format!("Amoo 角色人设已切换为：{label}");
+                self.error = false;
+            }
+            A::ToggleOpenClawSkill(idx) => {
+                if let Some(skill) = self.amoo_skills.get_mut(*idx) {
+                    skill.enabled = !skill.enabled;
+                    let key = skill.skill_key.clone();
+                    let name = skill.name.clone();
+                    let enabled = skill.enabled;
+                    self.status = format!(
+                        "OpenClaw 技能「{name}」已{}",
+                        if enabled { "启用" } else { "停用" }
+                    );
+                    self.error = false;
+                    if !self.demo_mode && self.selected.is_some() && !self.busy {
+                        self.handle_work_action(&WorkAction::ToggleSkill { key, enabled }, ctx);
+                    }
+                }
+            }
+            A::UseOpenClawSkill(idx) => {
+                if let Some(skill) = self.amoo_skills.get(*idx).cloned() {
+                    self.workspace.sub_view = 0;
+                    self.fields[F_AMOO].set(&skill.prompt);
+                    self.workspace.proposal = None;
+                    self.status = format!("已带入技能「{}」指令模板", skill.name);
+                    self.error = false;
+                    self.focus_field(F_AMOO, ctx);
+                }
+            }
+            A::UseMemory(text) => {
+                self.workspace.sub_view = 0;
+                let current = self.fields[F_AMOO].text.trim().to_string();
+                let next = if current.is_empty() {
+                    format!("结合我的个人记忆「{text}」，请帮我：")
+                } else {
+                    format!("{current}\n（参考记忆：{text}）")
+                };
+                self.fields[F_AMOO].set(&next);
+                self.workspace.proposal = None;
+                self.status = "已将 BM25 个人记忆注入当前输入框".into();
+                self.error = false;
+                self.focus_field(F_AMOO, ctx);
+            }
+            A::ToggleMemory => {
+                self.amoo_memory_enabled = !self.amoo_memory_enabled;
+                self.status = if self.amoo_memory_enabled {
+                    "已开启 OpenClaw BM25 个人记忆自动关联".into()
+                } else {
+                    "已暂停 OpenClaw BM25 个人记忆自动关联".into()
+                };
+                self.error = false;
+            }
+            A::McpPrompt(idx) => {
+                let prompt = match *idx {
+                    0 => "调用手机日历与闹钟 MCP 能力（CalendarMcpService / ClockMcpService），帮我查询今日日程并设置闹钟提醒：",
+                    1 => "调用手机相册与文件管家 MCP 能力（GalleryMcpService / FileManagerMcpService），帮我语义检索手机相册或查找近期文档：",
+                    2 => "调用手机语音播报与系统控制 MCP 能力（TtsService / SystemControlMcp），在手机端播报以下内容并检查系统状态：",
+                    _ => "调用手机任务机器人与跨应用自动化 MCP 能力（TaskRobotMcp / GuiAgent），帮我在手机上自动执行以下跨应用任务：",
+                };
+                self.workspace.sub_view = 0;
+                self.workspace.intent = Intent::Chat;
+                self.fields[F_AMOO].set(prompt);
+                self.workspace.proposal = None;
+                self.focus_field(F_AMOO, ctx);
+            }
+            A::SubView(view) => {
+                self.workspace.sub_view = *view;
+                if *view == 1
+                    && self.work.catalog.is_none()
+                    && !self.busy
+                    && self.selected.is_some()
+                {
+                    self.refresh_work();
+                }
+                if *view == 2 && !self.studio.loaded && !self.busy {
+                    self.refresh_studio();
+                }
             }
         }
         Ok(())

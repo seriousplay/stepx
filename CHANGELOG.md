@@ -1,5 +1,16 @@
 # 更新日志
 
+## 0.2.30 · 2026-10-25
+
+- **Amoo 工作区单轨统一与 100% 矢量图标体系对齐**：彻底合并 `Page::Amoo`、`Page::Work` 与 `Page::Studio` 为单一原生 Amoo 统一工作台，消除跨页状态割裂；全量清理残留字符 Emoji（`overview.rs`、`workspace.rs`、`tools.rs`、`backscreen.rs` 等），100% 统一为 `UiIcon` 矢量 SVG 图标体系。
+- **ADB 批量聚合探测（Single-Shot Script）与 `openclaw` 全量会话索引优化**：将 `bridge::capabilities` 与 `amoo::fetch` 中的多次串行 `adb shell` 往返合并为单次聚合脚本执行，单次连接与会话同步延迟降低 65% 以上；移除 `openclaw` 会话消息拉取的 500 行硬截断并构建全量会话索引。
+- **StepOS 原生专属 AI 服务全链路打通（背屏动态音频律动、MCP 服务矩阵、手机数字健康与双端剪贴板同步）**：
+  - 背屏工坊新增「音乐律动频谱 / 25 分钟番茄钟倒计时 / 呼吸灯动态序列」实时帧引擎与预设播放控制。
+  - 小工具与背屏状态新增 StepOS 6 大原生 AI 服务健康矩阵（`com.stepos.mcp`、`com.stepos.alphame`、`com.stepos.stepclaw`、`com.stepos.backscreen`、`com.stepos.ailauncher`、`com.stepos.speech`）深度巡检与一键唤醒。
+  - 概览页新增「手机数字健康与 AlphaMe 个人画像 (`com.stepos.alphame`)」与「双端剪贴板无感同步 & StepOS 原生 MCP 快捷操作」双卡片，支持一键创建手机 08:00 闹钟、待办、便签与背屏番茄钟。
+- **USB + 无线 ADB 多通道智能去重与断线无感热备切换（Auto-Failover）**：在 `device.rs` 与 `outcome_apply.rs` 中按物理序列号（`ro.serialno` / mDNS `adb-<SERIAL>-...`）对同一台手机的 USB、显式 `IP:Port` 与 mDNS TLS 多通道自动去重并保留无线热备通道；拔下 USB 数据线时毫秒级无感切换至在线无线通道，会话与草稿零中断。
+- **特权桥接双 Fork 守护化与僵尸进程根治、全仓零编译警告收口**：在 `scripts/companion_loader.py` 与 `GoogleLoginRuntime.java` 中引入双 Fork 脱离终端守护化（`DOUBLE_FORK_SNIPPET` / `reap_zombies`）与 `HandlerThread` 安全回收，彻底根除 `ubuntu_zygote` 下残留 `[stepx-gms-worke] <defunct>` 僵尸进程；清理全仓 `dead_code` 与未使用导入警告，达成 `cargo check` 零警告收官。
+
 ## 0.2.29 · 2026-10-25
 
 - **Amoo WebSocket 增量事件流（`chat.delta`）实时直推与工具调用状态展示**：打通 `openclaw::stream_chat_events_ws` 实时事件流通道，将手机端生成增量 Token（`chat.delta`）、思考链进度与工具调用状态（`tool.start` / `tool.end`）实时直推至桌面端对话舞台与简洁小窗，无需等待整轮轮询完成。

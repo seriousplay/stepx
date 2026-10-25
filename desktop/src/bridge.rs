@@ -5,11 +5,53 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{ffi::OsString, io::Write, path::Path, process::Command, time::Duration};
+use std::{
+    collections::HashSet,
+    ffi::OsString,
+    io::Write,
+    path::Path,
+    process::Command,
+    sync::{Mutex, OnceLock},
+    time::Duration,
+};
 
 const BRIDGE_JAR: &[u8] = include_bytes!("../assets/stepx-bridge.jar");
 const REMOTE_DIR: &str = "/data/local/tmp/stepx-companion";
 const REMOTE_JAR: &str = "/data/local/tmp/stepx-companion/stepx-bridge.jar";
+
+static VERIFIED_BRIDGE_CACHE: OnceLock<Mutex<HashSet<(String, usize)>>> = OnceLock::new();
+
+fn bridge_cache() -> &'static Mutex<HashSet<(String, usize)>> {
+    VERIFIED_BRIDGE_CACHE.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+pub fn is_bridge_jar_cached(transport: &str) -> bool {
+    let key = transport.trim();
+    if key.is_empty() {
+        return false;
+    }
+    bridge_cache()
+        .lock()
+        .map(|guard| guard.contains(&(key.to_string(), BRIDGE_JAR.len())))
+        .unwrap_or(false)
+}
+
+pub fn mark_bridge_jar_cached(transport: &str) {
+    let key = transport.trim();
+    if key.is_empty() {
+        return;
+    }
+    if let Ok(mut guard) = bridge_cache().lock() {
+        guard.insert((key.to_string(), BRIDGE_JAR.len()));
+    }
+}
+
+pub fn invalidate_bridge_cache(transport: &str) {
+    let key = transport.trim();
+    if let Ok(mut guard) = bridge_cache().lock() {
+        guard.retain(|(t, _)| t != key);
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimSubscription {
@@ -112,6 +154,9 @@ impl SmsSendStatus {
 }
 
 pub fn ensure_bridge_jar(adb: &Adb, device: &Device) -> Result<()> {
+    if is_bridge_jar_cached(&device.transport) {
+        return Ok(());
+    }
     device.verify(adb)?;
     let expected_len = BRIDGE_JAR.len();
     let check_cmd = format!(
@@ -121,6 +166,7 @@ pub fn ensure_bridge_jar(adb: &Adb, device: &Device) -> Result<()> {
     );
     if let Ok(out) = adb.script(&device.transport, &check_cmd) {
         if out.trim() == "READY" {
+            mark_bridge_jar_cached(&device.transport);
             return Ok(());
         }
     }
@@ -138,16 +184,16 @@ pub fn ensure_bridge_jar(adb: &Adb, device: &Device) -> Result<()> {
         &device.transport,
         &format!("chmod 600 {}", shell_quote(REMOTE_JAR)),
     )?;
+    mark_bridge_jar_cached(&device.transport);
     Ok(())
 }
 
-pub fn call_bridge(
+fn run_bridge_once(
     adb: &Adb,
     device: &Device,
     request: &Value,
     timeout: Duration,
 ) -> Result<Value> {
-    ensure_bridge_jar(adb, device)?;
     let shell_cmd = format!(
         "CLASSPATH={} app_process {} com.stepx.companion.Bridge",
         shell_quote(REMOTE_JAR),
@@ -166,6 +212,33 @@ pub fn call_bridge(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     parse_bridge_output(&stdout, &stderr)
+}
+
+fn should_retry_cached_bridge(err: &anyhow::Error) -> bool {
+    let msg = format!("{err:#}");
+    msg.contains("ClassNotFoundException")
+        || msg.contains("NoSuchFileException")
+        || msg.contains("aborted")
+        || msg.contains("未返回有效结果")
+}
+
+pub fn call_bridge(
+    adb: &Adb,
+    device: &Device,
+    request: &Value,
+    timeout: Duration,
+) -> Result<Value> {
+    let was_cached = is_bridge_jar_cached(&device.transport);
+    ensure_bridge_jar(adb, device)?;
+    match run_bridge_once(adb, device, request, timeout) {
+        Ok(val) => Ok(val),
+        Err(err) if was_cached && should_retry_cached_bridge(&err) => {
+            invalidate_bridge_cache(&device.transport);
+            ensure_bridge_jar(adb, device)?;
+            run_bridge_once(adb, device, request, timeout)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 pub fn parse_bridge_output(stdout: &str, stderr: &str) -> Result<Value> {
@@ -621,4 +694,62 @@ pub fn sms_status(adb: &Adb, device: &Device, request_id: &str) -> Result<SmsSen
     });
     let val = call_bridge(adb, device, &req, Duration::from_secs(12))?;
     Ok(parse_sms_status(&val))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verified_bridge_cache_lifecycle_and_invalidation() {
+        let transport_a = "test-transport-cache-a";
+        let transport_b = "test-transport-cache-b";
+        invalidate_bridge_cache(transport_a);
+        invalidate_bridge_cache(transport_b);
+
+        assert!(!is_bridge_jar_cached(transport_a));
+        assert!(!is_bridge_jar_cached(""));
+
+        mark_bridge_jar_cached(transport_a);
+        mark_bridge_jar_cached(transport_b);
+        assert!(is_bridge_jar_cached(transport_a));
+        assert!(is_bridge_jar_cached(transport_b));
+
+        invalidate_bridge_cache(transport_a);
+        assert!(!is_bridge_jar_cached(transport_a));
+        assert!(is_bridge_jar_cached(transport_b));
+
+        invalidate_bridge_cache(transport_b);
+        assert!(!is_bridge_jar_cached(transport_b));
+    }
+
+    #[test]
+    fn retry_detector_matches_missing_jar_errors_only() {
+        let missing_err = parse_bridge_output(
+            "",
+            "java.lang.ClassNotFoundException: Didn't find class \"com.stepx.companion.Bridge\"",
+        )
+        .unwrap_err();
+        assert!(should_retry_cached_bridge(&missing_err));
+
+        let empty_err = parse_bridge_output("", "").unwrap_err();
+        assert!(should_retry_cached_bridge(&empty_err));
+
+        let business_err =
+            parse_bridge_output("STEPX_RESULT:{\"ok\":false,\"error\":\"屏幕已锁定\"}", "")
+                .unwrap_err();
+        assert!(!should_retry_cached_bridge(&business_err));
+    }
+
+    #[test]
+    fn parse_bridge_output_and_capabilities_work() {
+        let out = "noise\nSTEPX_RESULT:{\"ok\":true,\"send_sms\":true,\"locked\":false,\"default_subscription\":2,\"protocol\":1,\"subscriptions\":[{\"id\":2,\"slot\":1,\"label\":\"CMCC\"}]}\n";
+        let val = parse_bridge_output(out, "").unwrap();
+        let caps = parse_capabilities(&val).unwrap();
+        assert!(caps.send_sms);
+        assert!(!caps.locked);
+        assert_eq!(caps.default_subscription, 2);
+        assert_eq!(caps.subscriptions.len(), 1);
+        assert_eq!(caps.subscriptions[0].label, "CMCC");
+    }
 }

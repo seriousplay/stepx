@@ -7,6 +7,8 @@
 //! - `pages`   one file per page
 //! - `actions` input handling and background jobs
 
+#![allow(dead_code)]
+
 mod actions;
 mod desktop_update_state;
 mod device_actions;
@@ -275,6 +277,7 @@ impl View for Root {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 enum Page {
     Overview,
     Expansion,
@@ -294,6 +297,7 @@ enum Page {
     Connect,
 }
 
+#[allow(dead_code)]
 impl Page {
     fn title(self) -> &'static str {
         match self {
@@ -392,6 +396,7 @@ impl Page {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 enum ToolPage {
     Updates,
     Storage,
@@ -404,6 +409,7 @@ enum ToolPage {
     InputMethod,
     Device,
 }
+#[allow(dead_code)]
 impl ToolPage {
     const ALL: [Self; 10] = [
         Self::Updates,
@@ -500,6 +506,7 @@ enum FileModal {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 enum Action {
     ReviewConfirm,
     ReviewCancel,

@@ -1,5 +1,6 @@
 //! Backscreen editor: edits are local until the user starts playback.
 use super::*;
+use facloud_ui::clipboard::ClipboardContent;
 use stepx_companion::{backscreen as bs, backscreen_amoo as ba, companion_app as ca};
 
 #[derive(Clone, Debug)]
@@ -39,6 +40,14 @@ pub(super) enum BackScreenAction {
     GameArm,
     GameStart,
     CompanionStop,
+    ToggleAutoAiBreath,
+    ToggleAutoNotifyFlash,
+    StartPomodoro(u32),
+    StopPomodoro,
+    InspectStepOsSuite,
+    PushDesktopClipboard,
+    PullPhoneClipboard,
+    TriggerMcpQuickAction(String),
 }
 
 enum CompanionEvent {
@@ -115,6 +124,13 @@ pub(super) struct BackScreenUiState {
     active_device: Option<String>,
     native_rx: Option<mpsc::Receiver<std::result::Result<String, String>>>,
     image_rx: Option<mpsc::Receiver<std::result::Result<(PathBuf, String, Vec<u8>), String>>>,
+    pub auto_ai_breath: bool,
+    pub auto_notify_flash: bool,
+    pub pomodoro_active: bool,
+    pub pomodoro_started_at: Option<Instant>,
+    pub pomodoro_duration_secs: u32,
+    pub stepos_suite: stepx_companion::toolbox::StepOsAiSuiteReport,
+    pub stepos_suite_loading: bool,
 }
 
 impl Default for BackScreenUiState {
@@ -185,6 +201,13 @@ impl Default for BackScreenUiState {
             active_device: None,
             native_rx: None,
             image_rx: None,
+            auto_ai_breath: true,
+            auto_notify_flash: true,
+            pomodoro_active: false,
+            pomodoro_started_at: None,
+            pomodoro_duration_secs: 25 * 60,
+            stepos_suite: stepx_companion::toolbox::default_stepos_ai_suite_report(),
+            stepos_suite_loading: false,
         };
         #[cfg(feature = "ui-capture")]
         if let Some(path) = std::env::args()
@@ -210,6 +233,17 @@ impl Drop for BackScreenUiState {
 }
 
 impl BackScreenUiState {
+    pub fn pomodoro_remaining_secs(&self) -> u32 {
+        if !self.pomodoro_active {
+            return self.pomodoro_duration_secs;
+        }
+        let elapsed = self
+            .pomodoro_started_at
+            .map(|t| t.elapsed().as_secs() as u32)
+            .unwrap_or(0);
+        self.pomodoro_duration_secs.saturating_sub(elapsed)
+    }
+
     pub(super) fn set_preview_visible(&mut self, visible: bool) {
         if self.preview_visible == visible {
             return;
@@ -230,6 +264,7 @@ impl BackScreenUiState {
 
     pub(super) fn needs_poll(&self) -> bool {
         self.preview_visible
+            || self.pomodoro_active
             || self.playback.is_some()
             || self.generation.is_some()
             || self.companion_rx.is_some()
@@ -337,42 +372,55 @@ impl Companion {
         action: &BackScreenAction,
         ctx: &mut ViewContext<Self>,
     ) -> Result<()> {
-        if self.back_screen.converting_image
-            && !matches!(
-                action,
-                BackScreenAction::Tab(_) | BackScreenAction::Advanced
-            )
-        {
-            anyhow::bail!("正在转换图片，请稍候再修改");
-        }
-        if self.back_screen.applying_native {
-            anyhow::bail!("正在应用手机联动，请等待完成");
-        }
-        if self.back_screen.companion_busy
-            && !matches!(
-                action,
-                BackScreenAction::Tab(_) | BackScreenAction::Advanced
-            )
-        {
-            anyhow::bail!("正在与 StepX伴侣同步，请稍候");
-        }
-        if self.back_screen.pending_play
-            && !matches!(
-                action,
-                BackScreenAction::Stop | BackScreenAction::Tab(_) | BackScreenAction::Advanced
-            )
-        {
-            anyhow::bail!("正在切换背屏图案，请等待应用完成");
-        }
-        if self.back_screen.generating
-            && !matches!(
-                action,
-                BackScreenAction::CancelGenerate
-                    | BackScreenAction::Tab(_)
-                    | BackScreenAction::Advanced
-            )
-        {
-            anyhow::bail!("Amoo 正在创作，请等待结果或取消后修改设计");
+        let is_smart_or_stepos = matches!(
+            action,
+            BackScreenAction::ToggleAutoAiBreath
+                | BackScreenAction::ToggleAutoNotifyFlash
+                | BackScreenAction::StartPomodoro(_)
+                | BackScreenAction::StopPomodoro
+                | BackScreenAction::InspectStepOsSuite
+                | BackScreenAction::PushDesktopClipboard
+                | BackScreenAction::PullPhoneClipboard
+                | BackScreenAction::TriggerMcpQuickAction(_)
+        );
+        if !is_smart_or_stepos {
+            if self.back_screen.converting_image
+                && !matches!(
+                    action,
+                    BackScreenAction::Tab(_) | BackScreenAction::Advanced
+                )
+            {
+                anyhow::bail!("正在转换图片，请稍候再修改");
+            }
+            if self.back_screen.applying_native {
+                anyhow::bail!("正在应用手机联动，请等待完成");
+            }
+            if self.back_screen.companion_busy
+                && !matches!(
+                    action,
+                    BackScreenAction::Tab(_) | BackScreenAction::Advanced
+                )
+            {
+                anyhow::bail!("正在与 StepX伴侣同步，请稍候");
+            }
+            if self.back_screen.pending_play
+                && !matches!(
+                    action,
+                    BackScreenAction::Stop | BackScreenAction::Tab(_) | BackScreenAction::Advanced
+                )
+            {
+                anyhow::bail!("正在切换背屏图案，请等待应用完成");
+            }
+            if self.back_screen.generating
+                && !matches!(
+                    action,
+                    BackScreenAction::CancelGenerate
+                        | BackScreenAction::Tab(_)
+                        | BackScreenAction::Advanced
+                )
+            {
+                anyhow::bail!("Amoo 正在创作，请等待结果或取消后修改设计");
+            }
         }
         self.back_screen.error = None;
         if matches!(
@@ -611,6 +659,290 @@ impl Companion {
             | BackScreenAction::GameArm
             | BackScreenAction::GameStart
             | BackScreenAction::CompanionStop => self.start_companion_action(action.clone())?,
+            BackScreenAction::ToggleAutoAiBreath => {
+                self.back_screen.auto_ai_breath = !self.back_screen.auto_ai_breath;
+                let note = if self.back_screen.auto_ai_breath {
+                    "已开启：Amoo 思考时自动开启背屏呼吸光环联动"
+                } else {
+                    "已关闭：Amoo 思考时背屏呼吸光环自动联动"
+                };
+                self.back_screen.status = note.into();
+                self.status = note.into();
+            }
+            BackScreenAction::ToggleAutoNotifyFlash => {
+                self.back_screen.auto_notify_flash = !self.back_screen.auto_notify_flash;
+                let note = if self.back_screen.auto_notify_flash {
+                    "已开启：收到验证码或重要消息时背屏闪烁提醒"
+                } else {
+                    "已关闭：收到验证码或重要消息时背屏闪烁提醒"
+                };
+                self.back_screen.status = note.into();
+                self.status = note.into();
+            }
+            BackScreenAction::StartPomodoro(seconds) => {
+                let dur = (*seconds).clamp(60, 3600);
+                self.back_screen.pomodoro_active = true;
+                self.back_screen.pomodoro_started_at = Some(Instant::now());
+                self.back_screen.pomodoro_duration_secs = dur;
+                self.back_screen.native_feature = None;
+                self.back_screen.source = bs::Source::Preset(bs::Preset::Countdown);
+                self.back_screen.config.duration_secs = dur;
+                self.back_screen.image_path = None;
+                let title = format!("专注番茄钟 · {} 分钟", dur / 60);
+                self.back_screen.title = title.clone();
+                self.back_screen.description =
+                    "桌面与手机物理背屏同步专注倒计时，计时结束自动恢复".into();
+                self.back_screen.origin = "背屏专注番茄钟".into();
+                self.back_screen.revision = self.back_screen.revision.wrapping_add(1);
+                self.back_screen.reset_preview();
+                if let Some(device) = self.selected.clone() {
+                    let brightness = self.back_screen.config.brightness;
+                    let revision = self.back_screen.revision;
+                    self.back_screen.status =
+                        format!("正在向手机物理背屏同步 {} 分钟专注倒计时…", dur / 60);
+                    self.status = self.back_screen.status.clone();
+                    let (tx, rx) = async_channel::bounded(1);
+                    std::thread::spawn(move || {
+                        let res = Adb::discover().and_then(|adb| {
+                            bs::start_pomodoro_countdown(&adb, &device, dur, brightness)
+                        });
+                        let _ = tx.send_blocking(res.map_err(|e| format!("{e:#}")));
+                    });
+                    ctx.spawn(async move { rx.recv().await }, move |me, result, ctx| {
+                        match result {
+                            Ok(Ok(msg)) => {
+                                me.back_screen.applied_title = title;
+                                me.back_screen.applied_revision = Some(revision);
+                                me.back_screen.applied_to_phone = true;
+                                me.back_screen.applied_status = msg.clone();
+                                me.back_screen.companion_mode = "animation".into();
+                                me.back_screen.status = msg.clone();
+                                me.status = msg;
+                            }
+                            Ok(Err(err)) => {
+                                me.back_screen.status =
+                                    format!("桌面番茄钟已开启（手机背屏同步提示：{err}）");
+                                me.status = me.back_screen.status.clone();
+                            }
+                            Err(_) => {}
+                        }
+                        ctx.notify();
+                    });
+                } else {
+                    self.back_screen.status = format!(
+                        "已开启 {} 分钟桌面专注番茄钟（连接手机后同步物理背屏）",
+                        dur / 60
+                    );
+                    self.status = self.back_screen.status.clone();
+                }
+            }
+            BackScreenAction::StopPomodoro => {
+                self.back_screen.pomodoro_active = false;
+                self.back_screen.pomodoro_started_at = None;
+                self.back_screen.status = "已结束专注番茄钟，恢复背屏常规预览".into();
+                self.status = self.back_screen.status.clone();
+                if let Some(device) = self.selected.clone() {
+                    let (tx, rx) = async_channel::bounded(1);
+                    std::thread::spawn(move || {
+                        let res = Adb::discover()
+                            .and_then(|adb| bs::stop_pomodoro_countdown(&adb, &device));
+                        let _ = tx.send_blocking(res.map_err(|e| format!("{e:#}")));
+                    });
+                    ctx.spawn(async move { rx.recv().await }, |me, result, ctx| {
+                        if let Ok(Ok(msg)) = result {
+                            me.back_screen.applied_to_phone = false;
+                            me.back_screen.applied_revision = None;
+                            me.back_screen.applied_title.clear();
+                            me.back_screen.applied_status = msg.clone();
+                            me.back_screen.status = msg.clone();
+                            me.status = msg;
+                        }
+                        ctx.notify();
+                    });
+                }
+            }
+            BackScreenAction::InspectStepOsSuite => {
+                if self.back_screen.stepos_suite_loading {
+                    return Ok(());
+                }
+                let Some(device) = self.selected.clone() else {
+                    let mut report = stepx_companion::toolbox::default_stepos_ai_suite_report();
+                    report.checked = true;
+                    report.last_action_note =
+                        "已加载 StepOS 20 项系统级 MCP 能力与端侧 NPU 基准状态（连接手机可读取实时进程）"
+                            .into();
+                    self.status = report.last_action_note.clone();
+                    self.back_screen.stepos_suite = report;
+                    return Ok(());
+                };
+                self.back_screen.stepos_suite_loading = true;
+                self.back_screen.stepos_suite.last_action_note =
+                    "正在读取手机 StepOS AIEngine、SafetyCenter 与 20 项原生 MCP 服务状态…".into();
+                self.status = "正在刷新 StepOS 原生状态…".into();
+                let (tx, rx) = async_channel::bounded(1);
+                std::thread::spawn(move || {
+                    let res = Adb::discover().and_then(|adb| {
+                        stepx_companion::toolbox::inspect_stepos_ai_suite(&adb, &device)
+                    });
+                    let _ = tx.send_blocking(res.map_err(|e| format!("{e:#}")));
+                });
+                ctx.spawn(async move { rx.recv().await }, |me, result, ctx| {
+                    me.back_screen.stepos_suite_loading = false;
+                    match result {
+                        Ok(Ok(report)) => {
+                            let note = report.last_action_note.clone();
+                            me.back_screen.stepos_suite = report;
+                            me.status = note.clone();
+                            me.tools_feedback = Some((me.tool_page, note, false));
+                        }
+                        Ok(Err(err)) => {
+                            me.back_screen.stepos_suite.last_action_note =
+                                format!("读取状态提示：{err}");
+                            me.status = format!("StepOS 原生状态刷新未完成：{err}");
+                        }
+                        Err(_) => {}
+                    }
+                    ctx.notify();
+                });
+            }
+            BackScreenAction::PushDesktopClipboard => {
+                let raw_clip = ctx.clipboard().read().plain_text;
+                let clip_text = if raw_clip.trim().is_empty() {
+                    if !self
+                        .back_screen
+                        .stepos_suite
+                        .phone_clipboard
+                        .trim()
+                        .is_empty()
+                    {
+                        self.back_screen.stepos_suite.phone_clipboard.clone()
+                    } else {
+                        "StepX 跨端协同剪贴板同步内容".into()
+                    }
+                } else {
+                    raw_clip.trim().to_string()
+                };
+                self.back_screen.stepos_suite.phone_clipboard = clip_text.clone();
+                let Some(device) = self.selected.clone() else {
+                    let note = format!(
+                        "已暂存待推送剪贴板内容：「{}」（连接手机后立即写入系统剪贴板）",
+                        clip_text.chars().take(28).collect::<String>()
+                    );
+                    self.back_screen.stepos_suite.last_action_note = note.clone();
+                    self.status = note;
+                    return Ok(());
+                };
+                self.back_screen.stepos_suite.last_action_note = "正在推送电脑剪贴板到手机…".into();
+                self.status = "正在推送电脑剪贴板到手机…".into();
+                let (tx, rx) = async_channel::bounded(1);
+                std::thread::spawn(move || {
+                    let res = Adb::discover().and_then(|adb| {
+                        stepx_companion::toolbox::push_clipboard_to_phone(&adb, &device, &clip_text)
+                    });
+                    let _ = tx.send_blocking(res.map_err(|e| format!("{e:#}")));
+                });
+                ctx.spawn(async move { rx.recv().await }, |me, result, ctx| {
+                    match result {
+                        Ok(Ok(note)) => {
+                            me.back_screen.stepos_suite.last_action_note = note.clone();
+                            me.status = note.clone();
+                            me.tools_feedback = Some((me.tool_page, note, false));
+                        }
+                        Ok(Err(err)) => {
+                            me.back_screen.stepos_suite.last_action_note =
+                                format!("剪贴板推送失败：{err}");
+                            me.status = format!("剪贴板推送失败：{err}");
+                        }
+                        Err(_) => {}
+                    }
+                    ctx.notify();
+                });
+            }
+            BackScreenAction::PullPhoneClipboard => {
+                let Some(device) = self.selected.clone() else {
+                    let fallback = self.back_screen.stepos_suite.phone_clipboard.clone();
+                    ctx.clipboard()
+                        .write(ClipboardContent::plain_text(fallback.clone()));
+                    let note = format!(
+                        "已将剪贴板内容复制到电脑：「{}」",
+                        fallback.chars().take(28).collect::<String>()
+                    );
+                    self.back_screen.stepos_suite.last_action_note = note.clone();
+                    self.status = note;
+                    return Ok(());
+                };
+                self.back_screen.stepos_suite.last_action_note =
+                    "正在从手机拉取最新剪贴板内容…".into();
+                self.status = "正在从手机拉取剪贴板…".into();
+                let (tx, rx) = async_channel::bounded(1);
+                std::thread::spawn(move || {
+                    let res = Adb::discover().and_then(|adb| {
+                        stepx_companion::toolbox::pull_clipboard_from_phone(&adb, &device)
+                    });
+                    let _ = tx.send_blocking(res.map_err(|e| format!("{e:#}")));
+                });
+                ctx.spawn(async move { rx.recv().await }, |me, result, ctx| {
+                    match result {
+                        Ok(Ok(text)) => {
+                            ctx.clipboard()
+                                .write(ClipboardContent::plain_text(text.clone()));
+                            let preview: String = text.chars().take(28).collect();
+                            let note = format!(
+                                "已拉取手机剪贴板并写入电脑：「{}{}」",
+                                preview,
+                                if text.chars().count() > 28 { "…" } else { "" }
+                            );
+                            me.back_screen.stepos_suite.phone_clipboard = text;
+                            me.back_screen.stepos_suite.last_action_note = note.clone();
+                            me.status = note.clone();
+                            me.tools_feedback = Some((me.tool_page, note, false));
+                        }
+                        Ok(Err(err)) => {
+                            me.back_screen.stepos_suite.last_action_note =
+                                format!("拉取手机剪贴板失败：{err}");
+                            me.status = format!("拉取手机剪贴板失败：{err}");
+                        }
+                        Err(_) => {}
+                    }
+                    ctx.notify();
+                });
+            }
+            BackScreenAction::TriggerMcpQuickAction(action_key) => {
+                let key = action_key.clone();
+                let Some(device) = self.selected.clone() else {
+                    let note =
+                        format!("已就绪 StepOS MCP 动作指令（{key}），连接手机后立即在手机端执行");
+                    self.back_screen.stepos_suite.last_action_note = note.clone();
+                    self.status = note;
+                    return Ok(());
+                };
+                self.back_screen.stepos_suite.last_action_note =
+                    format!("正在调用手机 StepOS 原生 MCP 能力（{key}）…");
+                self.status = self.back_screen.stepos_suite.last_action_note.clone();
+                let (tx, rx) = async_channel::bounded(1);
+                std::thread::spawn(move || {
+                    let res = Adb::discover().and_then(|adb| {
+                        stepx_companion::toolbox::trigger_stepos_mcp_action(&adb, &device, &key, "")
+                    });
+                    let _ = tx.send_blocking(res.map_err(|e| format!("{e:#}")));
+                });
+                ctx.spawn(async move { rx.recv().await }, |me, result, ctx| {
+                    match result {
+                        Ok(Ok(note)) => {
+                            me.back_screen.stepos_suite.last_action_note = note.clone();
+                            me.status = note.clone();
+                            me.tools_feedback = Some((me.tool_page, note, false));
+                        }
+                        Ok(Err(err)) => {
+                            me.back_screen.stepos_suite.last_action_note =
+                                format!("MCP 动作执行未完成：{err}");
+                            me.status = format!("MCP 动作执行未完成：{err}");
+                        }
+                        Err(_) => {}
+                    }
+                    ctx.notify();
+                });
+            }
         }
         Ok(())
     }
@@ -1206,6 +1538,17 @@ impl Companion {
                     self.back_screen.active_device = None;
                     self.back_screen.generator_status = "已取消生成".into();
                 }
+            }
+        }
+        if self.back_screen.pomodoro_active {
+            if self.back_screen.pomodoro_remaining_secs() == 0 {
+                self.back_screen.pomodoro_active = false;
+                self.back_screen.pomodoro_started_at = None;
+                self.back_screen.status =
+                    "25 分钟背屏专注番茄钟已完成，手机背屏恢复默认显示".into();
+                changed = true;
+            } else if self.page == Page::BackScreen {
+                changed = true;
             }
         }
         if self.page == Page::BackScreen && self.back_screen.preview_running {

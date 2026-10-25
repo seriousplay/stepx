@@ -631,6 +631,12 @@ impl Companion {
                 Btn::Primary,
             ));
             content.push(self.wrap(vec![
+                self.st_button(
+                    "st-send-phone",
+                    "同步到手机作品库",
+                    St::Send,
+                    Btn::Secondary,
+                ),
                 self.st_button("st-qr", "分享二维码", St::Share, Btn::Secondary),
                 self.st_button("st-pin", "添加手机桌面图标", St::Pin, Btn::Secondary),
             ]));
@@ -701,6 +707,7 @@ impl Companion {
             self.panel(vec![self.between(self.heading("Studio 官网"),self.pill_badge(if web.is_some(){"已连接"}else{"未登录"},p.text2,p.surface)),self.text(web.map(|c|format!("{} · {} 个官网项目",c.name,c.items.len())).unwrap_or("同步应用、技能与智能体项目，包含官网草稿。首次需在手机完成官网验证。".into()),BODY,p.text2),self.wrap(vec![self.st_button("st-web-login",if web.is_some(){"管理官网登录"}else{"连接官网"},St::WebsiteLogin,Btn::Primary),self.st_button("st-web-off","断开官网",St::WebsiteDisconnect,Btn::Ghost)]),self.caption("点击继续编辑会连接独立的桌面工作窗口，复用伴侣内的官网登录，无需再次登录；不会读取系统浏览器账号。")]),
             self.panel(vec![self.between(self.heading("Amoo 手机作品"),self.pill_badge(if phone{"已授权"}else{"未连接"},p.text2,p.surface)),self.text("读取已提交真机测试的作品。应用可直接上机，技能与智能体可前往 Amoo 确认安装。",BODY,p.text2),self.wrap(vec![self.st_button("st-native-login","连接手机账号",St::ConnectAccount,Btn::Secondary),self.st_button("st-native-off","断开作品同步",St::DisconnectAccount,Btn::Ghost)])]),
             self.panel(vec![self.heading("手机与分享"),self.text("作品发送到手机后可独立打开、分享和添加桌面图标。分享只使用官方体验地址；编辑入口和登录信息不会进入二维码。",BODY,p.text2),self.wrap(vec![self.st_button("st-phone-library","手机作品库",St::PhoneLibrary,Btn::Secondary),self.st_button("st-amoo-library","Amoo 我的作品",St::AmooWorks,Btn::Secondary),self.st_button("st-phone-check","检查连接",St::CheckPhone,Btn::Ghost)])]),
+            self.panel(vec![self.heading("Studio 构建器创作模板"),self.text("一键复制面向手机端体验优化的应用、智能体与技能创作提示词简报。",BODY,p.text2),self.wrap((0..3).map(|i| self.st_button(&format!("st-brief-{i}"), match i { 0 => "随手记账简报", 1 => "差旅助手简报", _ => "票据整理简报" }, St::Brief(i), Btn::Ghost)).collect())]),
         ])
     }
 }

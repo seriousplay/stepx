@@ -1,4 +1,7 @@
-use super::super::{is_wireless, theme::*, widgets::*, Action, Companion, Page, F_OV_TEXT};
+use super::super::{
+    backscreen_state::BackScreenAction, icons::UiIcon, is_wireless, theme::*, widgets::*, Action,
+    Companion, Page, F_OV_TEXT,
+};
 use facloud_ui::{color::ColorU, elements::*, fonts::Weight, platform::Cursor};
 use stepx_companion::device::DeviceMetrics;
 
@@ -20,9 +23,10 @@ impl Companion {
                     Btn::Secondary,
                 ),
                 self.button("ov-refresh", "重新扫描", Action::Refresh, Btn::Secondary),
-                self.button(
+                self.button_icon(
                     "ov-connect",
-                    "⇄ 连接设备",
+                    "连接设备",
+                    UiIcon::Refresh,
                     Action::Page(Page::Connect),
                     Btn::Primary,
                 ),
@@ -36,7 +40,13 @@ impl Companion {
                 Btn::Secondary,
             ),
             self.button("ov-summary", "刷新状态", Action::Summary, Btn::Secondary),
-            self.button("ov-shot", "📷 截屏", Action::Screenshot, Btn::Secondary),
+            self.button_icon(
+                "ov-shot",
+                "截屏",
+                UiIcon::Camera,
+                Action::Screenshot,
+                Btn::Secondary,
+            ),
             if self.mirror.is_some() {
                 self.button(
                     "ov-mirror-stop",
@@ -45,7 +55,13 @@ impl Companion {
                     Btn::Danger,
                 )
             } else {
-                self.button("ov-mirror", "↗ 打开投屏", Action::Mirror, Btn::Primary)
+                self.button_icon(
+                    "ov-mirror",
+                    "打开投屏",
+                    UiIcon::Monitor,
+                    Action::Mirror,
+                    Btn::Primary,
+                )
             },
         ]
     }
@@ -53,7 +69,7 @@ impl Companion {
     fn key_row_btn(
         &self,
         id: &str,
-        icon: &'static str,
+        icon: UiIcon,
         title: &'static str,
         code: &'static str,
         action: Action,
@@ -63,7 +79,7 @@ impl Companion {
         let left = self.hstack(
             8.,
             vec![
-                self.line(icon, CAPTION, p.text2),
+                self.ui_icon(icon, 14., p.text2),
                 self.line_w(title, CAPTION, p.text, Weight::Medium),
             ],
         );
@@ -116,6 +132,248 @@ impl Companion {
             .finish()
     }
 
+    fn overview_wellbeing_card(&self) -> El {
+        let p = self.p();
+        let suite = &self.back_screen.stepos_suite;
+        let wb = &suite.wellbeing;
+        let hours = wb.screen_time_minutes / 60;
+        let mins = wb.screen_time_minutes % 60;
+        let screen_time_label = if wb.screen_time_minutes > 0 {
+            format!("{hours} 小时 {mins} 分钟")
+        } else {
+            "今日待采集".into()
+        };
+        let unlock_label = if wb.unlock_count > 0 {
+            format!("{} 次", wb.unlock_count)
+        } else {
+            "0 次".into()
+        };
+        let alphame_badge = if wb.alphame_running {
+            self.pill_badge("AlphaMe 运行中", p.success_text, p.success_soft)
+        } else {
+            self.pill_badge("AlphaMe 待唤醒", p.accent, p.accent_soft)
+        };
+
+        let top_apps: Vec<(String, String, u32)> = if !wb.top_apps.is_empty() {
+            wb.top_apps.iter().take(3).cloned().collect()
+        } else {
+            vec![
+                ("com.stepos.ailauncher".into(), "Amoo 助手".into(), 0),
+                ("com.stepos.alphame".into(), "AlphaMe 记忆画像".into(), 0),
+                ("com.stepx.companion.app".into(), "StepX 伴侣".into(), 0),
+            ]
+        };
+        let max_mins = top_apps
+            .iter()
+            .map(|(_, _, m)| *m)
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let mut app_rows = Vec::with_capacity(top_apps.len());
+        for (pkg, name, app_mins) in top_apps {
+            let pct = if app_mins == 0 {
+                None
+            } else {
+                Some(((app_mins * 100) / max_mins).min(100) as u8)
+            };
+            let row = Container::new(
+                Flex::column()
+                    .with_spacing(4.)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+                    .with_child(self.between(
+                        self.hstack(
+                            6.,
+                            vec![
+                                self.line_w(name, CAPTION, p.text, Weight::Medium),
+                                self.mono(pkg, MICRO, p.text3),
+                            ],
+                        ),
+                        self.mono(format!("{app_mins} 分钟"), CAPTION, p.text2),
+                    ))
+                    .with_child(self.progress(pct, p.accent))
+                    .finish(),
+            )
+            .with_horizontal_padding(10.)
+            .with_vertical_padding(6.)
+            .with_background_color(p.surface)
+            .with_border(Border::all(1.).with_border_color(p.surface_border))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+            .finish();
+            app_rows.push(row);
+        }
+
+        self.panel(vec![
+            self.between(
+                self.hstack(
+                    8.,
+                    vec![
+                        self.ui_icon(UiIcon::Chart, 16., p.accent),
+                        self.heading("手机数字健康与 AlphaMe 个人画像 (com.stepos.alphame)"),
+                    ],
+                ),
+                self.hstack(
+                    8.,
+                    vec![
+                        alphame_badge,
+                        self.button_icon(
+                            "ov-wellbeing-inspect",
+                            "立即采集数字健康",
+                            UiIcon::Refresh,
+                            Action::BackScreen(BackScreenAction::InspectStepOsSuite),
+                            Btn::Secondary,
+                        ),
+                    ],
+                ),
+            ),
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_spacing(S3)
+                .with_child(
+                    Expanded::new(
+                        1.,
+                        Container::new(self.vstack(
+                            2.,
+                            vec![
+                                self.line("今日屏幕使用时长", MICRO, p.text2),
+                                self.line_w(screen_time_label, SUBHEAD, p.text, Weight::Semibold),
+                            ],
+                        ))
+                        .with_horizontal_padding(12.)
+                        .with_vertical_padding(8.)
+                        .with_background_color(p.surface)
+                        .with_border(Border::all(1.).with_border_color(p.surface_border))
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+                        .finish(),
+                    )
+                    .finish(),
+                )
+                .with_child(
+                    Expanded::new(
+                        1.,
+                        Container::new(self.vstack(
+                            2.,
+                            vec![
+                                self.line("今日解锁次数", MICRO, p.text2),
+                                self.line_w(unlock_label, SUBHEAD, p.text, Weight::Semibold),
+                            ],
+                        ))
+                        .with_horizontal_padding(12.)
+                        .with_vertical_padding(8.)
+                        .with_background_color(p.surface)
+                        .with_border(Border::all(1.).with_border_color(p.surface_border))
+                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+                        .finish(),
+                    )
+                    .finish(),
+                )
+                .finish(),
+            self.vstack(6., app_rows),
+        ])
+    }
+
+    fn overview_clipboard_mcp_card(&self) -> El {
+        let p = self.p();
+        let suite = &self.back_screen.stepos_suite;
+        let clip_preview = if suite.phone_clipboard.trim().is_empty() {
+            "暂未读取到手机剪贴板内容（可点击下方「从手机拉取剪贴板」实时同步）".to_string()
+        } else {
+            suite.phone_clipboard.trim().to_string()
+        };
+        let note_text = if suite.last_action_note.trim().is_empty() {
+            "支持通过 StepOS 原生 MCP 服务一键创建闹钟、待办、便签与背屏番茄钟".to_string()
+        } else {
+            suite.last_action_note.clone()
+        };
+
+        self.panel(vec![
+            self.between(
+                self.hstack(
+                    8.,
+                    vec![
+                        self.ui_icon(UiIcon::Clipboard, 16., p.accent),
+                        self.heading("双端剪贴板无感同步 & StepOS 原生 MCP 快捷操作"),
+                    ],
+                ),
+                self.pill_badge("MCP 原生直连", p.accent, p.accent_soft),
+            ),
+            Container::new(self.vstack(
+                4.,
+                vec![
+                    self.between(
+                        self.line_w("手机当前剪贴板预览", CAPTION, p.text2, Weight::Medium),
+                        self.mono("ClipboardService", MICRO, p.text3),
+                    ),
+                    self.text(clip_preview, CAPTION, p.text),
+                ],
+            ))
+            .with_horizontal_padding(12.)
+            .with_vertical_padding(8.)
+            .with_background_color(p.surface)
+            .with_border(Border::all(1.).with_border_color(p.surface_border))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+            .finish(),
+            self.hstack(
+                8.,
+                vec![
+                    self.button_icon(
+                        "ov-clip-push",
+                        "推送电脑剪贴板到手机",
+                        UiIcon::Clipboard,
+                        Action::BackScreen(BackScreenAction::PushDesktopClipboard),
+                        Btn::Primary,
+                    ),
+                    self.button_icon(
+                        "ov-clip-pull",
+                        "从手机拉取剪贴板",
+                        UiIcon::Refresh,
+                        Action::BackScreen(BackScreenAction::PullPhoneClipboard),
+                        Btn::Secondary,
+                    ),
+                ],
+            ),
+            self.line(note_text, MICRO, p.text2),
+            self.hstack(
+                8.,
+                vec![
+                    self.button_icon(
+                        "ov-mcp-alarm",
+                        "明天 08:00 闹钟",
+                        UiIcon::Clock,
+                        Action::BackScreen(BackScreenAction::TriggerMcpQuickAction(
+                            "alarm_0800".into(),
+                        )),
+                        Btn::Secondary,
+                    ),
+                    self.button_icon(
+                        "ov-mcp-todo",
+                        "新建手机待办",
+                        UiIcon::Calendar,
+                        Action::BackScreen(BackScreenAction::TriggerMcpQuickAction(
+                            "todo_create".into(),
+                        )),
+                        Btn::Secondary,
+                    ),
+                    self.button_icon(
+                        "ov-mcp-note",
+                        "新建手机便签",
+                        UiIcon::Clipboard,
+                        Action::BackScreen(BackScreenAction::TriggerMcpQuickAction(
+                            "note_create".into(),
+                        )),
+                        Btn::Secondary,
+                    ),
+                    self.button_icon(
+                        "ov-mcp-pomodoro",
+                        "开启 25 分钟背屏番茄钟",
+                        UiIcon::Play,
+                        Action::BackScreen(BackScreenAction::StartPomodoro(25)),
+                        Btn::Ghost,
+                    ),
+                ],
+            ),
+        ])
+    }
+
     pub(in super::super) fn overview_page(&self) -> El {
         let Some(device) = &self.selected else {
             return self.pane_scroll(
@@ -140,6 +398,8 @@ impl Companion {
         } else {
             format!("StepX {}", device.model)
         };
+        let backups = device.backup_transports();
+        let has_dual_standby = !backups.is_empty();
 
         // 1. Top 4-Column Metric Row
         let card_device = self.overview_metric_card(vec![
@@ -147,12 +407,14 @@ impl Companion {
                 self.hstack(
                     6.,
                     vec![
-                        self.line("📱", CAPTION, p.text2),
+                        self.ui_icon(UiIcon::Smartphone, 15., p.text2),
                         self.line_w("当前设备", CAPTION, p.text2, Weight::Medium),
                     ],
                 ),
                 self.pill_badge(
-                    if is_wireless(&device.transport) {
+                    if has_dual_standby {
+                        "USB + 无线双通道热备"
+                    } else if is_wireless(&device.transport) {
                         "无线连接"
                     } else {
                         "USB 连接"
@@ -193,7 +455,7 @@ impl Companion {
                 self.hstack(
                     6.,
                     vec![
-                        self.line("🔋", CAPTION, p.text2),
+                        self.ui_icon(UiIcon::Bolt, 15., p.text2),
                         self.line_w("电池电量", CAPTION, p.text2, Weight::Medium),
                     ],
                 ),
@@ -249,7 +511,7 @@ impl Companion {
             self.hstack(
                 6.,
                 vec![
-                    self.line("🌡", CAPTION, p.text2),
+                    self.ui_icon(UiIcon::Temperature, 15., p.text2),
                     self.line_w("电池温度", CAPTION, p.text2, Weight::Medium),
                 ],
             ),
@@ -268,7 +530,7 @@ impl Companion {
                 self.hstack(
                     6.,
                     vec![
-                        self.line("💾", CAPTION, p.text2),
+                        self.ui_icon(UiIcon::Storage, 15., p.text2),
                         self.line_w("内部存储", CAPTION, p.text2, Weight::Medium),
                     ],
                 ),
@@ -437,28 +699,28 @@ impl Companion {
             .with_child(
                 Expanded::new(
                     1.,
-                    self.key_row_btn("back", "←", "返回", "ESC", Action::Key(4)),
+                    self.key_row_btn("back", UiIcon::ArrowLeft, "返回", "ESC", Action::Key(4)),
                 )
                 .finish(),
             )
             .with_child(
                 Expanded::new(
                     1.,
-                    self.key_row_btn("home", "⌂", "主屏幕", "Home", Action::Key(3)),
+                    self.key_row_btn("home", UiIcon::Home, "主屏幕", "Home", Action::Key(3)),
                 )
                 .finish(),
             )
             .with_child(
                 Expanded::new(
                     1.,
-                    self.key_row_btn("recent", "☰", "多任务", "App", Action::Key(187)),
+                    self.key_row_btn("recent", UiIcon::Menu, "多任务", "App", Action::Key(187)),
                 )
                 .finish(),
             )
             .with_child(
                 Expanded::new(
                     1.,
-                    self.key_row_btn("power", "🔒", "锁屏", "Power", Action::Key(26)),
+                    self.key_row_btn("power", UiIcon::Lock, "锁屏", "Power", Action::Key(26)),
                 )
                 .finish(),
             )
@@ -470,21 +732,27 @@ impl Companion {
             .with_child(
                 Expanded::new(
                     1.,
-                    self.key_row_btn("voldown", "🔉", "音量减", "Vol-", Action::Key(25)),
+                    self.key_row_btn(
+                        "voldown",
+                        UiIcon::Speaker,
+                        "音量减",
+                        "Vol-",
+                        Action::Key(25),
+                    ),
                 )
                 .finish(),
             )
             .with_child(
                 Expanded::new(
                     1.,
-                    self.key_row_btn("volup", "🔊", "音量加", "Vol+", Action::Key(24)),
+                    self.key_row_btn("volup", UiIcon::Speaker, "音量加", "Vol+", Action::Key(24)),
                 )
                 .finish(),
             )
             .with_child(
                 Expanded::new(
                     1.,
-                    self.key_row_btn("ai", "⚡", "Amoo", "", Action::Page(Page::Amoo)),
+                    self.key_row_btn("ai", UiIcon::Bolt, "Amoo", "", Action::Page(Page::Amoo)),
                 )
                 .finish(),
             )
@@ -493,7 +761,7 @@ impl Companion {
                     1.,
                     self.key_row_btn(
                         "matrix",
-                        "❖",
+                        UiIcon::Matrix,
                         "背屏工坊",
                         "LED",
                         Action::Page(Page::BackScreen),
@@ -701,6 +969,14 @@ impl Companion {
             .with_child(Expanded::new(8., right_column).finish())
             .finish();
 
+        let stepos_row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_spacing(S4)
+            .with_child(Expanded::new(1., self.overview_wellbeing_card()).finish())
+            .with_child(Expanded::new(1., self.overview_clipboard_mcp_card()).finish())
+            .finish();
+
         // The overview is a document-like dashboard. Its sections keep their
         // natural height; a short window scrolls rather than squeezing cards.
         let content = Flex::column()
@@ -709,6 +985,7 @@ impl Companion {
             .with_spacing(S4)
             .with_child(top_metrics)
             .with_child(self.overview_usage_card())
+            .with_child(stepos_row)
             .with_child(lower)
             .finish();
         self.pane_scroll(self.scroll.clone(), content)

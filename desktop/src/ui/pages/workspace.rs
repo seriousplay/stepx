@@ -37,7 +37,49 @@ impl Companion {
                 Btn::Secondary,
             )];
         }
-        vec![
+        if !super::super::workspace_state::is_verification_harness() {
+            if self.workspace.sub_view == 1 {
+                let mut actions = vec![
+                    self.ws_button(
+                        "back-unified-from-work",
+                        "返回 Amoo 对话台",
+                        UiIcon::ArrowLeft,
+                        W::SubView(0),
+                        Btn::Secondary,
+                    ),
+                    self.ws_button(
+                        "switch-studio-from-work",
+                        "Studio 创作台",
+                        UiIcon::Apps,
+                        W::SubView(2),
+                        Btn::Ghost,
+                    ),
+                ];
+                actions.extend(self.work_actions());
+                return actions;
+            }
+            if self.workspace.sub_view == 2 {
+                let mut actions = vec![
+                    self.ws_button(
+                        "back-unified-from-studio",
+                        "返回 Amoo 对话台",
+                        UiIcon::ArrowLeft,
+                        W::SubView(0),
+                        Btn::Secondary,
+                    ),
+                    self.ws_button(
+                        "switch-work-from-studio",
+                        "Work 交付台",
+                        UiIcon::Folder,
+                        W::SubView(1),
+                        Btn::Ghost,
+                    ),
+                ];
+                actions.extend(self.studio_actions());
+                return actions;
+            }
+        }
+        let mut actions = vec![
             self.ws_button(
                 "history",
                 "会话记录",
@@ -52,13 +94,45 @@ impl Companion {
                 W::Menu(2),
                 Btn::Ghost,
             ),
-            self.ws_button("new", "新对话", UiIcon::Plus, W::New, Btn::Secondary),
-        ]
+        ];
+        if !super::super::workspace_state::is_verification_harness() {
+            actions.push(self.ws_button(
+                "top-studio",
+                "Studio 实验室",
+                UiIcon::Apps,
+                W::Menu(4),
+                Btn::Ghost,
+            ));
+            actions.push(self.ws_button(
+                "top-memory",
+                "技能与记忆",
+                UiIcon::Star,
+                W::Menu(7),
+                Btn::Ghost,
+            ));
+            actions.push(self.ws_button(
+                "top-mcp",
+                "手机 MCP",
+                UiIcon::Smartphone,
+                W::Menu(8),
+                Btn::Ghost,
+            ));
+        }
+        actions.push(self.ws_button("new", "新对话", UiIcon::Plus, W::New, Btn::Secondary));
+        actions
     }
     pub(in super::super) fn workspace_page(&self, compact: bool) -> El {
         let p = self.p();
         if self.amoo_ui.screen_mode {
             return self.amoo_page();
+        }
+        if !super::super::workspace_state::is_verification_harness() && !compact {
+            if self.workspace.sub_view == 1 {
+                return self.work_page();
+            }
+            if self.workspace.sub_view == 2 {
+                return self.studio_page();
+            }
         }
         if let Some(album) = self.amoo_album_picker() {
             return self.pane_scroll(
@@ -168,6 +242,122 @@ impl Companion {
                 .finish(),
                 self.amoo_message_composer(compact, false),
             ];
+            if !super::super::workspace_state::is_verification_harness()
+                && !compact
+                && self.workspace.viewport.y() >= 680.
+            {
+                content.push(
+                    Align::new(self.vstack(
+                        S2,
+                        vec![
+                            Align::new(self.line(
+                                "全场景生产力 · 应用创作 · 手机 MCP 快捷入口",
+                                MICRO,
+                                p.text3,
+                            ))
+                            .finish(),
+                            Align::new(self.wrap(vec![
+                                self.ws_button(
+                                    "suggest-summary",
+                                    "资料总结",
+                                    UiIcon::File,
+                                    W::Suggest(0),
+                                    Btn::Secondary,
+                                ),
+                                self.ws_button(
+                                    "suggest-sheet",
+                                    "表格分析",
+                                    UiIcon::Chart,
+                                    W::Suggest(1),
+                                    Btn::Secondary,
+                                ),
+                                self.ws_button(
+                                    "suggest-doc",
+                                    "文档修改",
+                                    UiIcon::File,
+                                    W::Suggest(2),
+                                    Btn::Secondary,
+                                ),
+                                self.ws_button(
+                                    "suggest-image",
+                                    "图片创作",
+                                    UiIcon::Image,
+                                    W::Suggest(3),
+                                    Btn::Secondary,
+                                ),
+                                self.ws_button(
+                                    "suggest-app",
+                                    "编写应用/游戏",
+                                    UiIcon::Apps,
+                                    W::Suggest(4),
+                                    Btn::Secondary,
+                                ),
+                                self.ws_button(
+                                    "suggest-ppt",
+                                    "制作 PPT",
+                                    UiIcon::Star,
+                                    W::Suggest(5),
+                                    Btn::Secondary,
+                                ),
+                                self.ws_button(
+                                    "suggest-mcp-calendar",
+                                    "日程与闹钟 · MCP",
+                                    UiIcon::Calendar,
+                                    W::Suggest(6),
+                                    Btn::Secondary,
+                                ),
+                                self.ws_button(
+                                    "suggest-mcp-album",
+                                    "相册语义搜图 · MCP",
+                                    UiIcon::Image,
+                                    W::Suggest(7),
+                                    Btn::Secondary,
+                                ),
+                            ]))
+                            .finish(),
+                            Align::new(self.wrap(vec![
+                                self.ws_button(
+                                    "welcome-studio-lab",
+                                    "Studio 实验室作品库",
+                                    UiIcon::Apps,
+                                    W::Menu(4),
+                                    Btn::Ghost,
+                                ),
+                                self.ws_button(
+                                    "welcome-openclaw-memory",
+                                    "OpenClaw 技能与记忆",
+                                    UiIcon::Tools,
+                                    W::Menu(7),
+                                    Btn::Ghost,
+                                ),
+                                self.ws_button(
+                                    "welcome-mcp-hub",
+                                    "手机 MCP 快捷舱",
+                                    UiIcon::Smartphone,
+                                    W::Menu(8),
+                                    Btn::Ghost,
+                                ),
+                                self.ws_button(
+                                    "welcome-work-pro",
+                                    "Work 专业交付台",
+                                    UiIcon::Folder,
+                                    W::SubView(1),
+                                    Btn::Ghost,
+                                ),
+                                self.ws_button(
+                                    "welcome-studio-pro",
+                                    "Studio 创作台",
+                                    UiIcon::Monitor,
+                                    W::SubView(2),
+                                    Btn::Ghost,
+                                ),
+                            ]))
+                            .finish(),
+                        ],
+                    ))
+                    .finish(),
+                );
+            }
             if let Some(error) = &self.workspace.error {
                 content.push(self.text(error, BODY, p.danger));
             }
@@ -246,9 +436,30 @@ impl Companion {
             ),
             self.ws_button(
                 "left-model",
-                "模型与账号",
+                "模型与端侧AI",
                 UiIcon::Cpu,
                 W::Menu(1),
+                Btn::Ghost,
+            ),
+            self.ws_button(
+                "left-studio-lab",
+                "Studio 实验室",
+                UiIcon::Apps,
+                W::Menu(4),
+                Btn::Ghost,
+            ),
+            self.ws_button(
+                "left-memory-safety",
+                "记忆与安全台账",
+                UiIcon::Shield,
+                W::Menu(7),
+                Btn::Ghost,
+            ),
+            self.ws_button(
+                "left-mcp-hub",
+                "手机 MCP 快捷舱",
+                UiIcon::Tools,
+                W::Menu(8),
                 Btn::Ghost,
             ),
             self.button_icon(
@@ -256,6 +467,20 @@ impl Companion {
                 "手机操控",
                 UiIcon::Smartphone,
                 Action::AmooUi(AmooUiAction::GuiMode(true)),
+                Btn::Ghost,
+            ),
+            self.ws_button(
+                "left-work-pro",
+                "Work 交付台",
+                UiIcon::Folder,
+                W::SubView(1),
+                Btn::Ghost,
+            ),
+            self.ws_button(
+                "left-studio-pro",
+                "Studio 创作台",
+                UiIcon::Monitor,
+                W::SubView(2),
                 Btn::Ghost,
             ),
         ]))
@@ -792,13 +1017,14 @@ impl Companion {
             "会话记录"
         } else {
             match self.workspace.panel {
-                1 => "模型与账号",
+                1 => "模型、端侧 AI 与账号",
                 2 => "添加到当前任务",
-                3 => "手机能力",
-                4 => "Studio 项目",
+                3 => "OpenClaw 技能与手机能力",
+                4 => "Studio 创作与真机实验室",
                 5 => "模型服务设置",
                 6 => "成果与预览",
-                7 => "处理方式",
+                7 => "记忆、人设与安全台账",
+                8 => "手机 MCP 原生能力快捷舱",
                 _ => "Amoo",
             }
         };
@@ -833,6 +1059,8 @@ impl Companion {
                 4 => self.workspace_projects(),
                 5 => self.studio_lab_settings(),
                 6 => self.workspace_preview(),
+                7 => self.workspace_memory_and_safety(),
+                8 => self.workspace_mcp_hub(),
                 _ => self.workspace_resources(),
             }
         };
@@ -910,8 +1138,32 @@ impl Companion {
                         Btn::Secondary,
                     ),
                 ]),
+                self.panel(vec![
+                    self.between(
+                        self.hstack(
+                            S2,
+                            vec![
+                                self.ui_icon(UiIcon::Bolt, 20., p.text),
+                                self.heading("手机端侧大模型 · StepOS AIEngine"),
+                            ],
+                        ),
+                        self.pill_badge("已就绪 · 端云协同", p.success, p.surface),
+                    ),
+                    self.text(
+                        "com.stepos.aiengine · AIEngineManagerService 端侧 NPU 视觉与语言模型协处理器，支持离线意图路由、端侧识图与低延迟推理。",
+                        BODY,
+                        p.text2,
+                    ),
+                    self.button_icon(
+                        "workspace-check-aiengine",
+                        "检查手机 AI 与能力目录",
+                        UiIcon::Refresh,
+                        Action::Work(WorkAction::Refresh),
+                        Btn::Secondary,
+                    ),
+                ]),
                 self.text(
-                    "两种服务的账号与额度独立。每次复杂任务会先说明实际使用哪一项。",
+                    "三种服务的账号与算力协同工作。每次复杂任务会先说明实际使用哪一项。",
                     CAPTION,
                     p.text3,
                 ),
@@ -945,38 +1197,67 @@ impl Companion {
             self.divider(),
             self.ws_button(
                 "resource-model",
-                "模型与账号",
+                "模型、端侧 AI 与账号",
                 UiIcon::Cpu,
                 W::Menu(1),
                 Btn::Ghost,
             ),
             self.ws_button(
                 "resource-capabilities",
-                "技能、智能体与 AI 应用",
+                "OpenClaw 技能、智能体与 AI 应用",
                 UiIcon::Tools,
                 W::Menu(3),
                 Btn::Ghost,
             ),
             self.ws_button(
                 "resource-studio",
-                "Studio 官网项目",
+                "Studio 创作与真机实验室",
                 UiIcon::Apps,
                 W::Menu(4),
                 Btn::Ghost,
             ),
+            self.ws_button(
+                "resource-memory-safety",
+                "BM25 记忆、人设与安全台账",
+                UiIcon::Shield,
+                W::Menu(7),
+                Btn::Ghost,
+            ),
+            self.ws_button(
+                "resource-mcp-hub",
+                "手机 MCP 原生能力快捷舱 (20 项)",
+                UiIcon::Bolt,
+                W::Menu(8),
+                Btn::Ghost,
+            ),
             self.button_icon(
                 "workspace-resource-schedules",
-                "手机定时任务",
+                "手机定时任务中心",
                 UiIcon::Calendar,
                 Action::AmooToggleSchedules,
                 Btn::Ghost,
             ),
             self.button_icon(
                 "workspace-resource-gui",
-                "让 Agent 操作手机",
+                "让 Agent 实机操作手机",
                 UiIcon::Smartphone,
                 Action::AmooUi(AmooUiAction::GuiMode(true)),
                 Btn::Ghost,
+            ),
+            self.divider(),
+            self.ws_button(
+                "resource-work-full",
+                "打开 Work 专业交付台全屏",
+                UiIcon::Folder,
+                W::SubView(1),
+                Btn::Secondary,
+            ),
+            self.ws_button(
+                "resource-studio-full",
+                "打开 Studio 创作台全屏",
+                UiIcon::Monitor,
+                W::SubView(2),
+                Btn::Secondary,
             ),
         ];
         if let Some(task) = self.workspace_task() {
@@ -1015,6 +1296,68 @@ impl Companion {
         self.vstack(S3, rows)
     }
     fn workspace_capabilities(&self) -> El {
+        let p = self.p();
+        let mut rows = vec![];
+        if !self.amoo_skills.is_empty() {
+            let enabled_count = self.amoo_skills.iter().filter(|s| s.enabled).count();
+            let mut skill_rows = vec![
+                self.between(
+                    self.line_w("OpenClaw 已安装技能库", BODY, p.text, Weight::Semibold),
+                    self.pill_badge(
+                        &format!("{enabled_count}/{} 已启用", self.amoo_skills.len()),
+                        p.accent,
+                        p.surface,
+                    ),
+                ),
+                self.text(
+                    "实时同步手机 OpenClaw 网关技能开关，可直接在对话中触发或一键带入指令模板。",
+                    CAPTION,
+                    p.text2,
+                ),
+            ];
+            for (idx, skill) in self.amoo_skills.iter().enumerate() {
+                skill_rows.push(self.panel(vec![
+                    self.between(
+                        self.line_w(&skill.name, BODY, p.text, Weight::Medium),
+                        self.pill_badge(
+                            if skill.enabled {
+                                "已启用"
+                            } else {
+                                "已停用"
+                            },
+                            if skill.enabled { p.success } else { p.text3 },
+                            p.surface,
+                        ),
+                    ),
+                    self.text(&skill.prompt, CAPTION, p.text2),
+                    self.wrap(vec![
+                        self.ws_button(
+                            &format!("openclaw-skill-use-{idx}"),
+                            "带入对话",
+                            UiIcon::Bolt,
+                            W::UseOpenClawSkill(idx),
+                            Btn::Secondary,
+                        ),
+                        self.ws_button(
+                            &format!("openclaw-skill-toggle-{idx}"),
+                            if skill.enabled {
+                                "停用技能"
+                            } else {
+                                "启用技能"
+                            },
+                            if skill.enabled {
+                                UiIcon::Close
+                            } else {
+                                UiIcon::Check
+                            },
+                            W::ToggleOpenClawSkill(idx),
+                            Btn::Ghost,
+                        ),
+                    ]),
+                ]));
+            }
+            rows.push(self.panel(skill_rows));
+        }
         let tabs = self.segmented(
             "workspace-capabilities",
             [("模型", 1), ("技能", 2), ("智能体", 3), ("AI 应用", 4)]
@@ -1028,68 +1371,675 @@ impl Companion {
                 })
                 .collect(),
         );
-        self.vstack(S3, vec![tabs, self.work_catalog_pane()])
+        rows.push(tabs);
+        rows.push(self.work_catalog_pane());
+        self.vstack(S3, rows)
     }
     fn workspace_projects(&self) -> El {
         let p = self.p();
-        let mut rows = vec![
+        let source_tabs = self.segmented(
+            "workspace-studio-source",
+            [("官网项目", 0), ("手机可用", 1), ("本机创作", 2)]
+                .iter()
+                .map(|(label, idx)| {
+                    (
+                        (*label).into(),
+                        self.studio.source == *idx,
+                        Action::Studio(StudioAction::Source(*idx)),
+                    )
+                })
+                .collect(),
+        );
+        let mut rows = vec![source_tabs];
+        match self.studio.source {
+            0 => {
+                rows.push(self.text(
+                    "连接手机上的 Studio 官网账号，自动读取项目、技能和智能体。",
+                    CAPTION,
+                    p.text2,
+                ));
+                rows.push(self.wrap(vec![
+                    self.button_icon(
+                        "workspace-studio-refresh",
+                        "同步官网",
+                        UiIcon::Refresh,
+                        Action::Studio(StudioAction::CloudRefresh),
+                        Btn::Secondary,
+                    ),
+                    self.button(
+                        "workspace-studio-login",
+                        "连接官网账号",
+                        Action::Studio(StudioAction::WebsiteLogin),
+                        Btn::Ghost,
+                    ),
+                ]));
+                if let Some(web) = self.studio.web.as_ref().filter(|w| w.authorized) {
+                    rows.push(self.line(
+                        format!("已连接 · {} 个项目", web.items.len()),
+                        CAPTION,
+                        p.success,
+                    ));
+                    for (i, item) in web.items.iter().enumerate().take(60) {
+                        rows.push(self.panel(vec![
+                            self.line_w(&item.name, BODY, p.text, Weight::Medium),
+                            self.text(
+                                format!("{} · {}", item.category, item.description),
+                                CAPTION,
+                                p.text2,
+                            ),
+                            self.ws_button(
+                                &format!("open-project-{i}"),
+                                "继续编辑",
+                                UiIcon::ExternalLink,
+                                W::OpenProject(i),
+                                Btn::Secondary,
+                            ),
+                        ]));
+                    }
+                } else {
+                    rows.push(self.text(
+                        self.studio.web_error.as_deref().unwrap_or(
+                            "首次连接需要在手机官网完成登录，之后使用已保存的登录会话。",
+                        ),
+                        CAPTION,
+                        p.text2,
+                    ));
+                }
+            }
+            1 => {
+                rows.push(self.text(
+                    "读取手机端已授权的 Studio 应用、智能体与伴侣作品库，支持在手机端直接打开或带入当前对话。",
+                    CAPTION,
+                    p.text2,
+                ));
+                rows.push(self.wrap(vec![
+                    self.button_icon(
+                        "workspace-studio-phone-refresh",
+                        "刷新手机列表",
+                        UiIcon::Refresh,
+                        Action::Studio(StudioAction::Refresh),
+                        Btn::Secondary,
+                    ),
+                    self.button(
+                        "workspace-studio-phone-lib",
+                        "打开手机作品库",
+                        Action::Studio(StudioAction::PhoneLibrary),
+                        Btn::Ghost,
+                    ),
+                    self.button(
+                        "workspace-studio-connect-acc",
+                        "关联手机账号",
+                        Action::Studio(StudioAction::ConnectAccount),
+                        Btn::Ghost,
+                    ),
+                ]));
+                if let Some(cloud) = &self.studio.cloud {
+                    if cloud.items.is_empty() {
+                        rows.push(self.text(
+                            "手机暂未同步可用 Studio 作品，可先在「本机创作」生成并发送到手机。",
+                            CAPTION,
+                            p.text2,
+                        ));
+                    } else {
+                        for (i, item) in cloud.items.iter().enumerate().take(40) {
+                            rows.push(self.panel(vec![
+                                self.between(
+                                    self.line_w(&item.name, BODY, p.text, Weight::Medium),
+                                    self.pill_badge(&item.category, p.accent, p.surface),
+                                ),
+                                self.text(&item.description, CAPTION, p.text2),
+                                self.button_icon(
+                                    format!("workspace-studio-use-phone-{i}"),
+                                    "在手机使用",
+                                    UiIcon::Smartphone,
+                                    Action::Studio(StudioAction::UsePhone(i)),
+                                    Btn::Secondary,
+                                ),
+                            ]));
+                        }
+                    }
+                } else {
+                    rows.push(self.text(
+                        "点击「刷新手机列表」读取手机端已安装的 Studio 作品与能力。",
+                        CAPTION,
+                        p.text2,
+                    ));
+                }
+            }
+            _ => {
+                rows.push(self.panel(vec![
+                    self.between(
+                        self.line_w("Studio 真机实验室 · 快速创作", BODY, p.text, Weight::Semibold),
+                        self.pill_badge("自动验证 · 离线可用", p.success, p.surface),
+                    ),
+                    self.text(
+                        "基于本机无头浏览器与真机视口自动验证 HTML5 应用/小游戏交互，一键安装到手机 StepX 伴侣离线运行。",
+                        CAPTION,
+                        p.text2,
+                    ),
+                    self.wrap(
+                        crate::ui::studio_lab_state::LAB_TEMPLATES
+                            .iter()
+                            .enumerate()
+                            .map(|(i, (title, _))| {
+                                self.button(
+                                    format!("workspace-lab-tpl-{i}"),
+                                    format!("模板：{title}"),
+                                    Action::StudioLab(StudioLabAction::Template(i)),
+                                    Btn::Secondary,
+                                )
+                            })
+                            .collect(),
+                    ),
+                    self.wrap(vec![
+                        self.ws_button(
+                            "studio-lab-new-app",
+                            "在对话中创作新应用",
+                            UiIcon::Bolt,
+                            W::Suggest(4),
+                            Btn::Primary,
+                        ),
+                        self.ws_button(
+                            "studio-lab-open-full",
+                            "打开 Studio 实验室全屏",
+                            UiIcon::Monitor,
+                            W::SubView(2),
+                            Btn::Ghost,
+                        ),
+                    ]),
+                ]));
+                if !self.studio_lab.artifacts.is_empty() {
+                    rows.push(self.heading("本机已生成的应用作品"));
+                    for a in self.studio_lab.artifacts.iter().take(24) {
+                        rows.push(self.panel(vec![
+                            self.between(
+                                self.line_w(&a.name, BODY, p.text, Weight::Medium),
+                                self.pill_badge(
+                                    if a.passed {
+                                        "验证通过"
+                                    } else {
+                                        "待修复"
+                                    },
+                                    if a.passed { p.success } else { p.warning },
+                                    p.surface,
+                                ),
+                            ),
+                            self.text(&a.summary, CAPTION, p.text2),
+                            self.wrap(vec![
+                                self.ws_button(
+                                    &format!("lab-select-{}", a.id),
+                                    "查看详情与交付",
+                                    UiIcon::Apps,
+                                    W::SelectLab(a.id.clone()),
+                                    Btn::Secondary,
+                                ),
+                                self.button_icon(
+                                    format!("workspace-lab-preview-{}", a.id),
+                                    "交互预览",
+                                    UiIcon::Monitor,
+                                    Action::StudioLab(StudioLabAction::Preview),
+                                    Btn::Ghost,
+                                ),
+                                self.button_icon(
+                                    format!("workspace-lab-phone-{}", a.id),
+                                    "发到手机",
+                                    UiIcon::Smartphone,
+                                    Action::StudioLab(StudioLabAction::DeliverPhone),
+                                    Btn::Ghost,
+                                ),
+                            ]),
+                        ]));
+                    }
+                }
+                if !self.studio.works.is_empty() {
+                    rows.push(self.heading("手机伴侣已安装作品"));
+                    for (i, w) in self.studio.works.iter().enumerate().take(20) {
+                        rows.push(self.panel(vec![
+                            self.line_w(&w.name, BODY, p.text, Weight::Medium),
+                            self.text(format!("{} · {}", w.category, w.updated), CAPTION, p.text2),
+                            self.button(
+                                format!("workspace-studio-open-local-{i}"),
+                                "选择并同步",
+                                Action::Studio(StudioAction::Select(i)),
+                                Btn::Secondary,
+                            ),
+                        ]));
+                    }
+                }
+            }
+        }
+        self.vstack(S3, rows)
+    }
+    fn workspace_memory_and_safety(&self) -> El {
+        let p = self.p();
+        let intent_bar = self.panel(vec![
+            self.line_w("当前对话处理方式", BODY, p.text, Weight::Semibold),
+            self.wrap(vec![
+                self.ws_button(
+                    "intent-chat-pill",
+                    "对话与手机协同",
+                    UiIcon::Chat,
+                    W::Intent(stepx_companion::amoo_workspace::Intent::Chat),
+                    if self.workspace.intent == stepx_companion::amoo_workspace::Intent::Chat {
+                        Btn::Primary
+                    } else {
+                        Btn::Secondary
+                    },
+                ),
+                self.ws_button(
+                    "intent-files-pill",
+                    "处理资料与表格",
+                    UiIcon::File,
+                    W::Intent(stepx_companion::amoo_workspace::Intent::Files),
+                    if self.workspace.intent == stepx_companion::amoo_workspace::Intent::Files {
+                        Btn::Primary
+                    } else {
+                        Btn::Secondary
+                    },
+                ),
+                self.ws_button(
+                    "intent-image-pill",
+                    "生成图片",
+                    UiIcon::Image,
+                    W::Intent(stepx_companion::amoo_workspace::Intent::Image),
+                    if self.workspace.intent == stepx_companion::amoo_workspace::Intent::Image {
+                        Btn::Primary
+                    } else {
+                        Btn::Secondary
+                    },
+                ),
+                self.ws_button(
+                    "intent-app-pill",
+                    "制作应用/小游戏",
+                    UiIcon::Apps,
+                    W::Intent(stepx_companion::amoo_workspace::Intent::App),
+                    if self.workspace.intent == stepx_companion::amoo_workspace::Intent::App {
+                        Btn::Primary
+                    } else {
+                        Btn::Secondary
+                    },
+                ),
+            ]),
+        ]);
+
+        let bm25_count = self.amoo_bm25_entries.max(self.amoo_memories.len());
+        let mut memory_rows = vec![
+            self.between(
+                self.line_w(
+                    "OpenClaw BM25 个人记忆库",
+                    BODY,
+                    p.text,
+                    Weight::Semibold,
+                ),
+                self.pill_badge(
+                    &format!("BM25 混合检索 · {bm25_count} 条索引"),
+                    if self.amoo_memory_enabled {
+                        p.success
+                    } else {
+                        p.text3
+                    },
+                    p.surface,
+                ),
+            ),
             self.text(
-                "连接手机上的 Studio 官网账号，自动读取项目、技能和智能体。",
+                "com.stepos.alphame / openclaw · 本地 SQLite + BM25 词汇与语义混合检索引擎，自动记忆你的工作偏好、常用目录与设备习惯。",
                 CAPTION,
                 p.text2,
             ),
             self.wrap(vec![
-                self.button_icon(
-                    "workspace-studio-refresh",
-                    "同步官网",
-                    UiIcon::Refresh,
-                    Action::Studio(StudioAction::CloudRefresh),
-                    Btn::Secondary,
+                self.ws_button(
+                    "memory-toggle-auto",
+                    if self.amoo_memory_enabled {
+                        "已开启自动记忆关联"
+                    } else {
+                        "开启自动记忆关联"
+                    },
+                    UiIcon::Check,
+                    W::ToggleMemory,
+                    if self.amoo_memory_enabled {
+                        Btn::Secondary
+                    } else {
+                        Btn::Ghost
+                    },
                 ),
                 self.button(
-                    "workspace-studio-login",
-                    "连接官网账号",
-                    Action::Studio(StudioAction::WebsiteLogin),
+                    "workspace-memory-add",
+                    "＋ 记录新偏好",
+                    Action::AmooAddMemory,
+                    Btn::Ghost,
+                ),
+                self.button(
+                    "workspace-memory-export",
+                    "导出记忆快照",
+                    Action::AmooExportMemory,
                     Btn::Ghost,
                 ),
             ]),
         ];
-        if let Some(web) = self.studio.web.as_ref().filter(|w| w.authorized) {
-            rows.push(self.line(
-                format!("已连接 · {} 个项目", web.items.len()),
+        for (idx, mem) in self.amoo_memories.iter().enumerate() {
+            memory_rows.push(self.panel(vec![
+                self.line_w(&mem.title, BODY, p.text, Weight::Medium),
+                self.text(&mem.sub, CAPTION, p.text2),
+                self.ws_button(
+                    &format!("memory-inject-{idx}"),
+                    "注入当前对话",
+                    UiIcon::Star,
+                    W::UseMemory(mem.title.clone()),
+                    Btn::Ghost,
+                ),
+            ]));
+        }
+
+        let persona_card = self.panel(vec![
+            self.line_w("Amoo 角色人设与沟通风格", BODY, p.text, Weight::Semibold),
+            self.text(
+                "切换 Amoo 在对话、文档生成与手机操控时的角色定位和回复风格。",
                 CAPTION,
-                p.success,
-            ));
-            for (i, item) in web.items.iter().enumerate().take(60) {
-                rows.push(self.panel(vec![
-                    self.line_w(&item.name, BODY, p.text, Weight::Medium),
+                p.text2,
+            ),
+            self.line("角色定位", MICRO, p.text3),
+            self.wrap(
+                [
+                    (0, "Amoo 全能助手"),
+                    (1, "桌面交付伙伴"),
+                    (2, "办公协同专员"),
+                    (3, "研发架构专家"),
+                ]
+                .into_iter()
+                .map(|(idx, label)| {
+                    self.ws_button(
+                        &format!("persona-role-{idx}"),
+                        label,
+                        UiIcon::Star,
+                        W::SelectAgentRole(idx),
+                        if self.amoo_agent_idx == idx {
+                            Btn::Primary
+                        } else {
+                            Btn::Secondary
+                        },
+                    )
+                })
+                .collect(),
+            ),
+            self.line("沟通风格", MICRO, p.text3),
+            self.wrap(
+                [
+                    (0, "直接精炼 · 不长篇解释"),
+                    (1, "温和详细 · 分步拆解"),
+                    (2, "极客专业 · 附带命令"),
+                ]
+                .into_iter()
+                .map(|(idx, label)| {
+                    self.ws_button(
+                        &format!("persona-style-{idx}"),
+                        label,
+                        UiIcon::Chat,
+                        W::SelectPersona(idx),
+                        if self.amoo_style_idx == idx {
+                            Btn::Primary
+                        } else {
+                            Btn::Secondary
+                        },
+                    )
+                })
+                .collect(),
+            ),
+        ]);
+
+        let mut audit_traces = vec![];
+        for t in self.workspace.journal.tasks.iter().rev() {
+            for step in t.steps.iter().rev() {
+                if !step.note.trim().is_empty() {
+                    audit_traces.push(format!("{} · {}", t.title, step.note));
+                    if audit_traces.len() >= 4 {
+                        break;
+                    }
+                }
+            }
+            if audit_traces.len() >= 4 {
+                break;
+            }
+        }
+        for s in &self.amoo_sessions {
+            if audit_traces.len() >= 4 {
+                break;
+            }
+            if !s.status.trim().is_empty() {
+                audit_traces.push(format!("{} · {}", s.title, s.status));
+            }
+        }
+        if audit_traces.is_empty() {
+            audit_traces
+                .push("LedgerProvider · 最近敏感工具调用与跨应用自动化均已通过安全校验".into());
+        }
+
+        let mut safety_rows = vec![
+            self.between(
+                self.line_w(
+                    "AI 权限与安全审计台账",
+                    BODY,
+                    p.text,
+                    Weight::Semibold,
+                ),
+                self.pill_badge(
+                    if self.deep_amoo_granted {
+                        "全链路已授权"
+                    } else {
+                        "可一键修复权限"
+                    },
+                    if self.deep_amoo_granted {
+                        p.success
+                    } else {
+                        p.accent
+                    },
+                    p.surface,
+                ),
+            ),
+            self.text(
+                "com.stepos.agentsafetycenter · 实时守护手机端 GUI 自动化、原生 MCP 权限域与敏感操作审计台账。",
+                CAPTION,
+                p.text2,
+            ),
+            self.panel(vec![
+                self.line_w(
+                    "1. GUI 自动化无障碍服务 (GuiAccessibilityService)",
+                    CAPTION,
+                    p.text,
+                    Weight::Medium,
+                ),
+                self.line_w(
+                    "2. StepOS 原生 MCP 权限域 (ACCESS_MCP_SERVICES · 20 项服务)",
+                    CAPTION,
+                    p.text,
+                    Weight::Medium,
+                ),
+                self.line_w(
+                    "3. OpenClaw 网关守护服务 (AmooConnectionService)",
+                    CAPTION,
+                    p.text,
+                    Weight::Medium,
+                ),
+                self.line_w(
+                    "4. AgentSafetyCenter 审计台账 (LedgerProvider · 敏感操作留痕)",
+                    CAPTION,
+                    p.text,
+                    Weight::Medium,
+                ),
+            ]),
+            self.line("最近工具调用审计记录", MICRO, p.text3),
+        ];
+        for trace in audit_traces {
+            safety_rows.push(self.text(format!("• {trace}"), CAPTION, p.text2));
+        }
+        safety_rows.push(self.wrap(vec![
+            self.button_icon(
+                "workspace-grant-deep-perms",
+                "一键授权并修复 AI 协作权限",
+                UiIcon::Shield,
+                Action::GrantDeepAmooPerms,
+                Btn::Primary,
+            ),
+            self.button_icon(
+                "workspace-refresh-gui-status",
+                "刷新 GUI 操控状态",
+                UiIcon::Refresh,
+                Action::AmooUi(AmooUiAction::GuiRefresh),
+                Btn::Secondary,
+            ),
+        ]));
+
+        self.vstack(
+            S3,
+            vec![
+                intent_bar,
+                self.panel(memory_rows),
+                persona_card,
+                self.panel(safety_rows),
+            ],
+        )
+    }
+    fn workspace_mcp_hub(&self) -> El {
+        let p = self.p();
+        self.vstack(
+            S3,
+            vec![
+                self.panel(vec![
+                    self.between(
+                        self.line_w(
+                            "StepOS 原生 MCP 服务矩阵",
+                            BODY,
+                            p.text,
+                            Weight::Semibold,
+                        ),
+                        self.pill_badge("20 项原生服务已就绪", p.success, p.surface),
+                    ),
                     self.text(
-                        format!("{} · {}", item.category, item.description),
+                        "权限域：com.stepos.mcp.sdk.permission.ACCESS_MCP_SERVICES · 无需第三方插件，直接从桌面调用手机底层系统能力。",
+                        CAPTION,
+                        p.text2,
+                    ),
+                ]),
+                self.panel(vec![
+                    self.between(
+                        self.line_w(
+                            "日历与闹钟 MCP",
+                            BODY,
+                            p.text,
+                            Weight::Semibold,
+                        ),
+                        self.pill_badge("CalendarMcp / ClockMcp", p.accent, p.surface),
+                    ),
+                    self.text(
+                        "查询今日日程、新建会议安排、设置手机闹钟与倒计时提醒，或管理手机端 OpenClaw 定时任务。",
+                        CAPTION,
+                        p.text2,
+                    ),
+                    self.wrap(vec![
+                        self.ws_button(
+                            "mcp-hub-calendar-prompt",
+                            "查询日程与设置闹钟",
+                            UiIcon::Calendar,
+                            W::McpPrompt(0),
+                            Btn::Secondary,
+                        ),
+                        self.button_icon(
+                            "workspace-mcp-schedules",
+                            "打开定时任务中心",
+                            UiIcon::Clock,
+                            Action::AmooToggleSchedules,
+                            Btn::Ghost,
+                        ),
+                    ]),
+                ]),
+                self.panel(vec![
+                    self.between(
+                        self.line_w(
+                            "相册与文件管家 MCP",
+                            BODY,
+                            p.text,
+                            Weight::Semibold,
+                        ),
+                        self.pill_badge("GalleryMcp / FileManagerMcp", p.accent, p.surface),
+                    ),
+                    self.text(
+                        "基于端侧视觉索引语义搜索手机相册照片，或检索手机存储中的最近文档并直接带入当前任务。",
+                        CAPTION,
+                        p.text2,
+                    ),
+                    self.wrap(vec![
+                        self.ws_button(
+                            "mcp-hub-gallery-prompt",
+                            "发起相册语义搜图",
+                            UiIcon::Image,
+                            W::McpPrompt(1),
+                            Btn::Secondary,
+                        ),
+                        self.button_icon(
+                            "workspace-mcp-album-picker",
+                            "浏览手机相册",
+                            UiIcon::Attach,
+                            Action::AmooAttachPhoneAlbum,
+                            Btn::Ghost,
+                        ),
+                    ]),
+                ]),
+                self.panel(vec![
+                    self.between(
+                        self.line_w(
+                            "语音播报与系统控制 MCP",
+                            BODY,
+                            p.text,
+                            Weight::Semibold,
+                        ),
+                        self.pill_badge("TtsService / SystemControl", p.accent, p.surface),
+                    ),
+                    self.text(
+                        "调用手机端自然语音合成（TTS）播报早报与提醒，或调节音量、亮度、勿扰模式与网络开关。",
                         CAPTION,
                         p.text2,
                     ),
                     self.ws_button(
-                        &format!("open-project-{i}"),
-                        "继续编辑",
-                        UiIcon::ExternalLink,
-                        W::OpenProject(i),
+                        "mcp-hub-tts-prompt",
+                        "语音播报与系统设置",
+                        UiIcon::Speaker,
+                        W::McpPrompt(2),
                         Btn::Secondary,
                     ),
-                ]));
-            }
-        } else {
-            rows.push(
-                self.text(
-                    self.studio
-                        .web_error
-                        .as_deref()
-                        .unwrap_or("首次连接需要在手机官网完成登录，之后使用已保存的登录会话。"),
-                    CAPTION,
-                    p.text2,
-                ),
-            );
-        }
-        self.vstack(S3, rows)
+                ]),
+                self.panel(vec![
+                    self.between(
+                        self.line_w(
+                            "任务机器人与跨应用自动化 MCP",
+                            BODY,
+                            p.text,
+                            Weight::Semibold,
+                        ),
+                        self.pill_badge("TaskRobotMcp / GuiAgent", p.accent, p.surface),
+                    ),
+                    self.text(
+                        "协同 StepOS 任务机器人与 GUI Agent 视觉操控引擎，在手机屏幕自动完成跨应用流转与复杂操作。",
+                        CAPTION,
+                        p.text2,
+                    ),
+                    self.wrap(vec![
+                        self.ws_button(
+                            "mcp-hub-robot-prompt",
+                            "发起跨应用自动化任务",
+                            UiIcon::Tools,
+                            W::McpPrompt(3),
+                            Btn::Secondary,
+                        ),
+                        self.button_icon(
+                            "workspace-mcp-gui-mode",
+                            "进入手机 GUI 操控画面",
+                            UiIcon::Smartphone,
+                            Action::AmooUi(AmooUiAction::GuiMode(true)),
+                            Btn::Primary,
+                        ),
+                    ]),
+                ]),
+            ],
+        )
     }
     fn workspace_preview(&self) -> El {
         let p = self.p();

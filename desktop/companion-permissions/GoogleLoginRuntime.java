@@ -177,8 +177,9 @@ public final class GoogleLoginRuntime {
     }
     private static void stop() {
         stopped=true;
-        if(handler!=null){handler.removeCallbacksAndMessages(null);handler.getLooper().quitSafely();}
-        if(receiver!=null)try{context.unregisterReceiver(receiver);}catch(Exception ignored){}
+        if(handler!=null){handler.removeCallbacksAndMessages(null);handler.getLooper().quitSafely();handler=null;}
+        if(receiver!=null){try{context.unregisterReceiver(receiver);}catch(Exception ignored){}receiver=null;}
+        pending=null;
         try {
             Object binder=Class.forName("android.os.ServiceManager").getMethod("getService",String.class).invoke(null,"credential");
             Object service=field(binder,"this$0"),lock=field(service,"mLock"),cache=field(service,"mSystemServicesCacheList");

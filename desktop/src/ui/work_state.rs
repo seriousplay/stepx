@@ -82,6 +82,7 @@ pub(super) struct WorkDesktopSkillItem {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(super) struct WorkArtifactItem {
     pub path: PathBuf,
     pub name: String,

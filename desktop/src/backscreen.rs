@@ -1479,6 +1479,54 @@ pub fn marquee(
     Ok(format!("已保存手机背屏文字：{text}"))
 }
 
+pub fn start_pomodoro_countdown(
+    adb: &Adb,
+    device: &Device,
+    duration_secs: u32,
+    brightness: u8,
+) -> Result<String> {
+    let clamped_brightness = brightness.clamp(1, 8);
+    let clamped_duration = duration_secs.clamp(60, 3600);
+    if let Ok(message) = crate::companion_app::apply_preset(
+        adb,
+        device,
+        Preset::Countdown.key(),
+        clamped_brightness,
+        clamped_duration,
+    ) {
+        return Ok(format!(
+            "已启动 {} 分钟背屏专注番茄钟 · {}",
+            clamped_duration / 60,
+            message
+        ));
+    }
+    device.verify(adb)?;
+    let cfg = PlaybackConfig {
+        brightness: clamped_brightness,
+        fps: 6,
+        duration_secs: clamped_duration,
+        invert: false,
+    };
+    let initial = frame(
+        &Source::Preset(Preset::Countdown),
+        &cfg,
+        Duration::ZERO,
+        &LiveData::default(),
+    );
+    let _ = bs(adb, device, &["wake"]);
+    let _ = push_frame(adb, device, &initial);
+    Ok(format!(
+        "已开启 {} 分钟背屏专注番茄钟（手机背屏已同步倒计时画面）",
+        clamped_duration / 60
+    ))
+}
+
+pub fn stop_pomodoro_countdown(adb: &Adb, device: &Device) -> Result<String> {
+    let _ = crate::companion_app::stop(adb, device);
+    let _ = clear_frame(adb, device);
+    Ok("已结束背屏专注番茄钟，恢复手机默认背屏显示".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,43 +1,322 @@
 use crate::{adb::Adb, mirror::MirrorSession};
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
-use std::{path::PathBuf, process::Command};
+use std::{
+    collections::HashMap,
+    process::Command,
+    sync::{Mutex, OnceLock},
+};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Transport {
     pub id: String,
     pub state: String,
     pub model: String,
 }
 
+fn backup_transport_registry() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn set_backup_transports_for(keys: &[&str], backups: Vec<String>) {
+    if let Ok(mut map) = backup_transport_registry().lock() {
+        for key in keys {
+            let trimmed = key.trim();
+            if !trimmed.is_empty() {
+                map.insert(trimmed.to_string(), backups.clone());
+            }
+        }
+    }
+}
+
+pub fn backup_transports_for(keys: &[&str]) -> Vec<String> {
+    if let Ok(map) = backup_transport_registry().lock() {
+        for key in keys {
+            let trimmed = key.trim();
+            if !trimmed.is_empty() {
+                if let Some(found) = map.get(trimmed) {
+                    if !found.is_empty() {
+                        return found.clone();
+                    }
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Priority of a transport ID (lower is higher priority):
+/// 1 = physical USB serial (`ZYPZ261A01M692000LP`)
+/// 2 = explicit wireless IP:Port (`10.0.1.177:34883`)
+/// 3 = mDNS TLS service (`adb-ZYPZ261A01M692000LP-jYyV3X._adb-tls-connect._tcp`)
+pub fn transport_priority(id: &str) -> u8 {
+    let trimmed = id.trim();
+    if trimmed.starts_with("adb-") || trimmed.contains("._adb-tls-") {
+        3
+    } else if trimmed.contains(':') {
+        2
+    } else {
+        1
+    }
+}
+
+pub fn is_usb_transport(id: &str) -> bool {
+    transport_priority(id) == 1
+}
+
+/// Extract canonical hardware serial from a USB serial or `adb-<SERIAL>-<suffix>._adb-tls-...` transport ID.
+/// Returns `None` for `ip:port` wireless endpoints whose serial must be resolved via model/getprop.
+pub fn canonical_serial_from_transport(id: &str) -> Option<String> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("adb-") {
+        let without_service = rest
+            .split("._adb-tls-")
+            .next()
+            .unwrap_or(rest)
+            .split_whitespace()
+            .next()
+            .unwrap_or(rest);
+        if let Some((serial, _suffix)) = without_service.rsplit_once('-') {
+            if !serial.trim().is_empty() {
+                return Some(serial.trim().to_string());
+            }
+        }
+        return None;
+    }
+    if trimmed.contains(':') {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+impl Transport {
+    pub fn backup_transports(&self) -> Vec<String> {
+        let canonical = canonical_serial_from_transport(&self.id).unwrap_or_default();
+        backup_transports_for(&[&self.id, &canonical])
+    }
+}
+
 pub fn parse_devices(output: &str) -> Vec<Transport> {
-    output
+    let raw: Vec<(Transport, String)> = output
         .lines()
         .filter_map(|line| {
             let parts: Vec<_> = line.split_whitespace().collect();
             if parts.len() < 2 || line.starts_with("List of") || line.starts_with('*') {
                 return None;
             }
-            Some(Transport {
-                id: parts[0].into(),
-                state: parts[1].into(),
-                model: parts
-                    .iter()
-                    .find_map(|p| p.strip_prefix("model:"))
-                    .unwrap_or("")
-                    .into(),
-            })
+            let product = parts
+                .iter()
+                .find_map(|p| p.strip_prefix("product:"))
+                .unwrap_or("")
+                .to_string();
+            Some((
+                Transport {
+                    id: parts[0].into(),
+                    state: parts[1].into(),
+                    model: parts
+                        .iter()
+                        .find_map(|p| p.strip_prefix("model:"))
+                        .unwrap_or("")
+                        .into(),
+                },
+                product,
+            ))
         })
-        .collect()
+        .collect();
+    deduplicate_parsed_transports(raw)
 }
 
-#[derive(Clone, Debug, Serialize)]
+fn deduplicate_parsed_transports(raw: Vec<(Transport, String)>) -> Vec<Transport> {
+    struct TransportGroup {
+        serial: Option<String>,
+        model: String,
+        product: String,
+        online: bool,
+        members: Vec<Transport>,
+    }
+
+    let mut groups: Vec<TransportGroup> = Vec::new();
+    for (transport, product) in raw {
+        let online = transport.state == "device";
+        let serial = canonical_serial_from_transport(&transport.id);
+        if online {
+            if let Some(group) = groups.iter_mut().find(|g| {
+                if !g.online {
+                    return false;
+                }
+                match (&g.serial, &serial) {
+                    (Some(gs), Some(ts)) => gs == ts,
+                    (Some(_), None) | (None, Some(_)) | (None, None) => {
+                        !g.model.is_empty()
+                            && g.model == transport.model
+                            && (g.product.is_empty() || product.is_empty() || g.product == product)
+                    }
+                }
+            }) {
+                if group.serial.is_none() && serial.is_some() {
+                    group.serial = serial;
+                }
+                if group.model.is_empty() && !transport.model.is_empty() {
+                    group.model = transport.model.clone();
+                }
+                if group.product.is_empty() && !product.is_empty() {
+                    group.product = product;
+                }
+                group.members.push(transport);
+                continue;
+            }
+        }
+        groups.push(TransportGroup {
+            serial,
+            model: transport.model.clone(),
+            product,
+            online,
+            members: vec![transport],
+        });
+    }
+
+    let mut result = Vec::with_capacity(groups.len());
+    for mut group in groups {
+        if group.online && group.members.len() > 1 {
+            group.members.sort_by(|a, b| {
+                transport_priority(&a.id)
+                    .cmp(&transport_priority(&b.id))
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+        }
+        let mut iter = group.members.into_iter();
+        if let Some(mut primary) = iter.next() {
+            if primary.model.is_empty() && !group.model.is_empty() {
+                primary.model = group.model.clone();
+            }
+            let mut backups = Vec::new();
+            for m in iter {
+                if m.id != primary.id && !backups.contains(&m.id) {
+                    backups.push(m.id);
+                }
+            }
+            let serial_key = group.serial.unwrap_or_default();
+            let model_key = if !primary.model.is_empty() {
+                format!("model:{}", primary.model)
+            } else {
+                String::new()
+            };
+            set_backup_transports_for(&[&primary.id, &serial_key, &model_key], backups);
+            result.push(primary);
+        }
+    }
+    result
+}
+
+pub fn deduplicate_transports(transports: Vec<Transport>) -> Vec<Transport> {
+    let raw = transports.into_iter().map(|t| (t, String::new())).collect();
+    deduplicate_parsed_transports(raw)
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Device {
     pub transport: String,
     pub serial: String,
     pub model: String,
     pub android: String,
     pub product: String,
+}
+
+pub fn deduplicate_multi_transport_devices(devices: Vec<Device>) -> Vec<Device> {
+    struct DeviceGroup {
+        serial: Option<String>,
+        model: String,
+        product: String,
+        members: Vec<Device>,
+    }
+
+    let mut groups: Vec<DeviceGroup> = Vec::new();
+    for device in devices {
+        let effective_serial = if !device.serial.trim().is_empty()
+            && !device.serial.contains(':')
+            && !device.serial.starts_with("adb-")
+        {
+            Some(device.serial.trim().to_string())
+        } else {
+            canonical_serial_from_transport(&device.transport)
+        };
+
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|g| match (&g.serial, &effective_serial) {
+                (Some(gs), Some(ds)) => gs == ds,
+                (Some(_), None) | (None, Some(_)) | (None, None) => {
+                    !g.model.is_empty()
+                        && g.model == device.model
+                        && (g.product.is_empty()
+                            || device.product.is_empty()
+                            || g.product == device.product)
+                }
+            })
+        {
+            if group.serial.is_none() && effective_serial.is_some() {
+                group.serial = effective_serial;
+            }
+            if group.model.is_empty() && !device.model.is_empty() {
+                group.model = device.model.clone();
+            }
+            if group.product.is_empty() && !device.product.is_empty() {
+                group.product = device.product.clone();
+            }
+            group.members.push(device);
+            continue;
+        }
+
+        groups.push(DeviceGroup {
+            serial: effective_serial,
+            model: device.model.clone(),
+            product: device.product.clone(),
+            members: vec![device],
+        });
+    }
+
+    let mut out = Vec::with_capacity(groups.len());
+    for mut group in groups {
+        group.members.sort_by(|a, b| {
+            transport_priority(&a.transport)
+                .cmp(&transport_priority(&b.transport))
+                .then_with(|| a.transport.cmp(&b.transport))
+        });
+        let mut iter = group.members.into_iter();
+        if let Some(mut primary) = iter.next() {
+            if let Some(ref s) = group.serial {
+                if primary.serial.is_empty()
+                    || primary.serial.contains(':')
+                    || primary.serial.starts_with("adb-")
+                {
+                    primary.serial = s.clone();
+                }
+            }
+            let mut backups = primary.backup_transports();
+            for member in iter {
+                if member.transport != primary.transport && !backups.contains(&member.transport) {
+                    backups.push(member.transport.clone());
+                }
+                for b in member.backup_transports() {
+                    if b != primary.transport && !backups.contains(&b) {
+                        backups.push(b);
+                    }
+                }
+            }
+            backups.sort_by(|a, b| {
+                transport_priority(a)
+                    .cmp(&transport_priority(b))
+                    .then_with(|| a.cmp(b))
+            });
+            primary.set_backup_transports(backups);
+            out.push(primary);
+        }
+    }
+    out
 }
 
 fn validate_generic_apk_identity(value: &serde_json::Value) -> Result<()> {
@@ -76,6 +355,44 @@ fn check_generic_apk(path: &std::path::Path) -> Result<()> {
 }
 
 impl Device {
+    pub fn backup_transports(&self) -> Vec<String> {
+        let canonical = canonical_serial_from_transport(&self.transport).unwrap_or_default();
+        let model_key = if !self.model.is_empty() {
+            format!("model:{}", self.model)
+        } else {
+            String::new()
+        };
+        backup_transports_for(&[&self.transport, &self.serial, &canonical, &model_key])
+            .into_iter()
+            .filter(|b| b != &self.transport)
+            .collect()
+    }
+
+    pub fn set_backup_transports(&self, backups: Vec<String>) {
+        let canonical = canonical_serial_from_transport(&self.transport).unwrap_or_default();
+        let model_key = if !self.model.is_empty() {
+            format!("model:{}", self.model)
+        } else {
+            String::new()
+        };
+        let filtered: Vec<String> = backups
+            .into_iter()
+            .filter(|b| b != &self.transport)
+            .collect();
+        set_backup_transports_for(
+            &[&self.transport, &self.serial, &canonical, &model_key],
+            filtered,
+        );
+    }
+
+    pub fn has_wireless_backup(&self) -> bool {
+        !self.backup_transports().is_empty()
+    }
+
+    pub fn is_usb_primary(&self) -> bool {
+        is_usb_transport(&self.transport)
+    }
+
     pub fn inspect(adb: &Adb, transport: &str) -> Result<Self> {
         let props = adb.script(transport, "getprop ro.serialno; getprop ro.product.model; getprop ro.build.version.release; getprop ro.product.device")?;
         let parts: Vec<_> = props.lines().map(str::trim).collect();
@@ -86,13 +403,23 @@ impl Device {
         if !model.contains("stepx") && !model.contains("pz261a") && parts[3] != "pandora" {
             bail!("这台设备不是已支持的 StepX（型号：{}），未选中。", parts[1]);
         }
-        Ok(Self {
+        let device = Self {
             transport: transport.into(),
             serial: parts[0].into(),
             model: parts[1].into(),
             android: parts[2].into(),
             product: parts[3].into(),
-        })
+        };
+        if let Ok(raw_devices) =
+            adb.run_timeout(&["devices", "-l"], std::time::Duration::from_secs(2))
+        {
+            let _ = parse_devices(&raw_devices);
+        }
+        let existing_backups = device.backup_transports();
+        if !existing_backups.is_empty() {
+            device.set_backup_transports(existing_backups);
+        }
+        Ok(device)
     }
 
     /// A transport/IP can be reassigned. Recheck hardware identity before every operation.
@@ -2373,5 +2700,80 @@ mod generic_apk_install_tests {
         ] {
             assert!(validate_generic_apk_identity(&value).is_err());
         }
+    }
+
+    #[test]
+    fn deduplicates_four_line_adb_devices_and_preserves_wireless_backups() {
+        use super::{
+            canonical_serial_from_transport, deduplicate_multi_transport_devices, parse_devices,
+            transport_priority, Device,
+        };
+
+        let sample = "\
+List of devices attached
+ASGXVB1806001948       device usb:3-3.1 product:CLT-AL00 model:CLT_AL00 device:HWCLT transport_id:2
+ZYPZ261A01M692000LP    device usb:3-1.4 product:pandora model:PZ261A device:pandora transport_id:4
+10.0.1.177:34883       device product:pandora model:PZ261A device:pandora transport_id:7
+adb-ZYPZ261A01M692000LP-jYyV3X._adb-tls-connect._tcp device product:pandora model:PZ261A device:pandora transport_id:1
+";
+        let transports = parse_devices(sample);
+        assert_eq!(transports.len(), 2);
+        assert_eq!(transports[0].id, "ASGXVB1806001948");
+        assert_eq!(transports[0].model, "CLT_AL00");
+        assert!(transports[0].backup_transports().is_empty());
+
+        assert_eq!(transports[1].id, "ZYPZ261A01M692000LP");
+        assert_eq!(transports[1].model, "PZ261A");
+        assert_eq!(
+            transports[1].backup_transports(),
+            vec![
+                "10.0.1.177:34883".to_string(),
+                "adb-ZYPZ261A01M692000LP-jYyV3X._adb-tls-connect._tcp".to_string(),
+            ]
+        );
+
+        assert_eq!(
+            canonical_serial_from_transport("adb-ZYPZ261A01M692000LP-jYyV3X._adb-tls-connect._tcp"),
+            Some("ZYPZ261A01M692000LP".to_string())
+        );
+        assert_eq!(transport_priority("ZYPZ261A01M692000LP"), 1);
+        assert_eq!(transport_priority("10.0.1.177:34883"), 2);
+        assert_eq!(
+            transport_priority("adb-ZYPZ261A01M692000LP-jYyV3X._adb-tls-connect._tcp"),
+            3
+        );
+
+        let devices = deduplicate_multi_transport_devices(vec![
+            Device {
+                transport: "adb-ZYPZ261A01M692000LP-jYyV3X._adb-tls-connect._tcp".into(),
+                serial: "ZYPZ261A01M692000LP".into(),
+                model: "PZ261A".into(),
+                android: "16".into(),
+                product: "pandora".into(),
+            },
+            Device {
+                transport: "10.0.1.177:34883".into(),
+                serial: "ZYPZ261A01M692000LP".into(),
+                model: "PZ261A".into(),
+                android: "16".into(),
+                product: "pandora".into(),
+            },
+            Device {
+                transport: "ZYPZ261A01M692000LP".into(),
+                serial: "ZYPZ261A01M692000LP".into(),
+                model: "PZ261A".into(),
+                android: "16".into(),
+                product: "pandora".into(),
+            },
+        ]);
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].transport, "ZYPZ261A01M692000LP");
+        assert_eq!(
+            devices[0].backup_transports(),
+            vec![
+                "10.0.1.177:34883".to_string(),
+                "adb-ZYPZ261A01M692000LP-jYyV3X._adb-tls-connect._tcp".to_string(),
+            ]
+        );
     }
 }

@@ -1,6 +1,6 @@
 use super::super::{
-    theme::*, update_state::UpdateAction, widgets::*, Action, Companion, Page, ToolOperation,
-    ToolPage,
+    backscreen_state::BackScreenAction, theme::*, update_state::UpdateAction, widgets::*, Action,
+    Companion, Page, ToolOperation, ToolPage,
 };
 use facloud_ui::{elements::*, fonts::Weight};
 use stepx_companion::{storage::format_bytes, toolbox::FileInfo};
@@ -678,6 +678,7 @@ impl Companion {
                     if row.len() == 1 { cards.push(Expanded::new(1., Empty::new().finish()).finish()); }
                     parts.push(self.hstack(S4, cards));
                 }
+                parts.push(self.stepos_native_suite_section("hub"));
             }
             Some(ToolPage::Updates) => parts.push(self.updates_tool_page()),
             Some(ToolPage::Companion) => parts.push(self.companion_tool_page()),
@@ -1205,7 +1206,281 @@ impl Companion {
                 self.utility_button("neo-restore", "撤销组件配置", Action::PrepareUtility(Box::new(Action::NeoRestore)), false),
             ]));
         }
+        rows.push(self.stepos_native_suite_section("neo"));
         self.vstack(S4, rows)
+    }
+
+    fn stepos_native_suite_section(&self, prefix: &str) -> El {
+        let p = self.p();
+        let suite = &self.back_screen.stepos_suite;
+        let loading = self.back_screen.stepos_suite_loading;
+        let ready_count = suite.mcp_services.iter().filter(|s| s.ready).count();
+
+        let clipboard_card = self.panel(vec![
+            self.between(
+                self.hstack(
+                    S2,
+                    vec![
+                        self.heading("1. 双端剪贴板双向同步舱"),
+                        self.pill_badge("跨端秒传", p.accent, p.accent_soft),
+                    ],
+                ),
+                self.line(
+                    if suite.checked {
+                        "实时通道已同步"
+                    } else {
+                        "支持 USB / 无线"
+                    },
+                    CAPTION,
+                    p.success,
+                ),
+            ),
+            self.text(
+                "一键将电脑当前复制的文本、链接或口令写入手机系统剪贴板，或将手机复制的验证码、文本拉取到电脑剪贴板。",
+                BODY,
+                p.text2,
+            ),
+            Container::new(self.vstack(
+                S1,
+                vec![
+                    self.line("手机剪贴板当前内容 / 最近同步记录", MICRO, p.text3),
+                    self.mono(&suite.phone_clipboard, BODY, p.text),
+                ],
+            ))
+            .with_uniform_padding(S3)
+            .with_background_color(p.surface)
+            .with_border(Border::all(1.).with_border_color(p.border))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(R_CONTROL)))
+            .finish(),
+            self.wrap(vec![
+                self.button(
+                    format!("{prefix}-stepos-clip-push"),
+                    "推送电脑剪贴板到手机",
+                    Action::BackScreen(BackScreenAction::PushDesktopClipboard),
+                    Btn::Primary,
+                ),
+                self.button(
+                    format!("{prefix}-stepos-clip-pull"),
+                    "拉取手机剪贴板到电脑",
+                    Action::BackScreen(BackScreenAction::PullPhoneClipboard),
+                    Btn::Secondary,
+                ),
+            ]),
+        ]);
+
+        let mut mcp_badges = Vec::new();
+        for item in &suite.mcp_services {
+            mcp_badges.push(self.pill_badge(
+                format!("{} · {}", item.category, item.title),
+                if item.ready { p.text } else { p.text3 },
+                p.surface,
+            ));
+        }
+
+        let mcp_hub_card = self.panel(vec![
+            self.between(
+                self.hstack(
+                    S2,
+                    vec![
+                        self.heading("2. 手机 MCP 原生能力快捷舱（20 项系统级 MCP 服务）"),
+                        self.pill_badge(
+                            format!("{ready_count} / {} 已就绪", suite.mcp_services.len()),
+                            p.success,
+                            p.surface,
+                        ),
+                    ],
+                ),
+                self.line("日程 · 相册 · 语音 · 安全自动化", CAPTION, p.text3),
+            ),
+            self.text(
+                "StepOS 原生内置 20 个系统级 MCP 服务节点，由 AgentBus 统一编排调用；点击下方快捷动作可在手机端直接触发真实系统能力：",
+                BODY,
+                p.text2,
+            ),
+            self.wrap(vec![
+                self.button(
+                    format!("{prefix}-mcp-alarm"),
+                    "设 15 分钟后手机闹钟",
+                    Action::BackScreen(BackScreenAction::TriggerMcpQuickAction(
+                        "alarm_15m".into(),
+                    )),
+                    Btn::Primary,
+                ),
+                self.button(
+                    format!("{prefix}-mcp-calendar"),
+                    "在手机新建日程",
+                    Action::BackScreen(BackScreenAction::TriggerMcpQuickAction(
+                        "calendar_event".into(),
+                    )),
+                    Btn::Secondary,
+                ),
+                self.button(
+                    format!("{prefix}-mcp-voice"),
+                    "触发手机语音助手",
+                    Action::BackScreen(BackScreenAction::TriggerMcpQuickAction(
+                        "voice_tts".into(),
+                    )),
+                    Btn::Secondary,
+                ),
+                self.button(
+                    format!("{prefix}-mcp-dnd"),
+                    "切换手机勿扰模式",
+                    Action::BackScreen(BackScreenAction::TriggerMcpQuickAction(
+                        "toggle_dnd".into(),
+                    )),
+                    Btn::Secondary,
+                ),
+            ]),
+            self.divider(),
+            self.line("StepOS 20 项系统级 MCP 服务矩阵", CAPTION, p.text2),
+            self.wrap(mcp_badges),
+        ]);
+
+        let perm_label = |ok: bool| {
+            if ok {
+                "已授权 / 就绪"
+            } else {
+                "待唤醒 / 授权"
+            }
+        };
+        let perm_color = |ok: bool| if ok { p.success } else { p.warning };
+
+        let top_apps_str = suite
+            .wellbeing
+            .top_apps
+            .iter()
+            .map(|(name, _, mins)| format!("{name} ({mins} 分钟)"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+
+        let ai_safety_card = self.panel(vec![
+            self.between(
+                self.heading(
+                    "3. 端侧大模型 (com.stepos.aiengine) & AI 安全审计台账 (com.stepos.agentsafetycenter)",
+                ),
+                self.pill_badge(
+                    if suite.aiengine_running {
+                        "端侧 NPU 在线"
+                    } else {
+                        "按需唤醒"
+                    },
+                    if suite.aiengine_running {
+                        p.success
+                    } else {
+                        p.text2
+                    },
+                    p.surface,
+                ),
+            ),
+            self.text(&suite.aiengine_model_summary, BODY, p.text),
+            self.divider(),
+            self.between(
+                self.line("屏幕视觉感知 (ScreenMCPService)", BODY, p.text),
+                self.line(
+                    perm_label(suite.screen_perception_ready),
+                    CAPTION,
+                    perm_color(suite.screen_perception_ready),
+                ),
+            ),
+            self.between(
+                self.line("无障碍 GUI 操控 (Accessibility)", BODY, p.text),
+                self.line(
+                    perm_label(suite.gui_accessibility_enabled),
+                    CAPTION,
+                    perm_color(suite.gui_accessibility_enabled),
+                ),
+            ),
+            self.between(
+                self.line("系统通知监听 (NotificationListener)", BODY, p.text),
+                self.line(
+                    perm_label(suite.notification_listener_enabled),
+                    CAPTION,
+                    perm_color(suite.notification_listener_enabled),
+                ),
+            ),
+            self.between(
+                self.line("AgentBus 原生 MCP 桥接鉴权", BODY, p.text),
+                self.line(
+                    perm_label(suite.mcp_permission_granted),
+                    CAPTION,
+                    perm_color(suite.mcp_permission_granted),
+                ),
+            ),
+            self.divider(),
+            self.between(
+                self.line_w(
+                    "数字健康与 AlphaMe 分身画像 (com.stepos.alphame)",
+                    BODY,
+                    p.text,
+                    Weight::Medium,
+                ),
+                self.line(
+                    format!(
+                        "今日亮屏 {} 分钟 · 解锁 {} 次",
+                        suite.wellbeing.screen_time_minutes, suite.wellbeing.unlock_count
+                    ),
+                    CAPTION,
+                    p.accent,
+                ),
+            ),
+            self.text(
+                format!("今日高频应用分布：{top_apps_str}"),
+                CAPTION,
+                p.text2,
+            ),
+            self.text(&suite.last_action_note, CAPTION, p.accent),
+            self.wrap(vec![
+                if loading {
+                    self.disabled_button("正在读取手机状态…")
+                } else {
+                    self.button(
+                        format!("{prefix}-stepos-refresh"),
+                        "刷新 StepOS 原生状态",
+                        Action::BackScreen(BackScreenAction::InspectStepOsSuite),
+                        Btn::Primary,
+                    )
+                },
+                self.button(
+                    format!("{prefix}-stepos-open-aiengine"),
+                    "在手机打开端侧模型管理",
+                    Action::BackScreen(BackScreenAction::TriggerMcpQuickAction(
+                        "open_aiengine".into(),
+                    )),
+                    Btn::Secondary,
+                ),
+                self.button(
+                    format!("{prefix}-stepos-open-safety"),
+                    "在手机打开 AI 安全审计台账",
+                    Action::BackScreen(BackScreenAction::TriggerMcpQuickAction(
+                        "open_safety_ledger".into(),
+                    )),
+                    Btn::Secondary,
+                ),
+                self.button(
+                    format!("{prefix}-stepos-open-alphame"),
+                    "打开手机 AlphaMe 数字分身",
+                    Action::BackScreen(BackScreenAction::TriggerMcpQuickAction(
+                        "open_alphame".into(),
+                    )),
+                    Btn::Ghost,
+                ),
+            ]),
+        ]);
+
+        self.vstack(
+            S3,
+            vec![
+                self.between(
+                    self.heading(
+                        "StepOS 原生 AI 与跨端能力中心（MCP · AIEngine · SafetyCenter · 双端剪贴板）",
+                    ),
+                    self.pill_badge("StepOS 5 大原生能力", p.accent, p.accent_soft),
+                ),
+                clipboard_card,
+                mcp_hub_card,
+                ai_safety_card,
+            ],
+        )
     }
 
     fn companion_tool_page(&self) -> El {
@@ -1281,6 +1556,7 @@ impl Companion {
             ]));
         }
         if !companion.installed {
+            sections.push(self.stepos_native_suite_section("companion"));
             return self.vstack(S4, sections);
         }
         sections.push(self.panel(vec![
@@ -1349,6 +1625,7 @@ impl Companion {
             ));
         }
         sections.push(self.panel(permissions));
+        sections.push(self.stepos_native_suite_section("companion"));
         self.vstack(S4, sections)
     }
 

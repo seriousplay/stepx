@@ -134,11 +134,59 @@ impl Companion {
                 }
             }
             Outcome::Transports(devices, services) => {
-                if self.selected.as_ref().is_some_and(|d| {
-                    !devices
+                let devices = stepx_companion::device::deduplicate_transports(devices);
+                let mut failed_over_to: Option<String> = None;
+                let mut disconnected = false;
+                if let Some(selected) = self.selected.as_mut() {
+                    let primary_online = devices
                         .iter()
-                        .any(|t| t.id == d.transport && t.state == "device")
-                }) {
+                        .any(|t| t.id == selected.transport && t.state == "device");
+                    if !primary_online {
+                        let known_backups = selected.backup_transports();
+                        let fallback = known_backups
+                            .iter()
+                            .find(|b| devices.iter().any(|t| &t.id == *b && t.state == "device"))
+                            .cloned()
+                            .or_else(|| {
+                                devices
+                                    .iter()
+                                    .find(|t| {
+                                        t.state == "device"
+                                            && (stepx_companion::device::canonical_serial_from_transport(&t.id)
+                                                .as_deref()
+                                                == Some(selected.serial.as_str())
+                                                || (!t.model.is_empty()
+                                                    && t.model == selected.model))
+                                    })
+                                    .map(|t| t.id.clone())
+                            });
+                        if let Some(next_transport) = fallback {
+                            let remaining_backups: Vec<String> = known_backups
+                                .into_iter()
+                                .filter(|b| b != &next_transport)
+                                .collect();
+                            selected.transport = next_transport.clone();
+                            selected.set_backup_transports(remaining_backups);
+                            failed_over_to = Some(next_transport);
+                        } else {
+                            disconnected = true;
+                        }
+                    } else if let Some(active) = devices
+                        .iter()
+                        .find(|t| t.id == selected.transport && t.state == "device")
+                    {
+                        let active_backups = active.backup_transports();
+                        if !active_backups.is_empty() {
+                            selected.set_backup_transports(active_backups);
+                        }
+                    }
+                }
+                if let Some(next_transport) = failed_over_to {
+                    let msg = format!("USB 已断开，已无感切换至无线通道 {next_transport}");
+                    self.record_notice("多通道热备切换", msg.clone());
+                    self.error = false;
+                    self.status = msg;
+                } else if disconnected {
                     self.connection_watch.detached_serial =
                         self.selected.as_ref().map(|d| d.serial.clone());
                     self.selected = None;
